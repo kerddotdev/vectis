@@ -105,7 +105,13 @@ export const forMachine = query({
     for (const binding of bindings) {
       if (!binding.enabled || binding.owner !== target.owner) continue;
       const account = await ctx.db.get("githubAccounts", binding.accountId);
-      if (account?.owner === target.owner) visible.push(binding);
+      if (account?.owner === target.owner)
+        visible.push({
+          id: binding._id,
+          repositoryId: binding.repositoryId,
+          repositoryName: `${account.login}/${binding.repositoryName}`,
+          environmentId: binding.environmentId,
+        });
     }
     return visible;
   },

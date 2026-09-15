@@ -128,6 +128,26 @@ export function startCloudRelay(
   const interval = setInterval(tick, 2000);
   authenticate();
   return {
+    async repositories() {
+      if (!authenticated || abort.signal.aborted)
+        throw new VectisError(
+          "cloud_unavailable",
+          "The machine cloud connection is unavailable.",
+          "Reconnect this machine and retry repository list.",
+        );
+      try {
+        return await interruptible(
+          cloud.query(api.repositoryBindings.forMachine, {}),
+          AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+        );
+      } catch {
+        throw new VectisError(
+          "repository_access_unavailable",
+          "Repository access could not be verified.",
+          "Check the machine connection and linked GitHub account, then retry.",
+        );
+      }
+    },
     async close() {
       const pendingToken = tokenRequest;
       abort.abort();

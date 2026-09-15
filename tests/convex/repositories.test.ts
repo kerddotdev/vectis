@@ -51,7 +51,9 @@ test("bindings deduplicate and disappear from machine admission when disabled", 
     subject: machineId,
     credentialVersion: 0,
   });
-  expect(await machine.query(api.repositoryBindings.forMachine, {})).toHaveLength(1);
+  expect(await machine.query(api.repositoryBindings.forMachine, {})).toEqual([
+    { id, repositoryId: 42, repositoryName: "owner/sandbox", environmentId: "linux" },
+  ]);
   await owner.mutation(api.repositoryBindings.disable, { id });
   expect(await machine.query(api.repositoryBindings.forMachine, {})).toEqual([]);
   await owner.mutation(api.machines.revoke, { id: machineId });

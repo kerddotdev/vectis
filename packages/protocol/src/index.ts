@@ -116,6 +116,10 @@ export const Connection = Schema.Struct({
 export type Connection = typeof Connection.Type;
 export const capabilities = [
   {
+    name: "repository.list",
+    description: "List currently authorized repositories for this cloud-connected machine.",
+  },
+  {
     name: "doctor",
     description: "Inspect the running service runtime configuration and host prerequisites.",
   },

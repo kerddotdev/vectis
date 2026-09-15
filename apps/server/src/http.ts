@@ -125,6 +125,15 @@ export async function startService(
         options.onShutdown?.();
         return;
       }
+      if (request.method === "GET" && request.url === "/v1/repositories") {
+        if (!relay)
+          throw new VectisError(
+            "cloud_unconfigured",
+            "This machine is not connected to Vectis.",
+            "Run vectis cloud pair and complete browser approval.",
+          );
+        return reply(response, 200, await relay.repositories());
+      }
       if (request.method === "GET" && request.url === "/v1/doctor")
         return reply(response, 200, runtimeDiagnostics(options, "service"));
       if (request.method === "GET" && request.url === "/v1/storage")

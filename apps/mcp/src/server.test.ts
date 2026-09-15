@@ -32,6 +32,9 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
     expect(await client.callTool({ name: "vectis_doctor", arguments: {} })).toMatchObject({
       structuredContent: { result: { source: "service" } },
     });
+    expect(await client.callTool({ name: "vectis_repositories", arguments: {} })).toMatchObject({
+      isError: true,
+    });
     const status = await client.callTool({ name: "vectis_status", arguments: {} });
     expect(status).toMatchObject({ structuredContent: { result: { machine: { paused: true } } } });
   } finally {

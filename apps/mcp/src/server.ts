@@ -23,6 +23,13 @@ const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
 const tools = [
   {
+    name: "vectis_repositories",
+    description:
+      "List repositories connected to this machine and their environment IDs. Requires cloud pairing and current account authorization.",
+    inputSchema: emptyInput,
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "vectis_doctor",
     description:
       "Inspect host prerequisites and the running service runtime configuration. Requires a running service.",
@@ -166,6 +173,9 @@ export function createMcpServer(
         }
         case "vectis_storage":
           result = await (await connect()).storage();
+          break;
+        case "vectis_repositories":
+          result = await (await connect()).repositories();
           break;
         case "vectis_doctor":
           result = await (await connect()).doctor();
