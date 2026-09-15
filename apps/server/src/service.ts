@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
+import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
 import type { MachineRepositories } from "../../../packages/protocol/src/repositories.js";
 import { runRunnerTask } from "./runner-task.js";
 import { createHash } from "node:crypto";
@@ -136,6 +136,55 @@ export class Service {
             });
           this.runners.set(operation.id, { abort, done });
           return;
+        }
+        case "runner.reconcile": {
+          const interrupted = snapshot.operations.find((item) => item.id === command.id);
+          if (
+            !interrupted ||
+            interrupted.command !== "runner.run" ||
+            interrupted.status !== "action_required" ||
+            this.runners.has(command.id)
+          )
+            throw new VectisError(
+              "reconciliation_required",
+              "Only an interrupted runner operation can be reconciled.",
+            );
+          const progress = Schema.decodeUnknownSync(RunnerProgress)(interrupted.result);
+          const start = snapshot.operations.find((item) => item.key === `${interrupted.id}:start`);
+          const instance = snapshot.instances.find(
+            (item) => item.id === (progress.instanceId ?? start?.id),
+          );
+          if (instance && instance.status !== "stopped")
+            throw new VectisError(
+              "reconciliation_required",
+              "The runner VM must be verified stopped first.",
+              "Stop or reconcile the owned instance, then retry runner reconciliation.",
+            );
+          const broker = this.runnerConnection();
+          const lease = await broker.findRunner(progress.leaseKey, AbortSignal.timeout(10000));
+          if (!lease)
+            throw new VectisError(
+              "reconciliation_required",
+              "The registration request has no confirmed cloud lease.",
+              "Inspect the cloud connection and retry reconciliation; do not start a duplicate runner.",
+            );
+          if (
+            lease.bindingId !== progress.bindingId ||
+            lease.environmentId !== progress.environmentId ||
+            (progress.leaseId && lease.id !== progress.leaseId)
+          )
+            throw new VectisError(
+              "runner_identity_mismatch",
+              "The cloud lease does not match this operation.",
+            );
+          await broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
+          this.store.update(interrupted, {
+            status: "cancelled",
+            message: "Interrupted runner cleaned up. Check GitHub for the job result.",
+            result: { ...progress, leaseId: lease.id, stage: "finished" },
+          });
+          result = { operationId: interrupted.id, leaseId: lease.id };
+          break;
         }
         case "operation.cancel": {
           const active = this.runners.get(command.id);

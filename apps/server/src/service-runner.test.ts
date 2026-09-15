@@ -24,6 +24,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     const basePath = join(home, "base.img");
     await writeFile(basePath, "isolated test image");
     const broker = {
+      findRunner: vi.fn(async () => null),
       repositories: async () => [
         { id: "binding", environmentId: "test", repositoryId: 1, repositoryName: "test/repo" },
       ],

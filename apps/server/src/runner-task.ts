@@ -3,7 +3,7 @@ import {
   type Environment,
   type Instance,
 } from "../../../packages/protocol/src/index.js";
-import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
+import type { RunnerBroker, RunnerProgress } from "../../../packages/protocol/src/runners.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest } from "../../../packages/runner/src/guest.js";
 import {
@@ -11,15 +11,6 @@ import {
   runnerStartScript,
 } from "../../../packages/runner/src/runner-release.js";
 
-export interface RunnerProgress {
-  bindingId: string;
-  environmentId: string;
-  leaseKey: string;
-  instanceId?: string;
-  leaseId?: string;
-  runnerId?: number;
-  stage: "starting" | "preparing_guest" | "registering" | "listening" | "cleaning" | "finished";
-}
 interface Controls {
   broker: RunnerBroker;
   start(): Promise<Instance>;

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { RunnerGrant } from "../../protocol/src/runners.js";
+import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api.js";
 import { VectisError } from "../../protocol/src/index.js";
@@ -138,6 +138,15 @@ export function startCloudRelay(
       );
   }
   return {
+    async findRunner(key: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const value = await interruptible(
+        cloud.query(api.runnerLeases.find, { key }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
+      );
+      return value === null ? null : Schema.decodeUnknownSync(RunnerLease)(value);
+    },
     async prepareRunner(bindingId: string, key: string, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();

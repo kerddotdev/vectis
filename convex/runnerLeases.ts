@@ -179,3 +179,23 @@ export const list = query({
     return active;
   },
 });
+
+export const find = query({
+  args: { key: v.string() },
+  handler: async (ctx, args) => {
+    const target = await machine(ctx);
+    if (!args.key || args.key.length > 200)
+      throw new ConvexError({ code: "invalid_runner_request" });
+    const lease = await ctx.db
+      .query("runnerLeases")
+      .withIndex("by_machine_key", (q) => q.eq("machineId", target._id).eq("key", args.key))
+      .unique();
+    if (!lease || lease.owner !== target.owner) return null;
+    return {
+      id: lease._id,
+      bindingId: lease.bindingId,
+      environmentId: lease.environmentId,
+      phase: lease.phase,
+    };
+  },
+});
