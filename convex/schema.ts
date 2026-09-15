@@ -22,6 +22,31 @@ export default defineSchema({
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),
+  githubDeliveries: defineTable({
+    deliveryId: v.string(),
+    event: v.string(),
+    action: v.optional(v.string()),
+    repositoryId: v.optional(v.number()),
+    installationId: v.optional(v.number()),
+    jobId: v.optional(v.number()),
+    receivedAt: v.number(),
+  }).index("by_delivery", ["deliveryId"]),
+  githubAppSetups: defineTable({
+    stateDigest: v.string(),
+    ownerId: v.number(),
+    ownerLogin: v.string(),
+    expiresAt: v.number(),
+    consumed: v.boolean(),
+  }).index("by_state", ["stateDigest"]),
+  githubApps: defineTable({
+    appId: v.number(),
+    slug: v.string(),
+    ownerId: v.number(),
+    clientId: v.string(),
+    privateKey: v.string(),
+    clientSecret: v.string(),
+    webhookSecret: v.string(),
+  }).index("by_app", ["appId"]),
   pairings: defineTable({
     owner: v.string(),
     requestDigest: v.string(),
