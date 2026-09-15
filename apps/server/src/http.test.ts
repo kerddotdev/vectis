@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -63,6 +63,7 @@ test("configuration changes apply to future VMs without changing active resource
   const { writeFile } = await import("node:fs/promises");
   const basePath = join(home, "base.img");
   await writeFile(basePath, "test");
+  await mkdir(join(home, "selected-volume"));
   const environment = {
     id: "env",
     name: "Test",
