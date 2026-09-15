@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   createHashHistory,
@@ -9,6 +9,8 @@ import {
   Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
+import { Schema } from "effect";
+import { StorageReport } from "../../../../packages/protocol/src/storage.js";
 import { StateProvider, useStateApi } from "./state.js";
 import { Environments } from "./environments.js";
 import "./style.css";
@@ -25,6 +27,8 @@ function Layout() {
             Overview
           </Link>
           <Link to="/environments">Environments</Link>
+          <Link to="/storage">Storage</Link>
+          <Link to="/connections">Connections</Link>
         </nav>
         <button className="secondary" onClick={() => void perform("open.docs")}>
           Documentation
@@ -114,10 +118,106 @@ function Overview() {
     </>
   );
 }
+function Storage() {
+  const { perform } = useStateApi();
+  const [report, setReport] = useState<StorageReport | null>(null);
+  const [error, setError] = useState("");
+  const size = (bytes: number | undefined) =>
+    bytes === undefined ? "Unavailable" : `${(bytes / 1024 ** 3).toFixed(2)} GiB`;
+  return (
+    <>
+      <h1>Storage</h1>
+      <p>Base images, virtual machine disks and allocated host blocks.</p>
+      <button
+        onClick={() =>
+          void perform("storage").then((value) => {
+            if (value === undefined) return;
+            try {
+              setReport(Schema.decodeUnknownSync(StorageReport)(value));
+              setError("");
+            } catch {
+              setError("Storage information could not be read.");
+            }
+          })
+        }
+      >
+        Measure storage
+      </button>
+      {error && <p role="alert">{error}</p>}
+      {report && (
+        <>
+          <p className="muted">{report.allocationNote}</p>
+          {report.environments.map((environment) => (
+            <section className="section" key={environment.environmentId}>
+              <h2>{environment.environmentId}</h2>
+              {[{ id: "Base image", usage: environment.base }, ...environment.instances].map(
+                (item) => (
+                  <div key={item.id} className="record">
+                    <div>
+                      <strong>{item.id}</strong>
+                      <p className="path">{item.usage.path}</p>
+                      <p>
+                        {size(item.usage.allocatedBytes)} allocated / {size(item.usage.fileBytes)}{" "}
+                        file size
+                      </p>
+                      {item.usage.reason && <p>{item.usage.reason}</p>}
+                      <details>
+                        <summary>Host file breakdown</summary>
+                        {item.usage.entries?.map((entry) => (
+                          <p key={entry.name}>
+                            {entry.name}: {size(entry.allocatedBytes)}
+                          </p>
+                        ))}
+                      </details>
+                    </div>
+                  </div>
+                ),
+              )}
+              <p className="muted">Guest filesystem breakdown is not available yet.</p>
+            </section>
+          ))}
+        </>
+      )}
+    </>
+  );
+}
+function Connections() {
+  const { perform } = useStateApi();
+  const [message, setMessage] = useState("");
+  async function pair() {
+    const value = await perform("cloud.pair");
+    if (value === undefined) return;
+    const result = Schema.decodeUnknownSync(Schema.Struct({ verificationCode: Schema.String }))(
+      value,
+    );
+    setMessage(`Compare code ${result.verificationCode} in your browser, then approve this Mac.`);
+  }
+  async function finish() {
+    const result = await perform("cloud.finish");
+    if (result !== undefined) setMessage("This Mac is connected.");
+  }
+  return (
+    <>
+      <h1>Connections</h1>
+      <p>Connect this Mac and your GitHub accounts. Build files stay on your machine.</p>
+      <button onClick={() => void perform("open.github")}>Connect GitHub</button>
+      <section className="section">
+        <h2>Connect this Mac</h2>
+        <button onClick={() => void pair()}>Begin pairing</button>
+        <button className="secondary" onClick={() => void finish()}>
+          Finish approved pairing
+        </button>
+        {message && <p role="status">{message}</p>}
+      </section>
+    </>
+  );
+}
 const rootRoute = createRootRoute({ component: Layout });
 const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/", component: Overview }),
   createRoute({ getParentRoute: () => rootRoute, path: "/environments", component: Environments }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/storage", component: Storage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/connections", component: Connections }),
 ]);
 const router = createRouter({ routeTree, history: createHashHistory() });
 declare module "@tanstack/react-router" {

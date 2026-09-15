@@ -92,10 +92,15 @@ else {
                   "The Keychain helper is required for pairing.",
                 );
               const credentials = new KeychainCredentials(helper);
-              data =
-                action === "cloud.pair"
-                  ? await beginPairing(home, "https://clear-hare-471.convex.cloud", credentials)
-                  : await finishPairing(home, credentials);
+              if (action === "cloud.pair") {
+                const pairing = await beginPairing(
+                  home,
+                  "https://clear-hare-471.convex.cloud",
+                  credentials,
+                );
+                await shell.openExternal(pairing.url);
+                data = { state: pairing.state, verificationCode: pairing.verificationCode };
+              } else data = await finishPairing(home, credentials);
               break;
             }
             case "open.docs":
