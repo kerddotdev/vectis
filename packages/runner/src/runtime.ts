@@ -3,7 +3,8 @@ import { constants } from "node:fs";
 import { access, copyFile, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { cpus } from "node:os";
-import { once } from "node:events";
+import { fileURLToPath } from "node:url";
+import { waitForQemu } from "./qmp.js";
 import { availableHostMemory } from "./memory.js";
 import { runProcess } from "./process.js";
 import { waitForAppleVm } from "./apple.js";
@@ -121,6 +122,8 @@ export class VmRuntime {
           "-monitor",
           "none",
           "-serial",
+          "null",
+          "-qmp",
           "stdio",
         ];
       } else {
@@ -146,10 +149,22 @@ export class VmRuntime {
         JSON.stringify({ instanceId: id, servicePid: process.pid, environmentId: environment.id }),
         { mode: 0o600 },
       );
-      const child = spawn(executable, args, {
-        stdio: ["pipe", "pipe", "ignore"],
-        detached: false,
-      });
+      const supervised = environment.os === "windows";
+      const supervisor = fileURLToPath(
+        new URL(
+          import.meta.url.endsWith(".ts") ? "./supervisor.ts" : "./supervisor.js",
+          import.meta.url,
+        ),
+      );
+      const child = spawn(
+        supervised ? process.execPath : executable,
+        supervised ? [supervisor, executable, ...args] : args,
+        {
+          stdio: ["pipe", "pipe", "ignore"],
+          detached: false,
+        },
+      );
+      child.stdin?.on("error", () => {});
       const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
       const settled = closed.then(async () => {
         let cleaned = false;
@@ -165,14 +180,13 @@ export class VmRuntime {
       const instance = { id, process: child, directory, settled };
       this.owned.set(id, instance);
       try {
-        if (environment.os === "windows") await once(child, "spawn");
+        if (environment.os === "windows") await waitForQemu(child);
         else await waitForAppleVm(child);
         if (child.exitCode !== null || child.signalCode !== null)
           throw new VectisError("vm_start_failed", "The VM stopped during startup.");
       } catch (error) {
-        if (child.pid && child.exitCode === null && child.signalCode === null)
-          child.kill("SIGKILL");
-        await settled;
+        if (this.owned.has(id)) await this.stop(id);
+        else await settled;
         throw error;
       }
       child.stdout?.resume();
