@@ -38,6 +38,9 @@ export class VectisClient {
   async status(signal?: AbortSignal) {
     return Schema.decodeUnknownSync(Snapshot)(await this.request("/v1/status", undefined, signal));
   }
+  async shutdown() {
+    return this.request("/v1/shutdown", {});
+  }
   async storage() {
     return Schema.decodeUnknownSync(StorageReport)(await this.request("/v1/storage"));
   }
