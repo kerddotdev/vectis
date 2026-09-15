@@ -4,6 +4,7 @@ import { access, copyFile, cp, mkdir, rm, stat, writeFile } from "node:fs/promis
 import { join, resolve } from "node:path";
 import { cpus, freemem } from "node:os";
 import { once } from "node:events";
+import { runProcess } from "./process.js";
 import { waitForAppleVm } from "./apple.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
 
@@ -209,28 +210,4 @@ export class VmRuntime {
   async close() {
     await Promise.all([...this.owned.keys()].map((id) => this.stop(id)));
   }
-}
-export async function runProcess(
-  executable: string,
-  args: readonly string[],
-  signal?: AbortSignal,
-): Promise<string> {
-  const child = spawn(executable, [...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    ...(signal ? { signal } : {}),
-  });
-  let output = "";
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => {
-    output = (output + chunk).slice(-65536);
-  });
-  child.stderr.resume();
-  const [code] = await once(child, "exit");
-  if (code !== 0)
-    throw new VectisError(
-      "process_failed",
-      "An external command failed.",
-      "Inspect the environment and runtime configuration.",
-    );
-  return output;
 }
