@@ -180,12 +180,7 @@ export class VmRuntime {
         ];
       } else {
         const destination = join(directory, environment.os === "macos" ? "bundle" : "disk.img");
-        if (environment.os === "macos")
-          await cp(environment.basePath, destination, {
-            recursive: true,
-            mode: constants.COPYFILE_FICLONE,
-          });
-        else await copyFile(environment.basePath, destination, constants.COPYFILE_FICLONE);
+        await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination]);
         args = [
           "run",
           environment.os,
