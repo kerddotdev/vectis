@@ -30,17 +30,21 @@ async function stateDigest(request: Request) {
 }
 export const setup = httpAction(async (ctx, request) => {
   const state = await stateDigest(request);
-  if (
-    !state ||
-    !(await ctx.runQuery(internal.githubAppSetup.inspect, { stateDigest: state.digest }))
-  )
+  const owner = state
+    ? await ctx.runQuery(internal.githubAppSetup.inspect, { stateDigest: state.digest })
+    : null;
+  if (!state || !owner)
     return new Response("This setup link is invalid or expired.", { status: 403 });
-  const manifest = appManifest("Vectis Dev", "https://vectis.kerd.dev", "https://vectis.kerd.dev");
+  const manifest = appManifest(
+    "Vectis by KerD [DEV]",
+    "https://vectis.kerd.dev",
+    "https://vectis.kerd.dev",
+  );
   manifest.hook_attributes.url = "https://vectis.kerd.dev/api/github/webhook";
   manifest.redirect_url = "https://vectis.kerd.dev/api/github/manifest/callback";
   manifest.callback_urls = ["https://vectis.kerd.dev/api/github/oauth/callback"];
   return new Response(
-    `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="referrer" content="no-referrer"><title>Register Vectis Dev</title><style>body{background:#15191e;color:#e6e9ee;font:18px/1.6 system-ui;max-width:650px;margin:12vh auto;padding:24px}button{background:#b9d7fe;color:#182638;padding:16px;border:0;border-radius:8px;font:inherit;cursor:pointer}</style></head><body><h1>Register Vectis Dev</h1><p>Continue with the configured GitHub owner account. App credentials are stored only in the Vectis backend.</p><form action="https://github.com/settings/apps/new?state=${state.state}" method="post"><input type="hidden" name="manifest" value="${escaped(JSON.stringify(manifest))}"><button type="submit">Continue to GitHub</button></form></body></html>`,
+    `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="referrer" content="no-referrer"><title>Register Vectis by KerD [DEV]</title><style>body{background:#15191e;color:#e6e9ee;font:18px/1.6 system-ui;max-width:650px;margin:12vh auto;padding:24px}button{background:#b9d7fe;color:#182638;padding:16px;border:0;border-radius:8px;font:inherit;cursor:pointer}</style></head><body><h1>Register Vectis by KerD [DEV]</h1><p>Continue with the configured GitHub owner account. App credentials are stored only in the Vectis backend.</p><form action="https://github.com/settings/apps/new?state=${state.state}" method="post"><input type="hidden" name="manifest" value="${escaped(JSON.stringify(manifest))}"><button type="submit">Continue to GitHub</button></form></body></html>`,
     {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
