@@ -59,6 +59,7 @@ Usage: vectis <command> [options]
   service start                 Start the installed or independent background service
   service run                   Run the service in the foreground
   service stop                  Stop through an authenticated service request
+  job list <binding-id>         Read recent GitHub job status for a connected repository
   repository list               List this machine's connected repositories (requires cloud pairing)
   storage                       Inspect image and VM disk usage
   status                        Inspect the machine and recent operations
@@ -251,6 +252,10 @@ GitHub pairing require separately configured development services.
   if (command === "service" && subcommand === "stop") {
     await api.shutdown();
     output({ stopping: true });
+    return;
+  }
+  if (command === "job" && subcommand === "list" && id) {
+    output(await api.jobs(id));
     return;
   }
   if (command === "repository" && subcommand === "list") {

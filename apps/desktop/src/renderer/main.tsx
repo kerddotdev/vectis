@@ -14,6 +14,7 @@ import { MachineRepositories } from "../../../../packages/protocol/src/repositor
 import { Diagnostics } from "../../../../packages/protocol/src/diagnostics.js";
 import { StorageReport } from "../../../../packages/protocol/src/storage.js";
 import { StateProvider, useStateApi } from "./state.js";
+import { RepositoryJobs } from "./repository-jobs.js";
 import { Environments } from "./environments.js";
 import "./style.css";
 function Layout() {
@@ -300,15 +301,18 @@ function Connections() {
         </button>
         {repositories?.length === 0 && <p>No repositories are connected to this Mac.</p>}
         {repositories?.map((repository) => (
-          <div className="record" key={repository.id}>
-            <strong>{repository.repositoryName}</strong>
-            <span>{repository.environmentId}</span>
-            <button
-              disabled={starting !== null || !snapshot || snapshot.machine.paused}
-              onClick={() => void startRunner(repository.id)}
-            >
-              {starting === repository.id ? "Requesting runner" : "Start runner"}
-            </button>
+          <div key={repository.id}>
+            <div className="record">
+              <strong>{repository.repositoryName}</strong>
+              <span>{repository.environmentId}</span>
+              <button
+                disabled={starting !== null || !snapshot || snapshot.machine.paused}
+                onClick={() => void startRunner(repository.id)}
+              >
+                {starting === repository.id ? "Requesting runner" : "Start runner"}
+              </button>
+            </div>
+            <RepositoryJobs bindingId={repository.id} />
           </div>
         ))}
       </section>
