@@ -52,11 +52,11 @@ const Installations = Schema.Struct({
     }),
   ),
 });
-async function json(url: string, init: RequestInit): Promise<unknown> {
+async function json(url: string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
   const response = await fetch(url, {
     ...init,
     redirect: "error",
-    signal: AbortSignal.timeout(15000),
+    signal,
   });
   if (!response.ok) {
     await response.body?.cancel();
@@ -82,23 +82,28 @@ export const callback = httpAction(async (ctx, request) => {
       status: 403,
       headers,
     });
+  const deadline = AbortSignal.timeout(40000);
   try {
     if (!code || code.length > 512 || params.has("error")) throw new Error("Authorization denied.");
     const token = Schema.decodeUnknownSync(Token)(
-      await json("https://github.com/login/oauth/access_token", {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/x-www-form-urlencoded",
+      await json(
+        "https://github.com/login/oauth/access_token",
+        {
+          method: "POST",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: new URLSearchParams({
+            client_id: claim.clientId,
+            client_secret: claim.clientSecret,
+            code,
+            redirect_uri: callbackUrl,
+            code_verifier: claim.verifier,
+          }).toString(),
         },
-        body: new URLSearchParams({
-          client_id: claim.clientId,
-          client_secret: claim.clientSecret,
-          code,
-          redirect_uri: callbackUrl,
-          code_verifier: claim.verifier,
-        }).toString(),
-      }),
+        deadline,
+      ),
     );
     const authorization = {
       Authorization: `Bearer ${token.access_token}`,
@@ -106,15 +111,19 @@ export const callback = httpAction(async (ctx, request) => {
       "X-GitHub-Api-Version": "2026-03-10",
     };
     const user = Schema.decodeUnknownSync(User)(
-      await json("https://api.github.com/user", { headers: authorization }),
+      await json("https://api.github.com/user", { headers: authorization }, deadline),
     );
     const installations: { id: number; accountId: number; login: string }[] = [];
     let complete = false;
     for (let page = 1; page <= 10; page++) {
       const result = Schema.decodeUnknownSync(Installations)(
-        await json(`https://api.github.com/user/installations?per_page=100&page=${page}`, {
-          headers: authorization,
-        }),
+        await json(
+          `https://api.github.com/user/installations?per_page=100&page=${page}`,
+          {
+            headers: authorization,
+          },
+          deadline,
+        ),
       );
       for (const item of result.installations)
         if (item.app_id === claim.appId && item.suspended_at === null)
