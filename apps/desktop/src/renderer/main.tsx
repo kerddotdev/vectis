@@ -10,6 +10,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { Schema } from "effect";
+import { Diagnostics } from "../../../../packages/protocol/src/diagnostics.js";
 import { StorageReport } from "../../../../packages/protocol/src/storage.js";
 import { StateProvider, useStateApi } from "./state.js";
 import { Environments } from "./environments.js";
@@ -29,6 +30,7 @@ function Layout() {
           <Link to="/environments">Environments</Link>
           <Link to="/storage">Storage</Link>
           <Link to="/connections">Connections</Link>
+          <Link to="/diagnostics">Diagnostics</Link>
         </nav>
         <button className="secondary" onClick={() => void perform("open.docs")}>
           Documentation
@@ -115,6 +117,54 @@ function Overview() {
           </div>
         ))}
       </section>
+    </>
+  );
+}
+function Doctor() {
+  const { perform } = useStateApi();
+  const [report, setReport] = useState<Diagnostics | null>(null);
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  async function inspect() {
+    setPending(true);
+    setError("");
+    try {
+      const value = await perform("doctor");
+      if (value !== undefined) setReport(Schema.decodeUnknownSync(Diagnostics)(value));
+    } catch {
+      setError("The service returned an invalid diagnostic report.");
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <h1>Diagnostics</h1>
+      <p>Inspect the running service's host and configured helpers.</p>
+      <button disabled={pending} onClick={() => void inspect()}>
+        {pending ? "Inspecting" : "Inspect service"}
+      </button>
+      {error && <p role="alert">{error}</p>}
+      {report && (
+        <section className="section" aria-live="polite">
+          <h2>Host</h2>
+          <p>
+            {report.host.platform} / {report.host.arch} / {report.host.cpus} cores /{" "}
+            {report.host.memoryMiB} MiB
+          </p>
+          <p>{report.supportedHost ? "Supported host" : "Unsupported host"}</p>
+          <h2>Runtime configuration</h2>
+          <p>Configured paths still require a successful runtime check before starting a VM.</p>
+          {Object.entries(report.configured).map(([name, configured]) => (
+            <div className="record" key={name}>
+              <strong>{name}</strong>
+              <span>{configured ? "Configured" : "Not configured"}</span>
+            </div>
+          ))}
+          <h2>Service state directory</h2>
+          <code>{report.home}</code>
+        </section>
+      )}
     </>
   );
 }
@@ -217,6 +267,7 @@ const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/", component: Overview }),
   createRoute({ getParentRoute: () => rootRoute, path: "/environments", component: Environments }),
   createRoute({ getParentRoute: () => rootRoute, path: "/storage", component: Storage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/diagnostics", component: Doctor }),
   createRoute({ getParentRoute: () => rootRoute, path: "/connections", component: Connections }),
 ]);
 const router = createRouter({ routeTree, history: createHashHistory() });

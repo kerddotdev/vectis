@@ -1,6 +1,7 @@
 export type DesktopAction =
   | "status"
   | "storage"
+  | "doctor"
   | "command"
   | "service.install"
   | "service.stop"
