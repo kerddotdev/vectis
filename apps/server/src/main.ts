@@ -16,6 +16,7 @@ const program = Effect.scoped(
             : {}),
           ...(process.env.VECTIS_QEMU ? { qemu: process.env.VECTIS_QEMU } : {}),
           ...(process.env.VECTIS_QEMU_IMG ? { qemuImg: process.env.VECTIS_QEMU_IMG } : {}),
+          ...(process.env.VECTIS_SWTPM ? { swtpm: process.env.VECTIS_SWTPM } : {}),
           ...(process.env.VECTIS_KEYCHAIN_HELPER
             ? { keychainHelper: process.env.VECTIS_KEYCHAIN_HELPER }
             : {}),

@@ -21,7 +21,8 @@ export const Environment = Schema.Struct({
   knownHostsPath: Schema.optional(Schema.String),
   seedPath: Schema.optional(Schema.String),
   firmwarePath: Schema.optional(Schema.String),
-  tpmSocket: Schema.optional(Schema.String),
+  firmwareVarsPath: Schema.optional(Schema.String),
+  tpmStatePath: Schema.optional(Schema.String),
 });
 export type Environment = typeof Environment.Type;
 export const Operation = Schema.Struct({
