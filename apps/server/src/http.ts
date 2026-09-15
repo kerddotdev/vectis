@@ -1,0 +1,165 @@
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { randomBytes, timingSafeEqual } from "node:crypto";
+import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { Schema } from "effect";
+import {
+  capabilities,
+  Request,
+  VectisError,
+  type Connection,
+} from "../../../packages/protocol/src/index.js";
+import { Store } from "./store.js";
+import { Service } from "./service.js";
+import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
+
+function reply(response: ServerResponse, status: number, body: unknown) {
+  response.writeHead(status, {
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  });
+  response.end(JSON.stringify(body));
+}
+async function body(request: IncomingMessage) {
+  let length = 0;
+  const chunks: Buffer[] = [];
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    length += buffer.length;
+    if (length > 1024 * 1024) throw new VectisError("payload_too_large", "Request exceeds 1 MiB.");
+    chunks.push(buffer);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new VectisError("invalid_json", "Request body is not valid JSON.");
+  }
+}
+export async function startService(
+  options: RuntimeOptions & { port?: number; token?: string; onShutdown?: () => void },
+) {
+  await mkdir(options.home, { recursive: true, mode: 0o700 });
+  const lockPath = join(options.home, "service.lock");
+  let lock;
+  try {
+    lock = await open(lockPath, "wx", 0o600);
+  } catch {
+    const value: unknown = JSON.parse(await readFile(lockPath, "utf8").catch(() => "null"));
+    const owner = Schema.decodeUnknownOption(Schema.Struct({ pid: Schema.Int }))(value);
+    if (owner._tag === "Some") {
+      try {
+        process.kill(owner.value.pid, 0);
+        throw new VectisError("already_running", "A service already owns this home.");
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) throw error;
+      }
+      await rm(lockPath);
+      lock = await open(lockPath, "wx", 0o600);
+    } else
+      throw new VectisError(
+        "invalid_lock",
+        "The service lock cannot be verified.",
+        "Inspect the isolated home before removing the stale lock.",
+      );
+  }
+  await lock.writeFile(JSON.stringify({ pid: process.pid }));
+  await lock.close();
+  const token = options.token ?? randomBytes(32).toString("hex");
+  const store = new Store(join(options.home, "state.sqlite"));
+  const service = new Service(store, new VmRuntime(options));
+  const server = createServer((request, response) => {
+    void (async () => {
+      if (request.headers.origin || request.headers["sec-fetch-site"] === "cross-site")
+        return reply(response, 403, {
+          code: "origin_denied",
+          message: "Browser origins are not allowed.",
+          nextStep: "Use the Vectis client.",
+        });
+      const supplied = Buffer.from(request.headers.authorization ?? "");
+      const expected = Buffer.from(`Bearer ${token}`);
+      if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected))
+        return reply(response, 401, {
+          code: "unauthorized",
+          message: "Invalid local session.",
+          nextStep: "Reload the local service connection.",
+        });
+      if (request.method === "POST" && request.url === "/v1/shutdown") {
+        reply(response, 202, { stopping: true });
+        options.onShutdown?.();
+        return;
+      }
+      if (request.method === "GET" && request.url === "/v1/status")
+        return reply(response, 200, store.snapshot());
+      if (request.method === "GET" && request.url === "/v1/capabilities")
+        return reply(response, 200, { protocolVersion: 1, capabilities });
+      if (request.method === "POST" && request.url === "/v1/commands") {
+        let input;
+        try {
+          input = Schema.decodeUnknownSync(Request, { onExcessProperty: "error" })(
+            await body(request),
+          );
+        } catch (error) {
+          if (error instanceof VectisError) throw error;
+          throw new VectisError("invalid_request", "Request does not match the protocol.");
+        }
+        return reply(response, 202, service.submit(input.key, input.command));
+      }
+      reply(response, 404, {
+        code: "not_found",
+        message: "Unknown endpoint.",
+        nextStep: "Run vectis capabilities.",
+      });
+    })().catch((error) => {
+      const issue =
+        error instanceof VectisError
+          ? error
+          : new VectisError("internal_error", "The service could not process the request.");
+      reply(response, issue.code === "idempotency_conflict" ? 409 : 400, {
+        code: issue.code,
+        message: issue.message,
+        nextStep: issue.nextStep,
+      });
+    });
+  });
+  server.requestTimeout = 15000;
+  server.headersTimeout = 10000;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(options.port ?? 0, "127.0.0.1", () => {
+        server.off("error", reject);
+        resolve();
+      });
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No server address.");
+    const connection: Connection = {
+      protocolVersion: 1,
+      url: `http://127.0.0.1:${address.port}`,
+      token,
+      pid: process.pid,
+    };
+    await writeFile(join(options.home, "connection.json"), JSON.stringify(connection), {
+      mode: 0o600,
+    });
+    return {
+      connection,
+      store,
+      service,
+      close: async () => {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await service.close();
+        store.close();
+        await rm(join(options.home, "connection.json"), { force: true });
+        await rm(lockPath, { force: true });
+      },
+    };
+  } catch (error) {
+    server.close();
+    await service.close();
+    store.close();
+    await rm(lockPath, { force: true });
+    throw error;
+  }
+}
