@@ -115,6 +115,14 @@ function Overview() {
               <code>{operation.id}</code>
             </div>
             <span className="status">{operation.status}</span>
+            {operation.command === "runner.run" && operation.status === "action_required" && (
+              <button
+                className="secondary"
+                onClick={() => void submit({ type: "runner.reconcile", id: operation.id })}
+              >
+                Reconcile runner
+              </button>
+            )}
             {operation.command === "runner.run" && operation.status === "running" && (
               <button
                 className="secondary"

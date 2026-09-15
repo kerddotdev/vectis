@@ -72,6 +72,7 @@ Usage: vectis <command> [options]
   instance stop <id>             Stop an owned VM
   instance reconcile <id>        Recheck an interrupted instance safely
   runner run <binding-id>        Start one disposable runner (requires a prepared connected environment)
+  runner reconcile <operation-id>  Clean an interrupted runner after verifying its VM stopped
   operation cancel <id>          Request runner cancellation and cleanup
   operation get <id>             Inspect an operation
   operation wait <id>            Wait for an operation's terminal state
@@ -279,6 +280,8 @@ GitHub pairing require separately configured development services.
   let request: Command;
   if (command === "pause" || command === "resume")
     request = { type: "machine.pause", paused: command === "pause" };
+  else if (command === "runner" && subcommand === "reconcile" && id)
+    request = decodeCommand({ type: "runner.reconcile", id });
   else if (command === "runner" && subcommand === "run" && id)
     request = decodeCommand({ type: "runner.run", bindingId: id });
   else if (command === "operation" && subcommand === "cancel" && id)

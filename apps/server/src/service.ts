@@ -121,7 +121,15 @@ export class Service {
                 message: completed.message,
                 result: {
                   ...completed.progress,
-                  ...("code" in completed ? { code: completed.code } : {}),
+                  ...("code" in completed
+                    ? {
+                        code: completed.code,
+                        nextStep:
+                          completed.status === "action_required"
+                            ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
+                            : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                      }
+                    : {}),
                 },
               });
             })
