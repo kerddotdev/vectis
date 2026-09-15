@@ -17,6 +17,7 @@ export interface OwnedInstance {
   readonly id: string;
   readonly process: ChildProcess;
   readonly directory: string;
+  readonly settled: Promise<void>;
 }
 export class VmRuntime {
   private readonly owned = new Map<string, OwnedInstance>();
@@ -38,7 +39,11 @@ export class VmRuntime {
         "Provide an existing raw Linux disk, qcow2 Windows disk, or installed macOS bundle.",
       );
   }
-  async start(id: string, environment: Environment, onExit: () => void): Promise<OwnedInstance> {
+  async start(
+    id: string,
+    environment: Environment,
+    onExit: (cleaned: boolean) => void,
+  ): Promise<OwnedInstance> {
     await this.validate(environment);
     if (process.platform !== "darwin" || process.arch !== "arm64")
       throw new VectisError("unsupported_host", "This release requires an Apple Silicon Mac.");
@@ -143,29 +148,43 @@ export class VmRuntime {
         stdio: ["pipe", "pipe", "ignore"],
         detached: false,
       });
+      const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      const settled = closed.then(async () => {
+        let cleaned = false;
+        try {
+          await rm(directory, { recursive: true, force: true });
+          cleaned = true;
+        } finally {
+          this.owned.delete(id);
+          onExit(cleaned);
+        }
+      });
+      void settled.catch(() => {});
+      const instance = { id, process: child, directory, settled };
+      this.owned.set(id, instance);
       try {
         if (environment.os === "windows") await once(child, "spawn");
         else await waitForAppleVm(child);
+        if (child.exitCode !== null || child.signalCode !== null)
+          throw new VectisError("vm_start_failed", "The VM stopped during startup.");
       } catch (error) {
-        if (child.pid && child.exitCode === null && child.signalCode === null) {
-          const exited = once(child, "exit");
+        if (child.pid && child.exitCode === null && child.signalCode === null)
           child.kill("SIGKILL");
-          await exited;
-        }
+        await settled;
         throw error;
       }
       child.stdout?.resume();
-      const instance = { id, process: child, directory };
-      this.owned.set(id, instance);
-      child.once("exit", () => {
-        this.owned.delete(id);
-        onExit();
-      });
       return instance;
     } catch (error) {
       await rm(directory, { recursive: true, force: true });
       throw error;
     }
+  }
+  async hasWorkDirectory(id: string) {
+    return stat(join(this.options.home, "instances", id)).then(
+      () => true,
+      () => false,
+    );
   }
   async stop(id: string) {
     const instance = this.owned.get(id);
@@ -175,15 +194,17 @@ export class VmRuntime {
         "This service does not own a running instance with that ID.",
         "Inspect interrupted instances; Vectis never kills an unverified PID.",
       );
-    const exited = once(instance.process, "exit");
-    instance.process.kill("SIGTERM");
-    const timer = setTimeout(() => instance.process.kill("SIGKILL"), 5000);
+    if (instance.process.exitCode === null && instance.process.signalCode === null)
+      instance.process.kill("SIGTERM");
+    const timer = setTimeout(() => {
+      if (instance.process.exitCode === null && instance.process.signalCode === null)
+        instance.process.kill("SIGKILL");
+    }, 5000);
     try {
-      await exited;
+      await instance.settled;
     } finally {
       clearTimeout(timer);
     }
-    await rm(instance.directory, { recursive: true, force: true });
   }
   async close() {
     await Promise.all([...this.owned.keys()].map((id) => this.stop(id)));

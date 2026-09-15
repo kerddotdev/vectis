@@ -98,24 +98,35 @@ export class Service {
           )
             throw new VectisError("macos_limit", "The two-instance macOS limit has been reached.");
           const id = randomUUID();
-          const instance = await this.runtime.start(id, environment, () => {
-            const current = this.store.get("instance", id);
-            if (current)
-              this.store.put("instance", id, {
-                id,
-                environmentId: environment.id,
-                status: "stopped",
-                pid: 0,
-                createdAt: operation.createdAt,
-              });
-          });
-          this.store.put("instance", id, {
+          const record = {
             id,
             environmentId: environment.id,
-            status: "running",
-            pid: instance.process.pid ?? 0,
-            createdAt: new Date().toISOString(),
-          });
+            status: "interrupted" as const,
+            pid: 0,
+            createdAt: operation.createdAt,
+          };
+          this.store.put("instance", id, record);
+          try {
+            const instance = await this.runtime.start(id, environment, (cleaned) => {
+              this.store.put("instance", id, {
+                ...record,
+                status: cleaned ? "stopped" : "interrupted",
+                pid: 0,
+              });
+            });
+            this.store.put("instance", id, {
+              ...record,
+              status: "running",
+              pid: instance.process.pid ?? 0,
+            });
+          } catch (error) {
+            const remaining = await this.runtime.hasWorkDirectory(id);
+            this.store.put("instance", id, {
+              ...record,
+              status: remaining ? "interrupted" : "stopped",
+            });
+            throw error;
+          }
           result = { instanceId: id };
           break;
         }
