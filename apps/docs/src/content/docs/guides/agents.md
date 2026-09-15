@@ -15,6 +15,8 @@ Use `--json` and a stable `--key` for mutations. Reuse a key only when retrying 
 
 All current CLI commands are non-interactive. `--non-interactive` explicitly documents that intent. `--timeout` bounds waiting; cancelling a wait does not cancel the underlying operation.
 
+After cloud pairing and repository linking, run `pnpm vectis repository list --json` to discover the machine's repository IDs and environment bindings. A connection is not proof of runner readiness. Missing cloud access returns an error with a next step, not an empty successful list.
+
 ## MCP
 
 After `pnpm build`, configure a stdio MCP client with:
@@ -27,7 +29,7 @@ After `pnpm build`, configure a stdio MCP client with:
 }
 ```
 
-Discover tools, then call `vectis_capabilities`. `vectis_status` and `vectis_storage` inspect local state. `vectis_command` accepts the shared command schema and an idempotency key. `vectis_wait` observes completion. State-changing tools require the same running local service as the CLI.
+Discover tools, then call `vectis_capabilities`. `vectis_status`, `vectis_storage`, and `vectis_doctor` inspect local state and service configuration. `vectis_repositories` lists currently authorized repository connections for the paired machine. `vectis_command` accepts the shared command schema and an idempotency key. `vectis_wait` observes completion. State-changing tools require the same running local service as the CLI.
 
 ## Skill
 
