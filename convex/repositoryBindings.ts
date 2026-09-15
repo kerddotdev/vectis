@@ -101,7 +101,13 @@ export const forMachine = query({
       .query("repositoryBindings")
       .withIndex("by_machine", (q) => q.eq("machineId", target._id))
       .take(100);
-    return bindings.filter((binding) => binding.enabled && binding.owner === target.owner);
+    const visible = [];
+    for (const binding of bindings) {
+      if (!binding.enabled || binding.owner !== target.owner) continue;
+      const account = await ctx.db.get("githubAccounts", binding.accountId);
+      if (account?.owner === target.owner) visible.push(binding);
+    }
+    return visible;
   },
 });
 export const disable = mutation({

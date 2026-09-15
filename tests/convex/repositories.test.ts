@@ -86,4 +86,10 @@ test("foreign account and machine ownership are rechecked at persistence", async
     t.mutation(internal.repositoryBindings.save, { ...args, machineId }),
   ).rejects.toThrow();
   expect(await owner.query(api.repositoryBindings.list, {})).toHaveLength(1);
+  const device = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: machineId,
+    credentialVersion: 0,
+  });
+  expect(await device.query(api.repositoryBindings.forMachine, {})).toEqual([]);
 });
