@@ -33,6 +33,8 @@ Use ARM64 firmware with Secure Boot support and a separate raw UEFI variables te
 
 Inspect variables images with `qemu-img info` before use. An `.fd` filename does not guarantee raw format: UTM's compressed variables template contains a QCOW2 image. Convert a copy with `qemu-img convert -f qcow2 -O raw source.fd variables.raw`; do not truncate or pass a QCOW2 template to a raw pflash drive.
 
+Set the prepared Windows image timezone to UTC and synchronize its clock before shutdown. The runtime supplies a UTC hardware clock; a Windows image that interprets that clock as a different local timezone can reject GitHub authentication tokens after cloning.
+
 The runtime uses an NVMe system disk with boot priority zero, GIC version 3, and a VirtIO graphics device alongside ramfb. Prepared images must contain the Windows ARM64 VirtIO network driver. Each clone gets a dynamically assigned SSH forward bound only to `127.0.0.1`; QMP reports the actual port. No software-emulation fallback is enabled.
 
 For OpenSSH, enable public-key authentication and install the image's authorized key with the Windows-required ACLs. The default OpenSSH firewall rule can be restricted to the Private profile while the VM network uses Public. Permit the rule for the required profiles and restrict its remote address to QEMU's host-facing `10.0.2.2`. Do not disable the guest firewall. See [Microsoft's OpenSSH configuration](https://learn.microsoft.com/en-us/windows-server/administration/openssh/openssh-server-configuration).

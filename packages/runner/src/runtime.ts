@@ -150,6 +150,8 @@ export class VmRuntime {
         args = [
           "-machine",
           "virt,accel=hvf,gic-version=3",
+          "-rtc",
+          "base=utc",
           "-cpu",
           "host",
           "-smp",
