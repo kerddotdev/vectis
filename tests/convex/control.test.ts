@@ -3,6 +3,15 @@ import { convexTest } from "convex-test";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api } from "../../convex/_generated/api.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { startService } from "../../apps/server/src/http.js";
+import { VectisClient } from "../../packages/client/src/index.js";
+import {
+  advanceRemoteOperation,
+  type Acknowledgement,
+} from "../../packages/client/src/remote-operation.js";
 
 const modules = {
   "../../convex/credentials.ts": () => import("../../convex/credentials.js"),
@@ -128,4 +137,64 @@ test("machine secrets are hashed and exchange for short-lived signed JWTs until 
   });
   await owner.mutation(api.machines.revoke, { id: machineId });
   expect((await exchange()).status).toBe(401);
+});
+
+test("lost local replies and relay restart reuse the durable local operation", async () => {
+  const t = convexTest(schema, modules);
+  const owner = t.withIdentity(identity("relay-owner"));
+  const home = await mkdtemp(join(tmpdir(), "vectis-relay-"));
+  const server = await startService({ home });
+  try {
+    const local = new VectisClient(server.connection);
+    const machineId = await owner.mutation(api.machines.enroll, {
+      localId: (await local.status()).machine.id,
+      name: "Relay test",
+    });
+    const device = t.withIdentity({
+      issuer: "https://machines.test",
+      subject: machineId,
+      credentialVersion: 0,
+    });
+    const id = await owner.mutation(api.operations.submit, {
+      machineId,
+      key: "pause",
+      commandJson: JSON.stringify({ type: "machine.pause", paused: true }),
+    });
+    const pending = async () => {
+      const [operation] = await device.query(api.operations.pending, {});
+      if (!operation) throw new Error("Expected pending operation.");
+      return operation;
+    };
+    const acknowledge = (args: Acknowledgement) =>
+      device.mutation(api.operations.acknowledge, args);
+    const signal = new AbortController().signal;
+    await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+    expect((await owner.query(api.operations.get, { id })).phase).toBe("claimed");
+    await expect(
+      advanceRemoteOperation(
+        await pending(),
+        {
+          submit: async (...args) => {
+            await local.submit(...args);
+            throw new Error("Connection lost after the service accepted the command.");
+          },
+        },
+        acknowledge,
+        signal,
+      ),
+    ).rejects.toThrow("Connection lost");
+    expect((await owner.query(api.operations.get, { id })).phase).toBe("claimed");
+    await server.service.drain();
+    await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+    expect((await owner.query(api.operations.get, { id })).phase).toBe("running");
+    await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+    const result = await owner.query(api.operations.get, { id });
+    expect(result.phase).toBe("succeeded");
+    expect((await local.status()).operations).toHaveLength(1);
+    expect((await local.status()).machine.paused).toBe(true);
+    expect(await device.query(api.operations.pending, {})).toEqual([]);
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
 });
