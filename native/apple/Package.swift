@@ -4,6 +4,6 @@ import PackageDescription
 let package = Package(
     name: "VectisVM",
     platforms: [.macOS(.v15)],
-    products: [.executable(name: "vectis-vm", targets: ["VectisVM"])],
-    targets: [.executableTarget(name: "VectisVM")]
+    products: [.executable(name: "vectis-vm", targets: ["VectisVM"]), .executable(name: "vectis-keychain", targets: ["VectisKeychain"])],
+    targets: [.executableTarget(name: "VectisVM"), .executableTarget(name: "VectisKeychain")]
 )
