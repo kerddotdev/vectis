@@ -2,7 +2,37 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 
+import { smallJson } from "./httpBody.js";
+
 const router = httpRouter();
+router.route({
+  path: "/machine/pairing",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    let value: unknown;
+    try {
+      value = await smallJson(request);
+    } catch {
+      return Response.json({ code: "invalid_request" }, { status: 400 });
+    }
+    if (
+      !value ||
+      typeof value !== "object" ||
+      !("secret" in value) ||
+      typeof value.secret !== "string" ||
+      !/^[A-Za-z0-9_-]{43}$/.test(value.secret)
+    )
+      return Response.json({ code: "invalid_request" }, { status: 400 });
+    const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value.secret));
+    const requestDigest = Array.from(new Uint8Array(hash), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    const pairing = await ctx.runQuery(internal.pairings.resolve, { requestDigest });
+    return Response.json(pairing ?? { state: "pending" }, {
+      headers: { "Cache-Control": "no-store" },
+    });
+  }),
+});
 router.route({
   path: "/.well-known/jwks.json",
   method: "GET",
