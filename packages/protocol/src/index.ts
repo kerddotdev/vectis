@@ -122,6 +122,10 @@ export const Connection = Schema.Struct({
 export type Connection = typeof Connection.Type;
 export const capabilities = [
   {
+    name: "job.list",
+    description: "Read the latest 100 GitHub job records for an authorized repository binding.",
+  },
+  {
     name: "runner.reconcile",
     description: "Clean an interrupted runner registration after its VM has been verified stopped.",
   },

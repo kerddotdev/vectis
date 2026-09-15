@@ -138,6 +138,21 @@ export function startCloudRelay(
       );
   }
   return {
+    async jobs(bindingId: string) {
+      requireConnection();
+      try {
+        return await interruptible(
+          cloud.query(api.jobs.list, { bindingId }),
+          AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+        );
+      } catch {
+        throw new VectisError(
+          "job_access_unavailable",
+          "Repository job state could not be read.",
+          "Check this machine's repository binding and cloud connection, then retry.",
+        );
+      }
+    },
     async findRunner(key: string, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();

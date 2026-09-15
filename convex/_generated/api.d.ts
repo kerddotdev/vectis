@@ -22,6 +22,7 @@ import type * as githubValidators from "../githubValidators.js";
 import type * as githubWebhook from "../githubWebhook.js";
 import type * as http from "../http.js";
 import type * as httpBody from "../httpBody.js";
+import type * as jobs from "../jobs.js";
 import type * as machineTokens from "../machineTokens.js";
 import type * as machines from "../machines.js";
 import type * as operations from "../operations.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   githubWebhook: typeof githubWebhook;
   http: typeof http;
   httpBody: typeof httpBody;
+  jobs: typeof jobs;
   machineTokens: typeof machineTokens;
   machines: typeof machines;
   operations: typeof operations;

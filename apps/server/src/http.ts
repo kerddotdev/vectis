@@ -129,6 +129,14 @@ export async function startService(
         options.onShutdown?.();
         return;
       }
+      if (request.method === "GET" && request.url?.startsWith("/v1/jobs?")) {
+        const bindingId = new URL(request.url, "http://127.0.0.1").searchParams.get("bindingId");
+        if (!bindingId)
+          throw new VectisError("invalid_request", "Provide a repository binding ID.");
+        if (!relay)
+          throw new VectisError("cloud_unconfigured", "Connect this machine before reading jobs.");
+        return reply(response, 200, await relay.jobs(bindingId));
+      }
       if (request.method === "GET" && request.url === "/v1/repositories") {
         if (!relay)
           throw new VectisError(
