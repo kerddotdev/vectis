@@ -7,6 +7,7 @@ import { ConvexError } from "convex/values";
 import { Schema } from "effect";
 import { api } from "../../../convex/_generated/api.js";
 import { PairingDescriptor } from "../../../packages/protocol/src/pairing.js";
+import { GitHubConnections } from "./github.js";
 import "./style.css";
 
 const deploymentUrl: string | undefined = import.meta.env.VITE_CONVEX_URL;
@@ -45,6 +46,9 @@ function Pairing() {
         <a className="button" href="/docs/guides/local-setup/">
           Read the setup guide
         </a>
+        <p>
+          <a href="/connect?github=1">Connect a GitHub account</a>
+        </p>
       </>
     );
   async function connect() {
@@ -142,7 +146,11 @@ function App() {
       </header>
       <main>
         {location.pathname === "/connect" ? (
-          <Pairing />
+          new URLSearchParams(location.search).get("github") === "1" ? (
+            <GitHubConnections />
+          ) : (
+            <Pairing />
+          )
         ) : (
           <>
             <span className="status">Local GitHub Actions</span>
