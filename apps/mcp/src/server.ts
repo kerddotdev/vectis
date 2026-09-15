@@ -11,6 +11,8 @@ import {
   capabilities,
   VectisError,
 } from "../../../packages/protocol/src/index.js";
+import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
+import type { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import type { VectisClient } from "../../../packages/client/src/index.js";
 
@@ -59,11 +61,17 @@ const tools = [
 const serviceInput = Schema.Struct({
   action: Schema.Literals(["install", "start", "stop", "status", "uninstall"]),
 });
+const cloudInput = Schema.Struct({
+  action: Schema.Literals(["pair", "finish"]),
+  deploymentUrl: Schema.optional(Schema.String),
+});
+const cloudSchema = Schema.toJsonSchemaDocument(cloudInput);
 const serviceSchema = Schema.toJsonSchemaDocument(serviceInput);
 
 export function createMcpServer(
   connect: () => Promise<VectisClient>,
   loginService?: () => Promise<LaunchAgent>,
+  pairing?: { home: string; credentials: KeychainCredentials },
 ) {
   const availableTools = loginService
     ? [
@@ -76,7 +84,17 @@ export function createMcpServer(
           annotations: { readOnlyHint: false, destructiveHint: true },
         }),
       ]
-    : tools;
+    : [...tools];
+  if (pairing)
+    availableTools.push(
+      ToolSchema.parse({
+        name: "vectis_cloud",
+        description:
+          "Pair this local machine with its owner's Vectis account. The pair action returns a private approval link and verification code for the human; never approve it automatically or share it. After human approval, finish persists the credential in Keychain and reloads the relay without stopping VMs. Requires a running local service.",
+        inputSchema: { ...cloudSchema.schema, $defs: cloudSchema.definitions },
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      }),
+    );
   const server = new Server(
     { name: "vectis", version: "0.1.0" },
     {
@@ -90,6 +108,29 @@ export function createMcpServer(
     try {
       let result: unknown;
       switch (request.params.name) {
+        case "vectis_cloud": {
+          if (!pairing)
+            throw new VectisError(
+              "setup_required",
+              "Configure the Keychain helper before pairing.",
+            );
+          const input = Schema.decodeUnknownSync(cloudInput, { onExcessProperty: "error" })(
+            request.params.arguments,
+          );
+          result =
+            input.action === "pair"
+              ? await beginPairing(
+                  pairing.home,
+                  input.deploymentUrl ?? "https://clear-hare-471.convex.cloud",
+                  pairing.credentials,
+                )
+              : await finishPairing(
+                  pairing.home,
+                  pairing.credentials,
+                  AbortSignal.any([context.signal, AbortSignal.timeout(15000)]),
+                );
+          break;
+        }
         case "vectis_service": {
           if (!loginService)
             throw new VectisError(

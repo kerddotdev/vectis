@@ -14,6 +14,8 @@ import {
   decodeCommand,
   type Command,
 } from "../../../packages/protocol/src/index.js";
+import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
+import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { localClient } from "../../../packages/client/src/local.js";
 
@@ -22,6 +24,7 @@ async function main() {
     allowPositionals: true,
     options: {
       home: { type: "string" },
+      url: { type: "string" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
       file: { type: "string" },
@@ -45,6 +48,8 @@ async function main() {
 
 Usage: vectis <command> [options]
 
+  cloud pair [--url <deployment>]  Begin browser-approved machine pairing
+  cloud finish                  Complete an approved pairing from Keychain
   service install               Install and start a macOS login service
   service uninstall             Remove login registration, preserving all data
   service status                Inspect login registration for this home
@@ -82,6 +87,23 @@ Examples:
 Only capabilities reported by this build are supported. Cloud setup and
 GitHub pairing require separately configured development services.
 `);
+    return;
+  }
+  if (command === "cloud" && (subcommand === "pair" || subcommand === "finish")) {
+    const helper = process.env.VECTIS_KEYCHAIN_HELPER;
+    if (!helper)
+      throw new VectisError(
+        "setup_required",
+        "Pairing requires VECTIS_KEYCHAIN_HELPER.",
+        "Build the native Keychain helper and configure its absolute path before starting the service and CLI.",
+      );
+    const credentials = new KeychainCredentials(helper);
+    const result =
+      subcommand === "pair"
+        ? await beginPairing(home, values.url ?? "https://clear-hare-471.convex.cloud", credentials)
+        : await finishPairing(home, credentials);
+    output(result);
+    if (result.state === "action_required" || result.state === "pending") process.exitCode = 3;
     return;
   }
   if (command === "capabilities") {
