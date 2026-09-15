@@ -13,6 +13,7 @@ export const prepare = internalAction({
     githubUserId: v.number(),
     name: v.string(),
     label: v.string(),
+    os: v.union(v.literal("Linux"), v.literal("macOS"), v.literal("Windows")),
   },
   handler: async (ctx, args): Promise<{ runnerId: number; encodedConfig: string }> => {
     if (
@@ -41,7 +42,7 @@ export const prepare = internalAction({
       await client.request(token, `${path}/actions/runners/generate-jitconfig`, {
         name: args.name,
         runner_group_id: 1,
-        labels: ["self-hosted", "Linux", "ARM64", args.label],
+        labels: ["self-hosted", args.os, "ARM64", args.label],
         work_folder: "_work",
       }),
     );
