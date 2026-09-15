@@ -16,28 +16,28 @@ import {
 } from "../../../packages/protocol/src/index.js";
 import { localClient } from "../../../packages/client/src/local.js";
 
-const { values, positionals } = parseArgs({
-  allowPositionals: true,
-  options: {
-    home: { type: "string" },
-    json: { type: "boolean" },
-    help: { type: "boolean", short: "h" },
-    file: { type: "string" },
-    key: { type: "string" },
-    wait: { type: "boolean" },
-    "non-interactive": { type: "boolean" },
-    timeout: { type: "string" },
-    cpu: { type: "string" },
-    "memory-mib": { type: "string" },
-    "storage-path": { type: "string" },
-  },
-});
-const home = values.home ?? process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
-const output = (value: unknown) =>
-  process.stdout.write(JSON.stringify(value, null, values.json ? undefined : 2) + "\n");
-const client = () => localClient(home);
-
 async function main() {
+  const { values, positionals } = parseArgs({
+    allowPositionals: true,
+    options: {
+      home: { type: "string" },
+      json: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+      file: { type: "string" },
+      key: { type: "string" },
+      wait: { type: "boolean" },
+      "non-interactive": { type: "boolean" },
+      timeout: { type: "string" },
+      cpu: { type: "string" },
+      "memory-mib": { type: "string" },
+      "storage-path": { type: "string" },
+    },
+  });
+  const home = values.home ?? process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
+  const output = (value: unknown) =>
+    process.stdout.write(JSON.stringify(value, null, values.json ? undefined : 2) + "\n");
+  const client = () => localClient(home);
+
   const [command = "help", subcommand, id] = positionals;
   if (values.help || command === "help") {
     process.stdout.write(`Vectis - local GitHub Actions runner control
@@ -167,6 +167,18 @@ GitHub pairing require separately configured development services.
     });
     return;
   }
+  if (
+    values.timeout !== undefined &&
+    (!Number.isSafeInteger(Number(values.timeout)) ||
+      Number(values.timeout) < 1 ||
+      Number(values.timeout) > 2147483647)
+  )
+    throw new VectisError(
+      "invalid_timeout",
+      "Timeout must be a positive integer below 2147483648 milliseconds.",
+    );
+  if (command === "operation" && subcommand !== "get" && subcommand !== "wait")
+    throw new VectisError("unknown_command", "Use operation get or operation wait.");
   const api = await client();
   if (command === "service" && subcommand === "stop") {
     const response = await fetch(new URL("/v1/shutdown", api.connection.url), {
@@ -196,6 +208,7 @@ GitHub pairing require separately configured development services.
     if (!operation) throw new VectisError("operation_missing", "Operation not found.");
     output(operation);
     if (operation.status === "failed") process.exitCode = 1;
+    if (operation.status === "action_required") process.exitCode = 3;
     return;
   }
   let request: Command;
@@ -241,10 +254,18 @@ main().catch((error) => {
     error instanceof VectisError
       ? error
       : new VectisError(
-          "client_error",
+          error instanceof Error &&
+            "code" in error &&
+            String(error.code).startsWith("ERR_PARSE_ARGS")
+            ? "invalid_arguments"
+            : "client_error",
           error instanceof Error ? error.message : "The request failed.",
-          "Run vectis service start or inspect the selected home.",
+          "Inspect the command input and run vectis --help.",
         );
-  output({ error: { code: issue.code, message: issue.message, nextStep: issue.nextStep } });
+  process.stdout.write(
+    JSON.stringify({
+      error: { code: issue.code, message: issue.message, nextStep: issue.nextStep },
+    }) + "\n",
+  );
   process.exitCode = 1;
 });
