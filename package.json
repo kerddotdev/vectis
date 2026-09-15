@@ -11,9 +11,11 @@
     "format:check": "oxfmt --check .",
     "lint": "oxlint --deny-warnings apps packages scripts",
     "vectis": "node dist/apps/cli/src/main.js",
-    "proof:linux": "node dist/scripts/prove-linux.js"
+    "proof:linux": "node dist/scripts/prove-linux.js",
+    "mcp": "node dist/apps/mcp/src/main.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "convex": "1.45.0",
     "effect": "4.0.0-rc.115",
     "yaml": "2.9.1"
