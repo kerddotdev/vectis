@@ -17,6 +17,7 @@ import type * as githubIdentity from "../githubIdentity.js";
 import type * as githubOAuth from "../githubOAuth.js";
 import type * as githubRepositories from "../githubRepositories.js";
 import type * as githubRunnerProbe from "../githubRunnerProbe.js";
+import type * as githubRunners from "../githubRunners.js";
 import type * as githubValidators from "../githubValidators.js";
 import type * as githubWebhook from "../githubWebhook.js";
 import type * as http from "../http.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   githubOAuth: typeof githubOAuth;
   githubRepositories: typeof githubRepositories;
   githubRunnerProbe: typeof githubRunnerProbe;
+  githubRunners: typeof githubRunners;
   githubValidators: typeof githubValidators;
   githubWebhook: typeof githubWebhook;
   http: typeof http;
