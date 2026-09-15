@@ -8,11 +8,14 @@ import {
   Request,
   VectisError,
   type Connection,
+  type CloudStatus,
 } from "../../../packages/protocol/src/index.js";
 import { storageReport } from "../../../packages/runner/src/storage.js";
 import { Store } from "./store.js";
 import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
+import { VectisClient } from "../../../packages/client/src/index.js";
+import { configuredRelay } from "./cloud.js";
 
 function reply(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, {
@@ -38,7 +41,12 @@ async function body(request: IncomingMessage) {
   }
 }
 export async function startService(
-  options: RuntimeOptions & { port?: number; token?: string; onShutdown?: () => void },
+  options: RuntimeOptions & {
+    port?: number;
+    token?: string;
+    keychainHelper?: string;
+    onShutdown?: () => void;
+  },
 ) {
   await mkdir(options.home, { recursive: true, mode: 0o700 });
   const lockPath = join(options.home, "service.lock");
@@ -69,6 +77,8 @@ export async function startService(
   const token = options.token ?? randomBytes(32).toString("hex");
   const store = new Store(join(options.home, "state.sqlite"));
   const service = new Service(store, new VmRuntime(options));
+  let cloud: CloudStatus = { state: "unconfigured" };
+  let relay: Awaited<ReturnType<typeof configuredRelay>>;
   const server = createServer((request, response) => {
     void (async () => {
       if (request.headers.origin || request.headers["sec-fetch-site"] === "cross-site")
@@ -93,7 +103,7 @@ export async function startService(
       if (request.method === "GET" && request.url === "/v1/storage")
         return reply(response, 200, await storageReport(store.snapshot(), options.home));
       if (request.method === "GET" && request.url === "/v1/status")
-        return reply(response, 200, store.snapshot());
+        return reply(response, 200, { ...store.snapshot(), cloud });
       if (request.method === "GET" && request.url === "/v1/capabilities")
         return reply(response, 200, { protocolVersion: 1, capabilities });
       if (request.method === "POST" && request.url === "/v1/commands") {
@@ -147,11 +157,20 @@ export async function startService(
     await writeFile(join(options.home, "connection.json"), JSON.stringify(connection), {
       mode: 0o600,
     });
+    relay = await configuredRelay(
+      options.home,
+      new VectisClient(connection),
+      options.keychainHelper,
+      (state) => {
+        cloud = state;
+      },
+    );
     return {
       connection,
       store,
       service,
       close: async () => {
+        await relay?.close();
         await new Promise<void>((resolve) => server.close(() => resolve()));
         await service.close();
         store.close();
@@ -160,6 +179,7 @@ export async function startService(
       },
     };
   } catch (error) {
+    await relay?.close();
     server.close();
     await service.close();
     store.close();
