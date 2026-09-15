@@ -4,6 +4,7 @@ import { access, copyFile, cp, mkdir, rm, stat, writeFile } from "node:fs/promis
 import { join, resolve } from "node:path";
 import { cpus, freemem } from "node:os";
 import { once } from "node:events";
+import { waitForAppleVm } from "./apple.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
 
 export interface RuntimeOptions {
@@ -138,10 +139,21 @@ export class VmRuntime {
         { mode: 0o600 },
       );
       const child = spawn(executable, args, {
-        stdio: ["pipe", "ignore", "ignore"],
+        stdio: ["pipe", "pipe", "ignore"],
         detached: false,
       });
-      await once(child, "spawn");
+      try {
+        if (environment.os === "windows") await once(child, "spawn");
+        else await waitForAppleVm(child);
+      } catch (error) {
+        if (child.pid && child.exitCode === null && child.signalCode === null) {
+          const exited = once(child, "exit");
+          child.kill("SIGKILL");
+          await exited;
+        }
+        throw error;
+      }
+      child.stdout?.resume();
       const instance = { id, process: child, directory };
       this.owned.set(id, instance);
       child.once("exit", () => {
