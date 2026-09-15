@@ -20,6 +20,12 @@ export class Service {
   ) {
     store.recover();
   }
+  async initialize() {
+    for (const instance of this.store.snapshot().instances) {
+      if (instance.status === "interrupted" && (await this.runtime.reconcile(instance.id)))
+        this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
+    }
+  }
   submit(key: string, command: Command): Operation {
     if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
     if (key.length > 200) throw new VectisError("invalid_request", "The request key is too long.");
@@ -128,6 +134,18 @@ export class Service {
             throw error;
           }
           result = { instanceId: id };
+          break;
+        }
+        case "instance.reconcile": {
+          const instance = snapshot.instances.find((item) => item.id === command.id);
+          if (!instance) throw new VectisError("instance_missing", "Instance not found.");
+          if (instance.status !== "interrupted" || !(await this.runtime.reconcile(command.id)))
+            throw new VectisError(
+              "reconciliation_required",
+              "Process exit is not yet verified.",
+              "Inspect the instance and retry reconciliation after the runtime has exited.",
+            );
+          this.store.put("instance", command.id, { ...instance, status: "stopped", pid: 0 });
           break;
         }
         case "instance.stop":

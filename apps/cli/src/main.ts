@@ -58,6 +58,7 @@ Usage: vectis <command> [options]
   environment start <id>        Start a disposable VM
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>             Stop an owned VM
+  instance reconcile <id>        Recheck an interrupted instance safely
   operation get <id>             Inspect an operation
   operation wait <id>            Wait for an operation's terminal state
   command --file <path>          Submit any protocol command as JSON
@@ -206,8 +207,8 @@ GitHub pairing require separately configured development services.
     };
   else if (command === "environment" && (subcommand === "start" || subcommand === "remove") && id)
     request = { type: subcommand === "start" ? "environment.start" : "environment.remove", id };
-  else if (command === "instance" && subcommand === "stop" && id)
-    request = { type: "instance.stop", id };
+  else if (command === "instance" && (subcommand === "stop" || subcommand === "reconcile") && id)
+    request = { type: subcommand === "stop" ? "instance.stop" : "instance.reconcile", id };
   else if (command === "command" && values.file)
     request = decodeCommand(JSON.parse(await readFile(values.file, "utf8")));
   else

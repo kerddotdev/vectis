@@ -1,7 +1,8 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
-import { access, copyFile, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, rm, stat, writeFile, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { Schema } from "effect";
 import { cpus } from "node:os";
 import { fileURLToPath } from "node:url";
 import { waitForQemu } from "./qmp.js";
@@ -162,6 +163,11 @@ export class VmRuntime {
         {
           stdio: ["pipe", "pipe", "ignore"],
           detached: false,
+          env: {
+            ...process.env,
+            VECTIS_EXIT_RECEIPT: join(directory, "exit-receipt.json"),
+            VECTIS_INSTANCE_ID: id,
+          },
         },
       );
       child.stdin?.on("error", () => {});
@@ -199,8 +205,32 @@ export class VmRuntime {
   async hasWorkDirectory(id: string) {
     return stat(join(this.options.home, "instances", id)).then(
       () => true,
-      () => false,
+      (error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+        throw error;
+      },
     );
+  }
+  async reconcile(id: string): Promise<boolean> {
+    if (this.owned.has(id)) return false;
+    if (!(await this.hasWorkDirectory(id))) return true;
+    const directory = join(this.options.home, "instances", id);
+    try {
+      const receipt = Schema.decodeUnknownSync(
+        Schema.Struct({ instanceId: Schema.String, pid: Schema.Int }),
+      )(JSON.parse(await readFile(join(directory, "exit-receipt.json"), "utf8")));
+      if (receipt.instanceId !== id || receipt.pid <= 0) return false;
+      try {
+        process.kill(receipt.pid, 0);
+        return false;
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) return false;
+      }
+      await rm(directory, { recursive: true, force: true });
+      return true;
+    } catch {
+      return false;
+    }
   }
   async stop(id: string) {
     const instance = this.owned.get(id);

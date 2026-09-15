@@ -68,6 +68,7 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.start"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("instance.stop"), id: Identifier }),
+  Schema.Struct({ type: Schema.Literal("instance.reconcile"), id: Identifier }),
   Schema.Struct({
     type: Schema.Literal("migration.preview"),
     source: Schema.String,
@@ -104,6 +105,10 @@ export const capabilities = [
     description: "Remove an idle environment definition; never delete the source disk.",
   },
   { name: "environment.start", description: "Start a disposable copy of a prepared environment." },
+  {
+    name: "instance.reconcile",
+    description: "Reconcile an interrupted instance only after verified process exit.",
+  },
   { name: "instance.stop", description: "Stop an instance owned by this service." },
   {
     name: "migration.preview",
