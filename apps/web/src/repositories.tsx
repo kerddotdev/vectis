@@ -15,11 +15,18 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
   const [environmentId, setEnvironmentId] = useState("");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
+  const selectedMachine = machines?.find((item) => item._id === machineId && !item.revoked);
+  const environments = selectedMachine?.environments ?? [];
   async function submit(event: FormEvent) {
     event.preventDefault();
     const account = accounts.find((item) => item.id === accountId);
     const machine = machines?.find((item) => item._id === machineId && !item.revoked);
-    if (!account || !machine) return;
+    if (
+      !account ||
+      !machine ||
+      !environments.some((item) => item.id === environmentId && item.state === "ready")
+    )
+      return;
     setWorking(true);
     setMessage("");
     try {
@@ -77,7 +84,10 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
             <select
               required
               value={machineId}
-              onChange={(event) => setMachineId(event.target.value)}
+              onChange={(event) => {
+                setMachineId(event.target.value);
+                setEnvironmentId("");
+              }}
             >
               <option value="">Select your Mac</option>
               {machines
@@ -90,17 +100,31 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
             </select>
           </label>
           <label>
-            Environment ID
-            <input
+            Prepared environment
+            <select
               required
               value={environmentId}
-              pattern="[A-Za-z0-9][A-Za-z0-9_.-]{0,79}"
               onChange={(event) => setEnvironmentId(event.target.value)}
               aria-describedby="environment-help"
-            />
+            >
+              <option value="">Select an environment</option>
+              {environments.map((environment) => (
+                <option
+                  key={environment.id}
+                  value={environment.id}
+                  disabled={environment.state !== "ready"}
+                >
+                  {environment.name} / {environment.os} / {environment.cpu} cores /{" "}
+                  {environment.memoryMiB} MiB
+                  {environment.state !== "ready" ? " / Setup required" : ""}
+                </option>
+              ))}
+            </select>
           </label>
           <p id="environment-help" className="muted">
-            Use the ID shown in your local Environments view.
+            {environments.length
+              ? "Last reported by your Mac. The service checks current readiness before running work."
+              : "Connect your Mac and register a prepared image in its Environments view."}
           </p>
           <button type="submit">Connect repository</button>
         </fieldset>
