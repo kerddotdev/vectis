@@ -8,6 +8,11 @@ const Installation = Schema.Struct({
   suspended_at: Schema.NullOr(Schema.String),
 });
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString });
+export class GitHubApiError extends Error {
+  constructor(readonly status: number) {
+    super(`GitHub API request failed (${status}).`);
+  }
+}
 export class GitHubAppClient {
   constructor(private readonly app: { appId: number; clientId: string; privateKey: string }) {}
   private jwt() {
@@ -17,10 +22,21 @@ export class GitHubAppClient {
     return `${data}.${sign("RSA-SHA256", Buffer.from(data), createPrivateKey(this.app.privateKey)).toString("base64url")}`;
   }
   async request(token: string, path: string, body?: unknown): Promise<unknown> {
+    return this.send(token, path, body === undefined ? "GET" : "POST", body);
+  }
+  async delete(token: string, path: string): Promise<void> {
+    await this.send(token, path, "DELETE");
+  }
+  private async send(
+    token: string,
+    path: string,
+    method: "GET" | "POST" | "DELETE",
+    body?: unknown,
+  ): Promise<unknown> {
     if (!path.startsWith("/") || path.startsWith("//") || path.includes(".."))
       throw new Error("Invalid GitHub API path.");
     const response = await fetch(`https://api.github.com${path}`, {
-      method: body === undefined ? "GET" : "POST",
+      method,
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: "application/vnd.github+json",
@@ -33,8 +49,9 @@ export class GitHubAppClient {
     });
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error(`GitHub API request failed (${response.status}).`);
+      throw new GitHubApiError(response.status);
     }
+    if (response.status === 204) return null;
     const reader = response.body?.getReader();
     if (!reader) throw new Error("GitHub returned no response body.");
     let size = 0;
