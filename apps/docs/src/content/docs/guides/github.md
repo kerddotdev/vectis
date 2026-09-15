@@ -3,6 +3,8 @@ title: Connect GitHub accounts
 description: Verify a GitHub account and review its App installations.
 ---
 
+Run `vectis github connect --json` or call the MCP tool `vectis_github_connect` to discover the browser URL. Both return `action_required`; the CLI exits with code 3 because browser interaction is required. This command does not poll for completion. They do not require a running local service.
+
 Open [GitHub connections](https://vectis.kerd.dev/connect?github=1) and sign in to Vectis. Choose **Connect a GitHub account**, select the intended account on GitHub, and authorize the Vectis development App. When you return, review the verified login and confirm the connection.
 
 You can repeat this for another GitHub account. The Vectis sign-in account owns the connections; signing in through Clerk does not automatically prove ownership of every GitHub account.
