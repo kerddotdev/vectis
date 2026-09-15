@@ -1,6 +1,7 @@
 "use node";
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
+import type { RunnerGrant } from "../packages/protocol/src/runners.js";
 import { action } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { GitHubApiError, GitHubAppClient } from "../packages/github/src/app-client.js";
@@ -8,20 +9,10 @@ import { GitHubApiError, GitHubAppClient } from "../packages/github/src/app-clie
 const Runner = Schema.Struct({ id: Schema.Int, name: Schema.String });
 const Registration = Schema.Struct({ runner: Runner, encoded_jit_config: Schema.NonEmptyString });
 const Pool = Schema.Struct({ total_count: Schema.Int, runners: Schema.Array(Runner) });
-type Grant =
-  | {
-      state: "ready";
-      id: string;
-      runnerId: number;
-      encodedConfig: string;
-      environmentId: string;
-      os: "linux" | "macos" | "windows";
-    }
-  | { state: "pending" | "action_required" | "released"; id: string };
 
 export const prepare = action({
   args: { bindingId: v.string(), key: v.string() },
-  handler: async (ctx, args): Promise<Grant> => {
+  handler: async (ctx, args): Promise<RunnerGrant> => {
     if (!args.key.trim() || args.key.length > 200)
       throw new ConvexError({ code: "invalid_runner_request" });
     const authority = await ctx.runQuery(internal.runnerLeases.authorize, {

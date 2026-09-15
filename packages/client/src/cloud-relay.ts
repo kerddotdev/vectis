@@ -1,3 +1,5 @@
+import { Schema } from "effect";
+import { RunnerGrant } from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api.js";
 import { VectisError } from "../../protocol/src/index.js";
@@ -127,7 +129,32 @@ export function startCloudRelay(
   });
   const interval = setInterval(tick, 2000);
   authenticate();
+  function requireConnection() {
+    if (!authenticated || abort.signal.aborted)
+      throw new VectisError(
+        "cloud_unavailable",
+        "The machine cloud connection is unavailable.",
+        "Reconnect this machine before requesting runner control.",
+      );
+  }
   return {
+    async prepareRunner(bindingId: string, key: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const value = await interruptible(
+        cloud.action(api.githubRunners.prepare, { bindingId, key }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+      );
+      return Schema.decodeUnknownSync(RunnerGrant)(value);
+    },
+    async releaseRunner(id: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      await interruptible(
+        cloud.action(api.githubRunners.release, { id }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+      );
+    },
     async repositories() {
       if (!authenticated || abort.signal.aborted)
         throw new VectisError(
