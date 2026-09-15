@@ -12,7 +12,10 @@
     "lint": "oxlint --deny-warnings apps packages scripts convex tests",
     "vectis": "node dist/apps/cli/src/main.js",
     "proof:linux": "node dist/scripts/prove-linux.js",
-    "mcp": "node dist/apps/mcp/src/main.js"
+    "mcp": "node dist/apps/mcp/src/main.js",
+    "docs:build": "pnpm build && pnpm --filter @vectis/docs build",
+    "docs:dev": "pnpm build && pnpm --filter @vectis/docs dev",
+    "docs:deploy:dev": "pnpm docs:build && pnpm --filter @vectis/docs exec wrangler deploy --env development"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
