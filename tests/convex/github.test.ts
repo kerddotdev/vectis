@@ -71,7 +71,16 @@ test("webhooks verify exact bytes and repeated deliveries store no duplicate cap
     action: "queued",
     installation: { id: 1 },
     repository: { id: 2 },
-    workflow_job: { id: 3 },
+    workflow_job: {
+      id: 3,
+      run_id: 4,
+      name: "Build",
+      status: "queued",
+      conclusion: null,
+      labels: ["self-hosted"],
+      runner_id: null,
+      runner_name: null,
+    },
     private_build_data: "not retained",
   });
   const signature = `sha256=${createHmac("sha256", app.webhook_secret).update(payload).digest("hex")}`;
@@ -91,4 +100,49 @@ test("webhooks verify exact bytes and repeated deliveries store no duplicate cap
   const rows = await t.run(async (ctx) => ctx.db.query("githubDeliveries").collect());
   expect(rows).toHaveLength(1);
   expect(JSON.stringify(rows)).not.toContain("not retained");
+});
+
+test("job tracking ignores late state regressions and retains only bounded metadata", async () => {
+  const t = convexTest(schema, modules);
+  const common = {
+    event: "workflow_job",
+    installationId: 1,
+    repositoryId: 2,
+    jobId: 3,
+    job: {
+      id: 3,
+      run_id: 4,
+      name: "Build",
+      status: "completed" as const,
+      conclusion: "success",
+      labels: ["self-hosted", "vectis-test"],
+      runner_id: 5,
+      runner_name: "vectis-owned",
+    },
+  };
+  await t.mutation(internal.githubDeliveries.accept, { ...common, deliveryId: "complete" });
+  await t.mutation(internal.githubDeliveries.accept, {
+    ...common,
+    deliveryId: "late",
+    job: {
+      ...common.job,
+      status: "queued",
+      conclusion: null,
+      runner_id: null,
+      runner_name: null,
+    },
+  });
+  const jobs = await t.run(async (ctx) => ctx.db.query("githubJobs").collect());
+  expect(jobs).toHaveLength(1);
+  expect(jobs[0]).toMatchObject({ status: "completed", conclusion: "success", runnerId: 5 });
+  await expect(
+    t.mutation(internal.githubDeliveries.accept, {
+      ...common,
+      deliveryId: "oversized",
+      job: {
+        ...common.job,
+        labels: Array.from({ length: 101 }, () => "label"),
+      },
+    }),
+  ).rejects.toThrow();
 });
