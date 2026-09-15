@@ -33,4 +33,4 @@ Discover tools, then call `vectis_capabilities`. `vectis_status` and `vectis_sto
 
 The repository's `skills/vectis/SKILL.md` is a portable skill for agents. Install it using your agent application's skill installer. It contains discovery, mutation, storage, and recovery guidance, without credentials or machine-specific configuration.
 
-For direct documentation retrieval, read [`llms.txt`](/llms.txt). The `/markdown/` files are generated from the same public Markdown that builds this site.
+For direct documentation retrieval, read [`llms.txt`](/llms.txt). The `/docs/markdown/` files are generated from the same public Markdown that builds this site.

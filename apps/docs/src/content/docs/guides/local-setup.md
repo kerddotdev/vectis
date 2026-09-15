@@ -32,7 +32,7 @@ swift build --package-path native/apple
 codesign --force --sign - --entitlements native/apple/entitlements.plist native/apple/.build/out/Products/Debug/vectis-vm
 ```
 
-Set `VECTIS_APPLE_HELPER` to the absolute executable path before starting the service. A previously running service must be restarted to pick up runtime configuration. Use `environment register --file environment.json` to register the prepared image. See the [storage guide](/guides/storage/) for the file format.
+Set `VECTIS_APPLE_HELPER` to the absolute executable path before starting the service. A previously running service must be restarted to pick up runtime configuration. Use `environment register --file environment.json` to register the prepared image. See the [storage guide](/docs/guides/storage/) for the file format.
 
 Registering an environment does not install tools or a GitHub runner in it. Current command execution evidence comes from the Ubuntu cloud-init proof script, not a finished interactive guest management interface.
 

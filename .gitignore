@@ -15,3 +15,4 @@ apps/docs/src/content/docs/reference/cli.md
 .wrangler/
 .dev.vars
 .dev.vars.*
+apps/docs/site/

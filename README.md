@@ -4,6 +4,8 @@ GitHub Actions runners on your own machines, with a shared control interface for
 
 This is a development build, not an installable runner product yet. Start with the [local setup guide](apps/docs/src/content/docs/guides/local-setup.md). It distinguishes working controls from guest setup and GitHub integration that remain under development.
 
+The public site uses `https://vectis.kerd.dev`, with [documentation under `/docs`](https://vectis.kerd.dev/docs/) and the [agent index at `/llms.txt`](https://vectis.kerd.dev/llms.txt).
+
 ```sh
 pnpm install --frozen-lockfile
 pnpm build

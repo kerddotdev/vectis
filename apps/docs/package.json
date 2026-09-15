@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node ../../dist/scripts/generate-docs.js && astro dev",
-    "build": "node ../../dist/scripts/generate-docs.js && astro build",
+    "build": "node ../../dist/scripts/generate-docs.js && astro build && node ../../dist/scripts/stage-site.js",
     "preview": "astro preview"
   },
   "dependencies": {

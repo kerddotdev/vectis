@@ -35,7 +35,7 @@ async function publish(directory: string, relative = "") {
       await mkdir(dirname(target), { recursive: true });
       await writeFile(target, contents);
       const title = /^title: (.+)$/m.exec(contents)?.[1] ?? name;
-      links.push(`- [${title}](/markdown/${name})`);
+      links.push(`- [${title}](https://vectis.kerd.dev/docs/markdown/${name})`);
     }
   }
 }
