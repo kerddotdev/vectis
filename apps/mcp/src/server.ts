@@ -23,6 +23,13 @@ const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
 const tools = [
   {
+    name: "vectis_doctor",
+    description:
+      "Inspect host prerequisites and the running service runtime configuration. Requires a running service.",
+    inputSchema: emptyInput,
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "vectis_github_connect",
     description:
       "Get the guided GitHub connection URL. A human signs in and confirms the selected GitHub identity in the browser. This tool does not grant repository access or start jobs and requires no running service.",
@@ -159,6 +166,9 @@ export function createMcpServer(
         }
         case "vectis_storage":
           result = await (await connect()).storage();
+          break;
+        case "vectis_doctor":
+          result = await (await connect()).doctor();
           break;
         case "vectis_status":
           result = await (await connect()).status();

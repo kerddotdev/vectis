@@ -154,3 +154,21 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     );
   },
 );
+
+test("diagnostics report service configuration independently of the client shell", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-doctor-"));
+  const server = await startService({ home, appleHelper: "/isolated/apple-helper" });
+  try {
+    const api = new VectisClient(server.connection);
+    expect(await api.doctor()).toMatchObject({
+      source: "service",
+      home,
+      configured: { appleHelper: true, qemu: false },
+    });
+    const response = await fetch(`${server.connection.url}/v1/doctor`);
+    expect(response.status).toBe(401);
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});

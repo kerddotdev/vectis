@@ -29,6 +29,9 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
       structuredContent: { result: { key: "mcp-pause", status: "succeeded" } },
     });
     expect((await api.status()).operations).toHaveLength(1);
+    expect(await client.callTool({ name: "vectis_doctor", arguments: {} })).toMatchObject({
+      structuredContent: { result: { source: "service" } },
+    });
     const status = await client.callTool({ name: "vectis_status", arguments: {} });
     expect(status).toMatchObject({ structuredContent: { result: { machine: { paused: true } } } });
   } finally {
