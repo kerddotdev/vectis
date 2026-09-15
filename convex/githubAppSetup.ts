@@ -61,3 +61,11 @@ export const webhookSecret = internalQuery({
   args: {},
   handler: async (ctx) => (await ctx.db.query("githubApps").first())?.webhookSecret ?? null,
 });
+
+export const metadata = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const app = await ctx.db.query("githubApps").first();
+    return app ? { appId: app.appId, slug: app.slug, ownerId: app.ownerId } : null;
+  },
+});
