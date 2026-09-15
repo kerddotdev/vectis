@@ -1,0 +1,12 @@
+--- a/hw/tpm/tpm_tis_sysbus.c
++++ b/hw/tpm/tpm_tis_sysbus.c
+@@ -130,7 +130,8 @@
+         s->ppi.buf = qemu_memalign(host_page_size,
+                                    ROUND_UP(TPM_PPI_ADDR_SIZE, host_page_size));
+         memory_region_init_ram_device_ptr(&s->ppi.ram, OBJECT(dev), "tpm-ppi",
+-                                          TPM_PPI_ADDR_SIZE, s->ppi.buf);
++                                          ROUND_UP(TPM_PPI_ADDR_SIZE, host_page_size),
++                                          s->ppi.buf);
+         sysbus_init_mmio(SYS_BUS_DEVICE(dev), &s->ppi.ram);
+         vmstate_register_ram(&s->ppi.ram, dev);
+     }
