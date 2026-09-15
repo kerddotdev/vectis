@@ -26,6 +26,7 @@ import type * as machines from "../machines.js";
 import type * as operations from "../operations.js";
 import type * as pairings from "../pairings.js";
 import type * as repositoryBindings from "../repositoryBindings.js";
+import type * as runnerLeases from "../runnerLeases.js";
 
 import type {
   ApiFromModules,
@@ -52,6 +53,7 @@ declare const fullApi: ApiFromModules<{
   operations: typeof operations;
   pairings: typeof pairings;
   repositoryBindings: typeof repositoryBindings;
+  runnerLeases: typeof runnerLeases;
 }>;
 
 /**
