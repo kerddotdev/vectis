@@ -1,0 +1,165 @@
+@import "tailwindcss";
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #15191e;
+  color: #e6e9ee;
+  color-scheme: dark;
+  font-synthesis: none;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+.layout {
+  display: grid;
+  grid-template-columns: 210px 1fr;
+  min-height: 100vh;
+}
+aside {
+  background: #1b2027;
+  padding: 32px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+.brand {
+  font-size: 25px;
+  font-weight: 650;
+}
+.brand span,
+.status {
+  color: #a1c8fc;
+}
+nav {
+  display: grid;
+  gap: 12px;
+}
+nav a {
+  padding: 10px 0;
+  color: #acb8c9;
+  text-decoration: none;
+}
+nav a.active {
+  color: #e6e9ee;
+  font-weight: 600;
+}
+main {
+  padding: 30px 48px 70px;
+  min-width: 0;
+}
+header,
+.row,
+.record {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+header,
+.spread,
+.record {
+  justify-content: space-between;
+}
+header {
+  color: #9aabc0;
+  font-size: 14px;
+  margin-bottom: 45px;
+}
+h1 {
+  font-size: 42px;
+  line-height: 1.1;
+  letter-spacing: -0.04em;
+  margin: 24px 0;
+  font-weight: 550;
+}
+h2 {
+  font-size: 23px;
+  font-weight: 550;
+  margin: 12px 0;
+}
+p {
+  color: #acb8c9;
+  line-height: 1.65;
+  margin: 12px 0;
+}
+button {
+  background: #b9d7fe;
+  color: #182638;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  cursor: pointer;
+  min-height: 44px;
+  margin: 12px 12px 12px 0;
+}
+button.secondary {
+  background: transparent;
+  color: #b9d7fe;
+  padding-left: 0;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+:is(a, button, input, select, summary, pre):focus-visible {
+  outline: 3px solid #86b8ff;
+  outline-offset: 4px;
+}
+.section {
+  border-top: 1px solid #35404e;
+  padding-top: 24px;
+  margin-top: 30px;
+}
+.record {
+  border-bottom: 1px solid #28313c;
+  padding: 18px 0;
+  align-items: start;
+}
+.muted,
+code {
+  font-size: 13px;
+  color: #9aabc0;
+}
+.path,
+code,
+pre {
+  overflow-wrap: anywhere;
+}
+summary {
+  cursor: pointer;
+  padding: 12px 0;
+}
+form {
+  max-width: 620px;
+}
+label {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  font-size: 14px;
+  flex: 1;
+}
+input,
+select {
+  font: inherit;
+  background: #1f2731;
+  color: #e6e9ee;
+  border: 1px solid #465263;
+  border-radius: 6px;
+  padding: 11px;
+  width: 100%;
+}
+pre {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+}
+[role="alert"] {
+  color: #ffc2b9;
+}
+.notice {
+  border-left: 3px solid #a1c8fc;
+  padding-left: 20px;
+}
