@@ -24,6 +24,8 @@ export interface OwnedInstance {
   readonly directory: string;
   readonly settled: Promise<void>;
   readonly macAddress?: string;
+  readonly sshHost?: string;
+  readonly sshPort?: number;
 }
 export class VmRuntime {
   private readonly owned = new Map<string, OwnedInstance>();
@@ -147,7 +149,7 @@ export class VmRuntime {
         ]);
         args = [
           "-machine",
-          "virt,accel=hvf",
+          "virt,accel=hvf,gic-version=3",
           "-cpu",
           "host",
           "-smp",
@@ -159,9 +161,15 @@ export class VmRuntime {
           "-drive",
           "file=uefi-vars.fd,if=pflash,format=raw",
           "-drive",
-          "file=disk.qcow2,if=virtio,format=qcow2",
+          "file=disk.qcow2,if=none,id=system,format=qcow2",
+          "-device",
+          "nvme,drive=system,serial=vectis-system,bootindex=0",
+          "-device",
+          "ramfb",
+          "-device",
+          "virtio-gpu-pci",
           "-netdev",
-          "user,id=net0",
+          "user,id=net0,hostfwd=tcp:127.0.0.1:0-:22",
           "-device",
           "virtio-net-pci,netdev=net0",
           "-chardev",
@@ -236,9 +244,10 @@ export class VmRuntime {
       void settled.catch(() => {});
       const instance = { id, process: child, directory, settled };
       this.owned.set(id, instance);
-      let network: { macAddress?: string } = {};
+      let network: { macAddress?: string; sshHost?: string; sshPort?: number } = {};
       try {
-        if (environment.os === "windows") await waitForQemu(child);
+        if (environment.os === "windows")
+          network = { sshHost: "127.0.0.1", sshPort: await waitForQemu(child) };
         else network = await waitForAppleVm(child);
         if (child.exitCode !== null || child.signalCode !== null)
           throw new VectisError("vm_start_failed", "The VM stopped during startup.");

@@ -1,7 +1,33 @@
 import type { ChildProcess } from "node:child_process";
 import { VectisError } from "../../protocol/src/index.js";
 
-export function waitForQemu(child: ChildProcess, timeoutMs = 30000): Promise<void> {
+export function qemuSshPort(report: string): number {
+  if (report.length > 65536)
+    throw new VectisError(
+      "guest_network_unavailable",
+      "QEMU network report exceeds the size limit.",
+    );
+  const ports = [
+    ...report.matchAll(
+      /^\s*TCP\[HOST_FORWARD\]\s+\d+\s+127\.0\.0\.1\s+(\d+)\s+10\.0\.2\.15\s+22\s+\d+\s+\d+\s*$/gm,
+    ),
+  ].map((match) => Number(match[1]));
+  const [port] = ports;
+  if (
+    ports.length !== 1 ||
+    port === undefined ||
+    !Number.isInteger(port) ||
+    port < 1 ||
+    port > 65535
+  )
+    throw new VectisError(
+      "guest_network_unavailable",
+      "QEMU did not report a unique loopback SSH forward.",
+    );
+  return port;
+}
+
+export function waitForQemu(child: ChildProcess, timeoutMs = 30000): Promise<number> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     let diagnostic = "";
@@ -36,8 +62,10 @@ export function waitForQemu(child: ChildProcess, timeoutMs = 30000): Promise<voi
         ),
       );
     };
-    const send = (execute: string, id: string) =>
-      child.stdin?.write(JSON.stringify({ execute, id }) + "\n");
+    const send = (execute: string, id: string, args?: Record<string, string>) =>
+      child.stdin?.write(
+        JSON.stringify({ execute, id, ...(args ? { arguments: args } : {}) }) + "\n",
+      );
     const data = (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
       if (buffer.length > 65536) return fail();
@@ -78,8 +106,23 @@ export function waitForQemu(child: ChildProcess, timeoutMs = 30000): Promise<voi
             status.running !== true
           )
             return fail();
-          cleanup();
-          resolve();
+          phase = "network";
+          send("human-monitor-command", "network", { "command-line": "info usernet" });
+        } else if (
+          phase === "network" &&
+          "id" in message &&
+          message.id === "network" &&
+          "return" in message
+        ) {
+          if (typeof message.return !== "string") return fail();
+          try {
+            const port = qemuSshPort(message.return);
+            cleanup();
+            resolve(port);
+          } catch (error) {
+            cleanup();
+            reject(error);
+          }
           return;
         }
       }
