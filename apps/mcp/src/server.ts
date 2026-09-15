@@ -11,6 +11,7 @@ import {
   capabilities,
   VectisError,
 } from "../../../packages/protocol/src/index.js";
+import { githubConnection } from "../../../packages/client/src/github.js";
 import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
 import type { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
@@ -21,6 +22,13 @@ const waitInput = Schema.Struct({ id: Identifier, timeoutMs: Schema.optional(Sch
 const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
 const tools = [
+  {
+    name: "vectis_github_connect",
+    description:
+      "Get the guided GitHub connection URL. A human signs in and confirms the selected GitHub identity in the browser. This tool does not grant repository access or start jobs and requires no running service.",
+    inputSchema: emptyInput,
+    annotations: { readOnlyHint: true },
+  },
   {
     name: "vectis_storage",
     description:
@@ -108,6 +116,9 @@ export function createMcpServer(
     try {
       let result: unknown;
       switch (request.params.name) {
+        case "vectis_github_connect":
+          result = githubConnection();
+          break;
         case "vectis_cloud": {
           if (!pairing)
             throw new VectisError(
