@@ -47,3 +47,10 @@ export const heartbeat = mutation({
     await ctx.db.patch("machines", record._id, { lastSeenAt: Date.now() });
   },
 });
+export const self = query({
+  args: {},
+  handler: async (ctx) => {
+    const record = await machine(ctx);
+    return { id: record._id, localId: record.localId };
+  },
+});

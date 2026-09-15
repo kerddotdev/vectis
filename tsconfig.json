@@ -8,6 +8,7 @@
     "exactOptionalPropertyTypes": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
+    "allowJs": true,
     "types": ["node"],
     "lib": ["ES2023", "DOM"],
     "rootDir": ".",
@@ -20,6 +21,7 @@
     "scripts/**/*.ts",
     "apps/mcp/src/**/*.ts",
     "convex/**/*.ts",
+    "convex/_generated/*.js",
     "tests/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
