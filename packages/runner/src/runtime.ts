@@ -1,9 +1,9 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { access, copyFile, cp, mkdir, rm, stat, writeFile, readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Schema } from "effect";
-import { cpus } from "node:os";
+import { cpus, totalmem } from "node:os";
 import { fileURLToPath } from "node:url";
 import { waitForQemu } from "./qmp.js";
 import { availableHostMemory } from "./memory.js";
@@ -26,7 +26,15 @@ export interface OwnedInstance {
 export class VmRuntime {
   private readonly owned = new Map<string, OwnedInstance>();
   constructor(readonly options: RuntimeOptions) {}
+  directoryFor(id: string, environment: Environment) {
+    return join(environment.storagePath ?? join(this.options.home, "instances"), id);
+  }
   async validate(environment: Environment) {
+    if (
+      !isAbsolute(environment.basePath) ||
+      (environment.storagePath && !isAbsolute(environment.storagePath))
+    )
+      throw new VectisError("invalid_path", "Image and VM storage paths must be absolute.");
     if (
       !Number.isInteger(environment.cpu) ||
       environment.cpu < 1 ||
@@ -35,6 +43,11 @@ export class VmRuntime {
       throw new VectisError("invalid_resources", "CPU count exceeds this host's capacity.");
     if (!Number.isInteger(environment.memoryMiB) || environment.memoryMiB < 512)
       throw new VectisError("invalid_resources", "Memory must be at least 512 MiB.");
+    if (environment.memoryMiB * 1024 ** 2 > totalmem() * 0.75)
+      throw new VectisError(
+        "invalid_resources",
+        "VM memory exceeds the host budget of 75 percent.",
+      );
     const base = await stat(resolve(environment.basePath)).catch(() => undefined);
     if (!base || (environment.os === "macos" ? !base.isDirectory() : !base.isFile()))
       throw new VectisError(
@@ -73,8 +86,10 @@ export class VmRuntime {
     await access(executable, constants.X_OK).catch(() => {
       throw new VectisError("runtime_missing", "The configured VM runtime is not executable.");
     });
-    const directory = join(this.options.home, "instances", id);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const root = environment.storagePath ?? join(this.options.home, "instances");
+    await mkdir(root, { recursive: true, mode: 0o700 });
+    const directory = this.directoryFor(id, environment);
+    await mkdir(directory, { mode: 0o700 });
     try {
       let args: string[];
       if (environment.os === "windows") {
@@ -202,8 +217,8 @@ export class VmRuntime {
       throw error;
     }
   }
-  async hasWorkDirectory(id: string) {
-    return stat(join(this.options.home, "instances", id)).then(
+  async hasWorkDirectory(id: string, directory = join(this.options.home, "instances", id)) {
+    return stat(directory).then(
       () => true,
       (error: unknown) => {
         if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
@@ -211,10 +226,12 @@ export class VmRuntime {
       },
     );
   }
-  async reconcile(id: string): Promise<boolean> {
+  async reconcile(
+    id: string,
+    directory = join(this.options.home, "instances", id),
+  ): Promise<boolean> {
     if (this.owned.has(id)) return false;
-    if (!(await this.hasWorkDirectory(id))) return true;
-    const directory = join(this.options.home, "instances", id);
+    if (!(await this.hasWorkDirectory(id, directory))) return true;
     try {
       const receipt = Schema.decodeUnknownSync(
         Schema.Struct({ instanceId: Schema.String, pid: Schema.Int }),

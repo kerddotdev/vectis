@@ -27,6 +27,9 @@ const { values, positionals } = parseArgs({
     wait: { type: "boolean" },
     "non-interactive": { type: "boolean" },
     timeout: { type: "string" },
+    cpu: { type: "string" },
+    "memory-mib": { type: "string" },
+    "storage-path": { type: "string" },
   },
 });
 const home = values.home ?? process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
@@ -49,6 +52,7 @@ Usage: vectis <command> [options]
   doctor                        Inspect host and runtime prerequisites
   pause | resume                Control new instance admission
   environment register --file   Register a prepared environment JSON file
+  environment configure <id>    Set --cpu, --memory-mib or --storage-path for future VMs
   environment start <id>        Start a disposable VM
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>             Stop an owned VM
@@ -199,6 +203,14 @@ GitHub pairing require separately configured development services.
         JSON.parse(await readFile(values.file, "utf8")),
       ),
     };
+  else if (command === "environment" && subcommand === "configure" && id)
+    request = decodeCommand({
+      type: "environment.configure",
+      id,
+      ...(values.cpu !== undefined ? { cpu: Number(values.cpu) } : {}),
+      ...(values["memory-mib"] !== undefined ? { memoryMiB: Number(values["memory-mib"]) } : {}),
+      ...(values["storage-path"] !== undefined ? { storagePath: values["storage-path"] } : {}),
+    });
   else if (command === "environment" && (subcommand === "start" || subcommand === "remove") && id)
     request = { type: subcommand === "start" ? "environment.start" : "environment.remove", id };
   else if (command === "instance" && (subcommand === "stop" || subcommand === "reconcile") && id)

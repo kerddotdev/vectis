@@ -57,3 +57,47 @@ test("malformed commands cannot mutate state", async () => {
   expect(response.status).toBe(400);
   expect((await client.status()).machine.paused).toBe(false);
 });
+
+test("configuration changes apply to future VMs without changing active resource reservations", async () => {
+  const { home, server, client } = await fixture();
+  const { writeFile } = await import("node:fs/promises");
+  const basePath = join(home, "base.img");
+  await writeFile(basePath, "test");
+  const environment = {
+    id: "env",
+    name: "Test",
+    os: "linux" as const,
+    basePath,
+    cpu: 1,
+    memoryMiB: 512,
+    state: "ready" as const,
+  };
+  await client.submit({ type: "environment.register", environment }, "register");
+  await server.service.drain();
+  server.store.put("instance", "active", {
+    id: "active",
+    environmentId: "env",
+    status: "running",
+    cpu: 1,
+    memoryMiB: 512,
+    pid: 0,
+    createdAt: new Date().toISOString(),
+  });
+  const operation = await client.submit(
+    {
+      type: "environment.configure",
+      id: "env",
+      memoryMiB: 1024,
+      storagePath: join(home, "selected-volume"),
+    },
+    "configure",
+  );
+  await server.service.drain();
+  expect((await client.wait(operation.id)).status).toBe("succeeded");
+  const snapshot = await client.status();
+  expect(snapshot.environments[0]).toMatchObject({
+    memoryMiB: 1024,
+    storagePath: join(home, "selected-volume"),
+  });
+  expect(snapshot.instances[0]?.memoryMiB).toBe(512);
+});
