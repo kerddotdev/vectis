@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { installation, verifiedUser } from "./githubValidators.js";
 
 export const phase = v.union(
   v.literal("accepted"),
@@ -11,6 +12,30 @@ export const phase = v.union(
   v.literal("cancelled"),
 );
 export default defineSchema({
+  githubLinks: defineTable({
+    owner: v.string(),
+    digest: v.string(),
+    verifier: v.optional(v.string()),
+    expiresAt: v.number(),
+    phase: v.union(
+      v.literal("pending"),
+      v.literal("exchanging"),
+      v.literal("review"),
+      v.literal("failed"),
+    ),
+    user: v.optional(verifiedUser),
+  })
+    .index("by_owner", ["owner"])
+    .index("by_digest", ["digest"]),
+  githubAccounts: defineTable({
+    owner: v.string(),
+    githubId: v.number(),
+    login: v.string(),
+    installations: v.array(installation),
+    verifiedAt: v.number(),
+  })
+    .index("by_owner", ["owner"])
+    .index("by_github", ["githubId"]),
   machines: defineTable({
     owner: v.string(),
     localId: v.string(),
