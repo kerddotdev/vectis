@@ -10,6 +10,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { Schema } from "effect";
+import { MachineRepositories } from "../../../../packages/protocol/src/repositories.js";
 import { Diagnostics } from "../../../../packages/protocol/src/diagnostics.js";
 import { StorageReport } from "../../../../packages/protocol/src/storage.js";
 import { StateProvider, useStateApi } from "./state.js";
@@ -233,6 +234,21 @@ function Storage() {
 }
 function Connections() {
   const { perform } = useStateApi();
+  const [repositories, setRepositories] = useState<MachineRepositories | null>(null);
+  const [loading, setLoading] = useState(false);
+  async function discover() {
+    setLoading(true);
+    setRepositories(null);
+    try {
+      const result = await perform("repositories");
+      if (result !== undefined)
+        setRepositories(Schema.decodeUnknownSync(MachineRepositories)(result));
+    } catch {
+      setMessage("The service returned an invalid repository report.");
+    } finally {
+      setLoading(false);
+    }
+  }
   const [message, setMessage] = useState("");
   async function pair() {
     const value = await perform("cloud.pair");
@@ -251,6 +267,19 @@ function Connections() {
       <h1>Connections</h1>
       <p>Connect this Mac and your GitHub accounts. Build files stay on your machine.</p>
       <button onClick={() => void perform("open.github")}>Connect GitHub</button>
+      <section className="section">
+        <h2>Connected repositories</h2>
+        <button disabled={loading} onClick={() => void discover()}>
+          {loading ? "Checking access" : "Refresh repositories"}
+        </button>
+        {repositories?.length === 0 && <p>No repositories are connected to this Mac.</p>}
+        {repositories?.map((repository) => (
+          <div className="record" key={repository.id}>
+            <strong>{repository.repositoryName}</strong>
+            <span>{repository.environmentId}</span>
+          </div>
+        ))}
+      </section>
       <section className="section">
         <h2>Connect this Mac</h2>
         <button onClick={() => void pair()}>Begin pairing</button>

@@ -49,6 +49,9 @@ else {
             case "status":
               data = await (await localClient(home)).status();
               break;
+            case "repositories":
+              data = await (await localClient(home)).repositories();
+              break;
             case "doctor":
               data = await (await localClient(home)).doctor();
               break;
