@@ -79,6 +79,25 @@ export async function startService(
   const service = new Service(store, new VmRuntime(options));
   let cloud: CloudStatus = { state: "unconfigured" };
   let relay: Awaited<ReturnType<typeof configuredRelay>>;
+  let connection: Connection | undefined;
+  let closing = false;
+  let relayUpdate = Promise.resolve();
+  const reload = () => {
+    const current = relayUpdate.then(async () => {
+      if (closing || !connection) throw new Error("Service is not ready for cloud reload.");
+      await relay?.close();
+      relay = await configuredRelay(
+        options.home,
+        new VectisClient(connection),
+        options.keychainHelper,
+        (value) => {
+          cloud = value;
+        },
+      );
+    });
+    relayUpdate = current.catch(() => {});
+    return current;
+  };
   const server = createServer((request, response) => {
     void (async () => {
       if (request.headers.origin || request.headers["sec-fetch-site"] === "cross-site")
@@ -95,6 +114,11 @@ export async function startService(
           message: "Invalid local session.",
           nextStep: "Reload the local service connection.",
         });
+      if (request.method === "POST" && request.url === "/v1/cloud/reload") {
+        await reload();
+        reply(response, 200, { cloud });
+        return;
+      }
       if (request.method === "POST" && request.url === "/v1/shutdown") {
         reply(response, 202, { stopping: true });
         options.onShutdown?.();
@@ -148,7 +172,7 @@ export async function startService(
     });
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("No server address.");
-    const connection: Connection = {
+    connection = {
       protocolVersion: 1,
       url: `http://127.0.0.1:${address.port}`,
       token,
@@ -157,19 +181,14 @@ export async function startService(
     await writeFile(join(options.home, "connection.json"), JSON.stringify(connection), {
       mode: 0o600,
     });
-    relay = await configuredRelay(
-      options.home,
-      new VectisClient(connection),
-      options.keychainHelper,
-      (state) => {
-        cloud = state;
-      },
-    );
+    await reload();
     return {
       connection,
       store,
       service,
       close: async () => {
+        closing = true;
+        await relayUpdate;
         await relay?.close();
         await new Promise<void>((resolve) => server.close(() => resolve()));
         await service.close();
