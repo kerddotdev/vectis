@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
@@ -102,3 +102,55 @@ test("configuration changes apply to future VMs without changing active resource
   });
   expect(snapshot.instances[0]?.memoryMiB).toBe(512);
 });
+
+test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
+  "per-VM overrides preserve defaults and reject invalid reservations before starting",
+  async () => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-overrides-"));
+    cleanup.push(() => rm(home, { recursive: true, force: true }));
+    const helper = join(home, "helper");
+    await writeFile(
+      helper,
+      `#!${process.execPath}\nprocess.stdout.write('{"event":"vm.running"}\\n'); setInterval(() => {}, 1000);`,
+      { mode: 0o700 },
+    );
+    const server = await startService({ home, appleHelper: helper });
+    cleanup.push(server.close);
+    const client = new VectisClient(server.connection);
+    const basePath = join(home, "base.img");
+    const storagePath = join(home, "selected");
+    await writeFile(basePath, "test disk");
+    await mkdir(storagePath);
+    const environment = {
+      id: "test",
+      name: "Test",
+      os: "linux" as const,
+      state: "ready" as const,
+      cpu: 2,
+      memoryMiB: 1024,
+      basePath,
+    };
+    const registration = await client.submit(
+      { type: "environment.register", environment },
+      "register",
+    );
+    expect((await client.wait(registration.id)).status).toBe("succeeded");
+    const invalid = await client.submit(
+      { type: "environment.start", id: "test", cpu: -10 },
+      "invalid",
+    );
+    expect((await client.wait(invalid.id)).result).toMatchObject({ code: "invalid_resources" });
+    expect((await client.status()).instances).toHaveLength(0);
+    const start = await client.submit(
+      { type: "environment.start", id: "test", cpu: 1, memoryMiB: 512, storagePath },
+      "start",
+    );
+    expect((await client.wait(start.id)).status).toBe("succeeded");
+    const snapshot = await client.status();
+    expect(snapshot.environments[0]).toEqual(environment);
+    expect(snapshot.instances[0]).toMatchObject({ cpu: 1, memoryMiB: 512, status: "running" });
+    expect(snapshot.instances[0]?.directory).toBe(
+      join(storagePath, snapshot.instances[0]?.id ?? "missing"),
+    );
+  },
+);

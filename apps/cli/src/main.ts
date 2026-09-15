@@ -54,7 +54,7 @@ Usage: vectis <command> [options]
   pause | resume                Control new instance admission
   environment register --file   Register a prepared environment JSON file
   environment configure <id>    Set --cpu, --memory-mib or --storage-path for future VMs
-  environment start <id>        Start a disposable VM
+  environment start <id>        Start a VM; optionally override --cpu, --memory-mib, --storage-path
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>             Stop an owned VM
   instance reconcile <id>        Recheck an interrupted instance safely
@@ -229,8 +229,16 @@ GitHub pairing require separately configured development services.
       ...(values["memory-mib"] !== undefined ? { memoryMiB: Number(values["memory-mib"]) } : {}),
       ...(values["storage-path"] !== undefined ? { storagePath: values["storage-path"] } : {}),
     });
-  else if (command === "environment" && (subcommand === "start" || subcommand === "remove") && id)
-    request = { type: subcommand === "start" ? "environment.start" : "environment.remove", id };
+  else if (command === "environment" && subcommand === "start" && id)
+    request = decodeCommand({
+      type: "environment.start",
+      id,
+      ...(values.cpu !== undefined ? { cpu: Number(values.cpu) } : {}),
+      ...(values["memory-mib"] !== undefined ? { memoryMiB: Number(values["memory-mib"]) } : {}),
+      ...(values["storage-path"] !== undefined ? { storagePath: values["storage-path"] } : {}),
+    });
+  else if (command === "environment" && subcommand === "remove" && id)
+    request = { type: "environment.remove", id };
   else if (command === "instance" && (subcommand === "stop" || subcommand === "reconcile") && id)
     request = { type: subcommand === "stop" ? "instance.stop" : "instance.reconcile", id };
   else if (command === "command" && values.file)

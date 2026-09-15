@@ -113,9 +113,16 @@ export class Service {
               "reconciliation_required",
               "An interrupted instance needs inspection before new work can start.",
             );
-          const environment = Schema.decodeUnknownSync(Environment)(
+          const defaults = Schema.decodeUnknownSync(Environment)(
             this.store.get("environment", command.id),
           );
+          const environment = {
+            ...defaults,
+            ...(command.cpu !== undefined ? { cpu: command.cpu } : {}),
+            ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
+            ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
+          };
+          await this.runtime.validate(environment);
           const active = snapshot.instances.filter((instance) => instance.status === "running");
           const memory = active.reduce(
             (sum, instance) =>
