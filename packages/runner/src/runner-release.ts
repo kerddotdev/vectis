@@ -60,7 +60,7 @@ export function runnerStartScript(os: Environment["os"], jitConfig: string) {
   if (os === "windows")
     return `$ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $env:USERPROFILE 'vectis-actions-runner')
-& .\\run.cmd --jitconfig '${jitConfig}'
+& .\\bin\\Runner.Listener.exe run --jitconfig '${jitConfig}'
 exit $LASTEXITCODE
 `;
   return `set -eu
