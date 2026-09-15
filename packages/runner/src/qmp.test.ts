@@ -22,3 +22,17 @@ readline.createInterface({input:process.stdin}).on("line", line => {
     }
   });
 }
+
+test("the observed HVF TPM mapping failure explains the required runtime without exposing raw diagnostics", async () => {
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      'process.stderr.write("tpm-tis-device: HV_BAD_ARGUMENT private-path\\n"); process.exitCode=1;',
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+  const closed = once(child, "close");
+  await expect(waitForQemu(child)).rejects.toMatchObject({ code: "runtime_incompatible" });
+  await closed;
+});

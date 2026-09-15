@@ -229,6 +229,7 @@ export class Service {
         status: [
           "setup_required",
           "runtime_missing",
+          "runtime_incompatible",
           "storage_unavailable",
           "reconciliation_required",
         ].includes(issue.code)
