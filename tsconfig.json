@@ -18,7 +18,9 @@
     "apps/cli/src/**/*.ts",
     "packages/*/src/**/*.ts",
     "scripts/**/*.ts",
-    "apps/mcp/src/**/*.ts"
+    "apps/mcp/src/**/*.ts",
+    "convex/**/*.ts",
+    "tests/**/*.ts"
   ],
   "exclude": ["node_modules", "dist"]
 }
