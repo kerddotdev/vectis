@@ -18,6 +18,7 @@ export const Environment = Schema.Struct({
   sshUser: Schema.optional(Schema.String),
   sshKeyPath: Schema.optional(Schema.String),
   knownHostsPath: Schema.optional(Schema.String),
+  seedPath: Schema.optional(Schema.String),
   firmwarePath: Schema.optional(Schema.String),
   tpmSocket: Schema.optional(Schema.String),
 });

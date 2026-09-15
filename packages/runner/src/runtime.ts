@@ -131,6 +131,7 @@ export class VmRuntime {
           String(environment.cpu),
           String(environment.memoryMiB),
           join(directory, "efi.bin"),
+          ...(environment.seedPath ? [resolve(environment.seedPath)] : []),
         ];
       }
       await writeFile(
