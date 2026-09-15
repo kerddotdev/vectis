@@ -4,10 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { VmRuntime } from "./runtime.js";
 
-vi.mock("node:os", async (original) => ({
-  ...(await original<typeof import("node:os")>()),
-  freemem: () => 8 * 1024 ** 3,
-}));
+vi.mock("./memory.js", () => ({ availableHostMemory: async () => 8 * 1024 ** 3 }));
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {

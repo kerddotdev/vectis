@@ -2,8 +2,9 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
 import { access, copyFile, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { cpus, freemem } from "node:os";
+import { cpus } from "node:os";
 import { once } from "node:events";
+import { availableHostMemory } from "./memory.js";
 import { runProcess } from "./process.js";
 import { waitForAppleVm } from "./apple.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
@@ -48,7 +49,7 @@ export class VmRuntime {
     await this.validate(environment);
     if (process.platform !== "darwin" || process.arch !== "arm64")
       throw new VectisError("unsupported_host", "This release requires an Apple Silicon Mac.");
-    if (environment.memoryMiB * 1024 * 1024 > freemem())
+    if (environment.memoryMiB * 1024 * 1024 > (await availableHostMemory()))
       throw new VectisError(
         "insufficient_memory",
         "Not enough free host memory for this instance.",
