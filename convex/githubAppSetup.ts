@@ -69,3 +69,17 @@ export const metadata = internalQuery({
     return app ? { appId: app.appId, slug: app.slug, ownerId: app.ownerId } : null;
   },
 });
+
+export const runnerProbeCredentials = internalQuery({
+  args: { githubUserId: v.number() },
+  handler: async (ctx, args) => {
+    const linked = await ctx.db
+      .query("githubAccounts")
+      .withIndex("by_github", (q) => q.eq("githubId", args.githubUserId))
+      .unique();
+    const app = await ctx.db.query("githubApps").first();
+    if (!linked || !app)
+      throw new Error("Link the GitHub account before preparing a runner probe.");
+    return { appId: app.appId, clientId: app.clientId, privateKey: app.privateKey };
+  },
+});
