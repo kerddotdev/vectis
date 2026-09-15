@@ -3,7 +3,13 @@ import { VectisError } from "../../protocol/src/index.js";
 
 export class KeychainCredentials {
   constructor(readonly helper: string) {}
-  private async run(action: "get" | "set" | "delete", account: string, input?: string) {
+  private async run(
+    action: "get" | "set" | "delete",
+    account: string,
+    input?: string,
+    signal?: AbortSignal,
+  ) {
+    signal?.throwIfAborted();
     if (
       !account ||
       account.length > 500 ||
@@ -30,20 +36,25 @@ export class KeychainCredentials {
       }
     });
     const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
-    const deadline = setTimeout(() => {
+    const terminate = () => {
       failed = true;
       child.kill("SIGTERM");
-      force = setTimeout(() => {
+      force ??= setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       }, 2000);
-    }, 15000);
+    };
+    const deadline = setTimeout(terminate, 15000);
+    signal?.addEventListener("abort", terminate, { once: true });
+    if (signal?.aborted) terminate();
     child.stdin.end(input);
     try {
       await closed;
     } finally {
       clearTimeout(deadline);
       clearTimeout(force);
+      signal?.removeEventListener("abort", terminate);
     }
+    signal?.throwIfAborted();
     if (!failed && child.exitCode === 44 && action === "get") return null;
     if (failed || child.exitCode !== 0)
       throw new VectisError(
@@ -53,8 +64,8 @@ export class KeychainCredentials {
       );
     return output;
   }
-  get(account: string) {
-    return this.run("get", account);
+  get(account: string, signal?: AbortSignal) {
+    return this.run("get", account, undefined, signal);
   }
   async set(account: string, secret: string) {
     await this.run("set", account, secret);

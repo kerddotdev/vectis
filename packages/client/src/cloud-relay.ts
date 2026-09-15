@@ -27,6 +27,7 @@ export function startCloudRelay(
   let authenticated = false;
   let refreshing = false;
   let active: Promise<void> | undefined;
+  let tokenRequest: Promise<string | null> | undefined;
   let lastHeartbeat = 0;
   let rerun = false;
   onState("connecting");
@@ -36,12 +37,14 @@ export function startCloudRelay(
     cloud.setAuth(
       async (options) => {
         try {
-          return await fetchToken(options);
+          tokenRequest = fetchToken(options);
+          return await tokenRequest;
         } catch {
           onState("unavailable");
           return null;
         } finally {
           refreshing = false;
+          tokenRequest = undefined;
         }
       },
       (value) => {
@@ -112,11 +115,13 @@ export function startCloudRelay(
   authenticate();
   return {
     async close() {
+      const pendingToken = tokenRequest;
       abort.abort();
       clearInterval(interval);
       unsubscribe();
       disconnect();
       await cloud.close();
+      await pendingToken?.catch(() => {});
       await active;
     },
   };

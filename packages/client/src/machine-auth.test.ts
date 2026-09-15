@@ -38,6 +38,6 @@ test("token reuse, forced refresh and revocation do not leak a stale token", asy
   expect(request).toHaveBeenCalledTimes(1);
   expect(await fetchToken({ forceRefreshToken: true })).toBe("second");
   expect(await fetchToken({ forceRefreshToken: true })).toBe(null);
-  expect(get).toHaveBeenCalledWith(credentialAccount(connection));
+  expect(get).toHaveBeenCalledWith(credentialAccount(connection), expect.any(AbortSignal));
   expect(request.mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
 });

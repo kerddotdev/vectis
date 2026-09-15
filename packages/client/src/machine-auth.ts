@@ -38,7 +38,7 @@ export function machineTokenFetcher(
     signal.throwIfAborted();
     if (!forceRefreshToken && cached && cached.expiresAt > Date.now() + 30000) return cached.token;
     cached = undefined;
-    const secret = await credentials.get(account);
+    const secret = await credentials.get(account, signal);
     if (!secret) return null;
     const response = await fetch(endpoint, {
       method: "POST",
