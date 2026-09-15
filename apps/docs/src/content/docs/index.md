@@ -5,7 +5,7 @@ description: Local virtual machines for GitHub Actions, controlled by people and
 
 Vectis runs disposable virtual machines on your own Apple Silicon Mac. The local service owns each VM and its files. The CLI, desktop, and agent interfaces are designed to use the same control contract.
 
-**This is a development build.** The CLI and MCP can control prepared environments, inspect storage, and preview workflow migrations. Guided OS installation, GitHub App pairing, actual Actions jobs, and the desktop interface are not available yet. Do not treat a registered image as a verified runner.
+**This is a development build.** The CLI and MCP can control prepared environments, inspect storage, and preview workflow migrations. The development desktop uses the same local service, and browser connections support machine pairing and GitHub identities. Guided end-to-end runner setup is still under development. Do not treat a registered image as a verified runner.
 
 Start with [local setup](/docs/guides/local-setup/), then choose [VM storage and resources](/docs/guides/storage/). Agents can use the [integration guide](/docs/guides/agents/) and generated [CLI reference](/docs/reference/cli/).
 
