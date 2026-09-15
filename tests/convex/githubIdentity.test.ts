@@ -135,3 +135,14 @@ test("cancelled confirmation cannot be completed by a late callback", async () =
   });
   expect(await owner.query(api.githubIdentity.list, {})).toEqual({ accounts: [], pending: [] });
 });
+
+test("direct installation callbacks require a fresh Vectis link instead of trusting installation parameters", async () => {
+  const t = await setup();
+  const fetch = vi.fn();
+  vi.stubGlobal("fetch", fetch);
+  const response = await t.fetch("/github/oauth/callback?code=unbound&installation_id=123");
+  expect(response.status).toBe(303);
+  expect(response.headers.get("Location")).toBe("https://vectis.kerd.dev/connect?github=1");
+  expect(fetch).not.toHaveBeenCalled();
+  expect(await t.run((ctx) => ctx.db.query("githubAccounts").collect())).toEqual([]);
+});

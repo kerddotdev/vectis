@@ -69,7 +69,12 @@ export const callback = httpAction(async (ctx, request) => {
   const state = params.get("state");
   const code = params.get("code");
   const headers = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
-  if (!state || !/^[A-Za-z0-9_-]{43}$/.test(state))
+  if (!state)
+    return new Response(null, {
+      status: 303,
+      headers: { ...headers, Location: "https://vectis.kerd.dev/connect?github=1" },
+    });
+  if (!/^[A-Za-z0-9_-]{43}$/.test(state))
     return new Response("Start GitHub linking from Vectis before authorizing this App.", {
       status: 400,
       headers,
