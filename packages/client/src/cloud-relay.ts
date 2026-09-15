@@ -67,7 +67,21 @@ export function startCloudRelay(
         "This credential belongs to another local machine.",
       );
     if (Date.now() - lastHeartbeat >= 30000) {
-      await interruptible(cloud.mutation(api.machines.heartbeat, {}), abort.signal);
+      await interruptible(
+        cloud.mutation(api.machines.heartbeat, {
+          environments: snapshot.environments
+            .slice(0, 100)
+            .map(({ id, name, os, cpu, memoryMiB, state }) => ({
+              id,
+              name,
+              os,
+              cpu,
+              memoryMiB,
+              state,
+            })),
+        }),
+        abort.signal,
+      );
       lastHeartbeat = Date.now();
     }
     const operations = await interruptible(cloud.query(api.operations.pending, {}), abort.signal);

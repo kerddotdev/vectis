@@ -2,6 +2,14 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { installation, verifiedUser } from "./githubValidators.js";
 
+export const environmentSummary = v.object({
+  id: v.string(),
+  name: v.string(),
+  os: v.union(v.literal("linux"), v.literal("macos"), v.literal("windows")),
+  cpu: v.number(),
+  memoryMiB: v.number(),
+  state: v.union(v.literal("ready"), v.literal("action_required")),
+});
 export const phase = v.union(
   v.literal("accepted"),
   v.literal("claimed"),
@@ -58,6 +66,7 @@ export default defineSchema({
     credentialVersion: v.optional(v.number()),
     createdAt: v.number(),
     lastSeenAt: v.optional(v.number()),
+    environments: v.optional(v.array(environmentSummary)),
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),

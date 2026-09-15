@@ -198,3 +198,47 @@ test("lost local replies and relay restart reuse the durable local operation", a
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("machine inventory is bounded, owner-only and rejects revoked credentials", async () => {
+  const t = convexTest(schema, modules);
+  const owner = t.withIdentity(identity("owner"));
+  const stranger = t.withIdentity(identity("stranger"));
+  const id = await owner.mutation(api.machines.enroll, { localId: "host", name: "Host" });
+  const device = t.withIdentity({
+    issuer: "https://machines.test",
+    subject: id,
+    credentialVersion: 0,
+  });
+  const environment = {
+    id: "mac",
+    name: "Mac",
+    os: "macos" as const,
+    cpu: 4,
+    memoryMiB: 8192,
+    state: "ready" as const,
+  };
+  await device.mutation(api.machines.heartbeat, { environments: [environment] });
+  expect((await owner.query(api.machines.list, {}))[0]?.environments).toEqual([environment]);
+  expect(await stranger.query(api.machines.list, {})).toEqual([]);
+  await expect(owner.mutation(api.machines.heartbeat, { environments: [] })).rejects.toThrow();
+  await expect(
+    device.mutation(api.machines.heartbeat, { environments: [environment, environment] }),
+  ).rejects.toThrow();
+  await expect(
+    device.mutation(api.machines.heartbeat, { environments: [{ ...environment, cpu: -1 }] }),
+  ).rejects.toThrow();
+  await expect(
+    device.mutation(api.machines.heartbeat, {
+      environments: Array.from({ length: 101 }, (_, index) => ({
+        ...environment,
+        id: `vm${index}`,
+      })),
+    }),
+  ).rejects.toThrow();
+  await device.mutation(api.machines.heartbeat, { environments: [] });
+  expect((await owner.query(api.machines.list, {}))[0]?.environments).toEqual([]);
+  await owner.mutation(api.machines.revoke, { id });
+  await expect(
+    device.mutation(api.machines.heartbeat, { environments: [environment] }),
+  ).rejects.toThrow();
+});
