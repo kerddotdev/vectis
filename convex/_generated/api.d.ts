@@ -9,6 +9,9 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as credentials from "../credentials.js";
+import type * as http from "../http.js";
+import type * as machineTokens from "../machineTokens.js";
 import type * as machines from "../machines.js";
 import type * as operations from "../operations.js";
 
@@ -20,6 +23,9 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  credentials: typeof credentials;
+  http: typeof http;
+  machineTokens: typeof machineTokens;
   machines: typeof machines;
   operations: typeof operations;
 }>;

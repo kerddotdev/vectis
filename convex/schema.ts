@@ -16,11 +16,17 @@ export default defineSchema({
     localId: v.string(),
     name: v.string(),
     revoked: v.boolean(),
+    credentialVersion: v.optional(v.number()),
     createdAt: v.number(),
     lastSeenAt: v.optional(v.number()),
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),
+  machineCredentials: defineTable({
+    machineId: v.id("machines"),
+    digest: v.string(),
+    createdAt: v.number(),
+  }).index("by_machine", ["machineId"]),
   operations: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),
