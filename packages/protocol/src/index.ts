@@ -102,6 +102,10 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "storage",
+    description: "Inspect base and VM file sizes, allocated blocks and host file breakdown.",
+  },
   { name: "status", description: "Read machine, environments, instances, and recent operations." },
   {
     name: "machine.pause",

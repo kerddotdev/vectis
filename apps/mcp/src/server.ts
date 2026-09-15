@@ -19,6 +19,13 @@ const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
 const tools = [
   {
+    name: "vectis_storage",
+    description:
+      "Inspect VM disk capacity, allocated host blocks and per-file usage. Guest filesystem breakdown is reported separately as unavailable until connected.",
+    inputSchema: emptyInput,
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "vectis_status",
     description:
       "Read the real local machine, environments, instances and operations. Requires a running Vectis service.",
@@ -62,6 +69,9 @@ export function createMcpServer(connect: () => Promise<VectisClient>) {
     try {
       let result: unknown;
       switch (request.params.name) {
+        case "vectis_storage":
+          result = await (await connect()).storage();
+          break;
         case "vectis_status":
           result = await (await connect()).status();
           break;

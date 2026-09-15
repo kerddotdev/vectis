@@ -47,6 +47,7 @@ Usage: vectis <command> [options]
   service start                 Start an independent background service
   service run                   Run the service in the foreground
   service stop                  Stop through an authenticated service request
+  storage                       Inspect image and VM disk usage
   status                        Inspect the machine and recent operations
   capabilities                  Discover supported commands and schemas
   doctor                        Inspect host and runtime prerequisites
@@ -176,6 +177,10 @@ GitHub pairing require separately configured development services.
     if (!response.ok)
       throw new VectisError("shutdown_failed", "The service did not accept shutdown.");
     output({ stopping: true });
+    return;
+  }
+  if (command === "storage") {
+    output(await api.storage());
     return;
   }
   if (command === "status") {

@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { StorageReport } from "../../protocol/src/storage.js";
 import {
   ApiError,
   Operation,
@@ -34,6 +35,9 @@ export class VectisClient {
   }
   async status() {
     return Schema.decodeUnknownSync(Snapshot)(await this.request("/v1/status"));
+  }
+  async storage() {
+    return Schema.decodeUnknownSync(StorageReport)(await this.request("/v1/storage"));
   }
   async capabilities() {
     return this.request("/v1/capabilities");
