@@ -1,4 +1,4 @@
-import { cp, mkdir, rename, rm, writeFile, copyFile } from "node:fs/promises";
+import { cp, mkdir, rename, rm, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,4 +13,4 @@ await cp(join(docs, "dist"), join(site, "docs"), { recursive: true });
 await rename(join(site, "docs/llms.txt"), join(site, "llms.txt"));
 await rename(join(site, "docs/_headers"), join(site, "_headers"));
 await copyFile(join(site, "docs/404.html"), join(site, "404.html"));
-await writeFile(join(site, "_redirects"), "/connect /index.html 200\n");
+await copyFile(join(site, "index.html"), join(site, "connect.html"));
