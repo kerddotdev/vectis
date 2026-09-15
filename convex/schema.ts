@@ -36,6 +36,20 @@ export default defineSchema({
   })
     .index("by_owner", ["owner"])
     .index("by_github", ["githubId"]),
+  repositoryBindings: defineTable({
+    owner: v.string(),
+    accountId: v.id("githubAccounts"),
+    machineId: v.id("machines"),
+    repositoryId: v.number(),
+    repositoryName: v.string(),
+    installationId: v.number(),
+    environmentId: v.string(),
+    enabled: v.boolean(),
+    verifiedAt: v.number(),
+  })
+    .index("by_owner", ["owner"])
+    .index("by_machine", ["machineId"])
+    .index("by_target", ["machineId", "repositoryId", "environmentId"]),
   machines: defineTable({
     owner: v.string(),
     localId: v.string(),
