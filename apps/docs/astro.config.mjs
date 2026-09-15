@@ -12,6 +12,8 @@ export default defineConfig({
       sidebar: [
         { label: "Start here", slug: "index" },
         { label: "Local setup", slug: "guides/local-setup" },
+        { label: "Desktop", slug: "guides/desktop" },
+        { label: "GitHub connections", slug: "guides/github" },
         { label: "VM storage and resources", slug: "guides/storage" },
         { label: "Agent integration", slug: "guides/agents" },
         { label: "CLI reference", slug: "reference/cli" },
