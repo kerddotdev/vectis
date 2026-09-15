@@ -77,7 +77,11 @@ export async function startService(
   await lock.close();
   const token = options.token ?? randomBytes(32).toString("hex");
   const store = new Store(join(options.home, "state.sqlite"));
-  const service = new Service(store, new VmRuntime(options));
+  const service = new Service(store, new VmRuntime(options), () => {
+    if (!relay)
+      throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
+    return relay;
+  });
   let cloud: CloudStatus = { state: "unconfigured" };
   let relay: Awaited<ReturnType<typeof configuredRelay>>;
   let connection: Connection | undefined;
@@ -201,9 +205,9 @@ export async function startService(
       close: async () => {
         closing = true;
         await relayUpdate;
+        await service.close();
         await relay?.close();
         await new Promise<void>((resolve) => server.close(() => resolve()));
-        await service.close();
         store.close();
         await rm(join(options.home, "connection.json"), { force: true });
         await rm(lockPath, { force: true });

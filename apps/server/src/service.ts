@@ -1,3 +1,7 @@
+import { setTimeout as delay } from "node:timers/promises";
+import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
+import type { MachineRepositories } from "../../../packages/protocol/src/repositories.js";
+import { runRunnerTask } from "./runner-task.js";
 import { createHash } from "node:crypto";
 import { cpus, totalmem } from "node:os";
 import { Schema } from "effect";
@@ -14,9 +18,15 @@ import { Store } from "./store.js";
 export class Service {
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
+  private runners = new Map<string, { abort: AbortController; done: Promise<void> }>();
   constructor(
     readonly store: Store,
     readonly runtime: VmRuntime,
+    readonly runnerConnection: () => RunnerBroker & {
+      repositories(): Promise<MachineRepositories>;
+    } = () => {
+      throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
+    },
   ) {
     store.recover();
   }
@@ -30,7 +40,8 @@ export class Service {
     }
   }
   submit(key: string, command: Command): Operation {
-    if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+    if (this.closing && command.type !== "instance.stop")
+      throw new VectisError("service_stopping", "The service is stopping.");
     if (key.length > 200) throw new VectisError("invalid_request", "The request key is too long.");
     const fingerprint = createHash("sha256").update(JSON.stringify(command)).digest("hex");
     const accepted = this.store.accept(key, fingerprint, command.type);
@@ -44,6 +55,99 @@ export class Service {
       let result: unknown;
       const snapshot = this.store.snapshot();
       switch (command.type) {
+        case "runner.run": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          const broker = this.runnerConnection();
+          const binding = (await broker.repositories()).find(
+            (item) => item.id === command.bindingId,
+          );
+          if (!binding)
+            throw new VectisError("repository_missing", "This repository binding is unavailable.");
+          const environment = snapshot.environments.find(
+            (item) => item.id === binding.environmentId,
+          );
+          if (!environment || environment.state !== "ready")
+            throw new VectisError("setup_required", "Prepare this repository's environment first.");
+          const abort = new AbortController();
+          let startId: string | undefined;
+          const done = runRunnerTask(
+            command.bindingId,
+            operation.id,
+            environment,
+            {
+              broker,
+              start: async () => {
+                const started = this.submit(`${operation.id}:start`, {
+                  type: "environment.start",
+                  id: environment.id,
+                });
+                startId = started.id;
+                await this.waitForOperation(started.id);
+                const instance = this.store
+                  .snapshot()
+                  .instances.find((item) => item.id === started.id);
+                if (!instance || instance.status !== "running")
+                  throw new VectisError("runner_vm_missing", "The runner VM did not start.");
+                return instance;
+              },
+              stop: async () => {
+                if (!startId) return;
+                const stopped = this.submit(`${operation.id}:stop`, {
+                  type: "instance.stop",
+                  id: startId,
+                });
+                await this.waitForOperation(stopped.id);
+                const instance = this.store
+                  .snapshot()
+                  .instances.find((item) => item.id === startId);
+                if (instance && instance.status !== "stopped")
+                  throw new VectisError(
+                    "runner_cleanup_required",
+                    "Owned VM termination is unconfirmed.",
+                  );
+              },
+              progress: (result) => {
+                operation = this.store.update(operation, {
+                  result,
+                  message: `Runner: ${result.stage}.`,
+                });
+              },
+            },
+            abort.signal,
+          )
+            .then((completed) => {
+              this.store.update(operation, {
+                status: completed.status,
+                message: completed.message,
+                result: {
+                  ...completed.progress,
+                  ...("code" in completed ? { code: completed.code } : {}),
+                },
+              });
+            })
+            .catch(() => {
+              this.store.update(operation, {
+                status: "action_required",
+                message: "Runner recovery requires inspection.",
+              });
+            })
+            .finally(() => {
+              this.runners.delete(operation.id);
+            });
+          this.runners.set(operation.id, { abort, done });
+          return;
+        }
+        case "operation.cancel": {
+          const active = this.runners.get(command.id);
+          if (!active)
+            throw new VectisError(
+              "operation_not_cancellable",
+              "No active runner task has this operation ID.",
+            );
+          active.abort.abort();
+          result = { operationId: command.id, cancellationRequested: true };
+          break;
+        }
         case "machine.pause":
           this.store.put("machine", "self", { ...snapshot.machine, paused: command.paused });
           break;
@@ -243,12 +347,27 @@ export class Service {
       });
     }
   }
+  private async waitForOperation(id: string) {
+    const deadline = Date.now() + 600000;
+    while (Date.now() < deadline) {
+      const operation = this.store.snapshot().operations.find((item) => item.id === id);
+      if (!operation)
+        throw new VectisError("operation_missing", "Runner control operation is missing.");
+      if (operation.status === "succeeded") return;
+      if (operation.status !== "accepted" && operation.status !== "running")
+        throw new VectisError("runner_control_failed", operation.message);
+      await delay(100);
+    }
+    throw new VectisError("runner_control_timeout", "Runner VM control did not finish in time.");
+  }
   async drain() {
     await this.queue;
   }
   async close() {
     this.closing = true;
+    for (const task of this.runners.values()) task.abort.abort();
     await this.queue;
+    await Promise.all([...this.runners.values()].map((task) => task.done));
     await this.runtime.close();
   }
 }

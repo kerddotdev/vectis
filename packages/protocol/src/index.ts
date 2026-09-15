@@ -77,6 +77,8 @@ export const Snapshot = Schema.Struct({
 });
 export type Snapshot = typeof Snapshot.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("runner.run"), bindingId: Identifier }),
+  Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
@@ -118,6 +120,15 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "runner.run",
+    description:
+      "Run one disposable repository runner; job results remain authoritative on GitHub.",
+  },
+  {
+    name: "operation.cancel",
+    description: "Request cancellation of an active runner and wait for its cleanup status.",
+  },
   {
     name: "repository.list",
     description: "List currently authorized repositories for this cloud-connected machine.",
