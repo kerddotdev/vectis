@@ -65,3 +65,26 @@ Registering an environment does not install tools or a GitHub runner in it. Curr
 Mutating commands return an operation ID. `accepted` means the request was recorded. Use `--wait` or `operation wait <id>` to observe completion. Exit code `1` indicates failure; `3` indicates `action_required`.
 
 `pause` prevents new VM starts and leaves running work alone. `instance stop <id>` stops a VM owned by the service. After a service crash, an interrupted instance requires verified process-exit evidence before Vectis removes its working directory.
+
+## Connect your machine
+
+The development pairing flow requires the native Keychain helper. Set `VECTIS_KEYCHAIN_HELPER` to its absolute executable path before starting both the service and CLI. An installed login service captures this path at installation.
+
+```sh
+pnpm vectis cloud pair --home /absolute/path/to/vectis-state --json
+```
+
+Open the returned `https://vectis.kerd.dev/connect` link yourself. Compare the verification code with the CLI output, sign in, and approve the machine. Treat the pairing link as private and never approve a link supplied by someone else. The request expires after ten minutes. The default backend is the dedicated Vectis development deployment; `--url` selects another deployment for a separately configured web frontend.
+
+Then finish the connection:
+
+```sh
+pnpm vectis cloud finish --home /absolute/path/to/vectis-state --json
+pnpm vectis status --home /absolute/path/to/vectis-state --json
+```
+
+`pending` means browser approval has not completed. `linked` means the credential and local configuration were saved; inspect the separate `cloud.state` to confirm the relay is connected. Finishing pairing reloads the cloud connection without restarting the service or stopping VMs. Retries reuse the pending credential or verify the saved connection. Pairing does not silently replace an existing machine connection.
+
+The service and CLI keep raw credentials in macOS Keychain. The web approval contains only credential fingerprints. An MCP process configured with the same Keychain helper exposes `vectis_cloud` for the same pair and finish actions. Human approval is always explicit.
+
+This connects a machine to Vectis. GitHub App installation and official Actions runner provisioning are separate steps that are not yet available through this setup flow.
