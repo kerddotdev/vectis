@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { cpus, totalmem } from "node:os";
 import { Schema } from "effect";
 import {
@@ -157,7 +157,7 @@ export class Service {
             ).length >= 2
           )
             throw new VectisError("macos_limit", "The two-instance macOS limit has been reached.");
-          const id = randomUUID();
+          const id = operation.id;
           const record = {
             id,
             environmentId: environment.id,
@@ -181,6 +181,9 @@ export class Service {
               ...record,
               status: "running",
               pid: instance.process.pid ?? 0,
+              ...(instance.macAddress ? { macAddress: instance.macAddress } : {}),
+              ...(instance.sshHost ? { sshHost: instance.sshHost } : {}),
+              ...(instance.sshPort ? { sshPort: instance.sshPort } : {}),
             });
           } catch (error) {
             const remaining = await this.runtime.hasWorkDirectory(id, record.directory);

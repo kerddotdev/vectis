@@ -56,6 +56,9 @@ export const Instance = Schema.Struct({
   memoryMiB: Schema.optional(Schema.Int),
   status: Schema.Literals(["running", "stopped", "interrupted"]),
   pid: Schema.Int,
+  macAddress: Schema.optional(Schema.String),
+  sshHost: Schema.optional(Schema.String),
+  sshPort: Schema.optional(Schema.Int),
   createdAt: Schema.String,
 });
 export type Instance = typeof Instance.Type;
