@@ -10,7 +10,6 @@ export const enable = action({
   args: {
     accountId: v.id("githubAccounts"),
     machineId: v.id("machines"),
-    repositoryId: v.number(),
     repositoryName: v.string(),
     environmentId: v.string(),
   },
@@ -21,12 +20,18 @@ export const enable = action({
       accountId: args.accountId,
       machineId: args.machineId,
     });
-    const { installationId } = await new GitHubAppClient(verified.app).repositoryToken({
+    const { installationId, repositoryId } = await new GitHubAppClient(
+      verified.app,
+    ).repositoryToken({
       owner: verified.login,
       repo: args.repositoryName,
-      repositoryId: args.repositoryId,
       githubUserId: verified.githubId,
     });
-    return ctx.runMutation(internal.repositoryBindings.save, { ...args, owner, installationId });
+    return ctx.runMutation(internal.repositoryBindings.save, {
+      ...args,
+      owner,
+      installationId,
+      repositoryId,
+    });
   },
 });

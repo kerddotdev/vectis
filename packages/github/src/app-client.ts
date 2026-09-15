@@ -58,7 +58,7 @@ export class GitHubAppClient {
   async repositoryToken(input: {
     owner: string;
     repo: string;
-    repositoryId: number;
+    repositoryId?: number;
     githubUserId: number;
   }) {
     if (
@@ -84,7 +84,9 @@ export class GitHubAppClient {
       );
     const { token } = Schema.decodeUnknownSync(AccessToken)(
       await this.request(jwt, `/app/installations/${installation.id}/access_tokens`, {
-        repository_ids: [input.repositoryId],
+        ...(input.repositoryId === undefined
+          ? { repositories: [input.repo] }
+          : { repository_ids: [input.repositoryId] }),
         permissions: { administration: "write", metadata: "read" },
       }),
     );
@@ -96,11 +98,11 @@ export class GitHubAppClient {
       }),
     )(await this.request(token, path));
     if (
-      repository.id !== input.repositoryId ||
+      (input.repositoryId !== undefined && repository.id !== input.repositoryId) ||
       repository.owner.id !== input.githubUserId ||
       !repository.private
     )
       throw new Error("This runner path requires a verified private personal repository.");
-    return { token, path, installationId: installation.id };
+    return { token, path, installationId: installation.id, repositoryId: repository.id };
   }
 }

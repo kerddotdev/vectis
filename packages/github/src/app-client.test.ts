@@ -47,6 +47,7 @@ test("App authentication signs a short JWT and narrows runner access to the veri
     token: "installation-secret",
     path: "/repos/test-owner/sandbox",
     installationId: 10,
+    repositoryId: 123,
   });
   expect(fetch).toHaveBeenCalledTimes(3);
 });
@@ -73,4 +74,31 @@ test("foreign owners, suspended installations and repository mismatches cannot o
   await expect(new GitHubAppClient(app).repositoryToken(input)).rejects.toThrow(
     "verified private personal repository",
   );
+});
+
+test("initial repository discovery still issues a token limited to one explicit name", async () => {
+  const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 7, type: "User" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        repositories: ["sandbox"],
+        permissions: { administration: "write", metadata: "read" },
+      });
+      return Response.json({ token: "secret" });
+    }
+    return Response.json({ id: 123, private: true, owner: { id: 7 } });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const result = await new GitHubAppClient(app).repositoryToken({
+    owner: "test-owner",
+    repo: "sandbox",
+    githubUserId: 7,
+  });
+  expect(result.repositoryId).toBe(123);
 });
