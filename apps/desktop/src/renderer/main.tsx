@@ -10,6 +10,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { StateProvider, useStateApi } from "./state.js";
+import { Environments } from "./environments.js";
 import "./style.css";
 function Layout() {
   const { snapshot, error, perform } = useStateApi();
@@ -23,6 +24,7 @@ function Layout() {
           <Link to="/" activeOptions={{ exact: true }}>
             Overview
           </Link>
+          <Link to="/environments">Environments</Link>
         </nav>
         <button className="secondary" onClick={() => void perform("open.docs")}>
           Documentation
@@ -115,6 +117,7 @@ function Overview() {
 const rootRoute = createRootRoute({ component: Layout });
 const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/", component: Overview }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/environments", component: Environments }),
 ]);
 const router = createRouter({ routeTree, history: createHashHistory() });
 declare module "@tanstack/react-router" {
