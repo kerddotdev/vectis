@@ -9,13 +9,12 @@ import { randomUUID } from "node:crypto";
 import { Schema } from "effect";
 import {
   capabilities,
-  Connection,
   Environment,
   VectisError,
   decodeCommand,
   type Command,
 } from "../../../packages/protocol/src/index.js";
-import { VectisClient } from "../../../packages/client/src/index.js";
+import { localClient } from "../../../packages/client/src/local.js";
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -33,13 +32,8 @@ const { values, positionals } = parseArgs({
 const home = values.home ?? process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
 const output = (value: unknown) =>
   process.stdout.write(JSON.stringify(value, null, values.json ? undefined : 2) + "\n");
-async function client() {
-  return new VectisClient(
-    Schema.decodeUnknownSync(Connection)(
-      JSON.parse(await readFile(join(home, "connection.json"), "utf8")),
-    ),
-  );
-}
+const client = () => localClient(home);
+
 async function main() {
   const [command = "help", subcommand, id] = positionals;
   if (values.help || command === "help") {
