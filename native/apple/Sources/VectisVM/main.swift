@@ -5,6 +5,12 @@ struct HelperError: Error { let message: String }
 
 @MainActor
 func emit(_ event: String, message: String? = nil) {
+    if (event == "vm.stopped" || event == "vm.error"),
+       let path = ProcessInfo.processInfo.environment["VECTIS_EXIT_RECEIPT"],
+       let id = ProcessInfo.processInfo.environment["VECTIS_INSTANCE_ID"],
+       let receipt = try? JSONSerialization.data(withJSONObject: ["instanceId": id, "pid": getpid()]) {
+        try? receipt.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
     var body = ["event": event]
     if let message { body["message"] = message }
     if let data = try? JSONSerialization.data(withJSONObject: body) {

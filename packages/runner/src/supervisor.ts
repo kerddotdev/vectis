@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { writeFileSync, renameSync } from "node:fs";
 
 const [executable, ...args] = process.argv.slice(2);
 if (!executable) {
@@ -21,6 +22,18 @@ child.once("error", () => {
 });
 child.once("close", (code) => {
   clearTimeout(timer);
+  const receipt = process.env.VECTIS_EXIT_RECEIPT;
+  const instanceId = process.env.VECTIS_INSTANCE_ID;
+  if (receipt && instanceId) {
+    try {
+      writeFileSync(receipt + ".tmp", JSON.stringify({ instanceId, pid: process.pid }), {
+        mode: 0o600,
+      });
+      renameSync(receipt + ".tmp", receipt);
+    } catch {
+      process.stderr.write("Unable to persist VM exit receipt.\n");
+    }
+  }
   process.stdin.destroy();
   process.exit(code ?? 1);
 });
