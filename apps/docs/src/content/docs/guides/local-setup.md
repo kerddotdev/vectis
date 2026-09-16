@@ -47,6 +47,8 @@ pnpm vectis service uninstall --home /absolute/path/to/vectis-state --json
 
 Stopping the service stops its owned VMs. Uninstalling the registration preserves state, images, and chosen VM storage. `service status` reports registration and launchd loading; use `status` for the live machine and operations. The MCP `vectis_service` tool exposes the same login-service controls and can discover registration without a running local API.
 
+Before replacing a runtime or app, use `service stop --if-idle`. This refuses to stop while a job, preparation, pending command, or unreconciled VM remains. Pause new work and retry after active work finishes. The desktop's **Stop service if idle** button and MCP `vectis_service` with `action: "stop", ifIdle: true` use the same check. Older services that lack this operation reject it; the client does not fall back to interrupting their work.
+
 ## Prepared Linux images
 
 For development, the Apple helper can start a prepared, bootable ARM64 Linux raw disk with EFI. A raw filesystem partition alone is not a bootable VM disk. Build the helper with Xcode's Swift tools, then sign the development binary with its virtualization entitlement:
