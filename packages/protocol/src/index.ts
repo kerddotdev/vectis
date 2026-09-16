@@ -20,6 +20,16 @@ export const MacInstallation = Schema.Struct({
   restorePath: Schema.NonEmptyString,
 });
 export type MacInstallation = typeof MacInstallation.Type;
+export const WindowsInstallation = Schema.Struct({
+  ...LinuxPreparation.fields,
+  isoPath: Schema.NonEmptyString,
+  driversPath: Schema.NonEmptyString,
+  firmwarePath: Schema.NonEmptyString,
+  firmwareVarsPath: Schema.NonEmptyString,
+  imageName: Schema.NonEmptyString,
+  acceptLicense: Schema.Boolean,
+});
+export type WindowsInstallation = typeof WindowsInstallation.Type;
 export const Preparation = Schema.Struct({
   id: Identifier,
   configuration: LinuxPreparation,
