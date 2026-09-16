@@ -36,6 +36,7 @@
     "package:cli": "pnpm build && node dist/scripts/package-cli.js",
     "package:verify": "pnpm build && node dist/scripts/verify-package.js",
     "package:desktop": "pnpm build && node dist/scripts/package-desktop.js",
+    "package:headless": "pnpm build && node dist/scripts/package-headless.js",
     "package:windows-runtime": "pnpm build && node dist/scripts/package-windows-runtime.js"
   },
   "dependencies": {

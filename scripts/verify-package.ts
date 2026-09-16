@@ -45,10 +45,16 @@ try {
   const doctor = Schema.decodeUnknownSync(Diagnostics)(await command(["doctor"]));
   if (!doctor.configured.appleHelper || !doctor.configured.keychainHelper)
     throw new Error("Packaged Apple helpers were not configured automatically.");
-  const windows = await access(join(resolve(path), "runtime/windows/bin/qemu-system-aarch64")).then(
-    () => true,
-    () => false,
-  );
+  const windows = (
+    await Promise.all(
+      ["runtime", "Vectis Runtime.app/Contents/Resources/runtime"].map((runtime) =>
+        access(join(resolve(path), runtime, "windows/bin/qemu-system-aarch64")).then(
+          () => true,
+          () => false,
+        ),
+      ),
+    )
+  ).some(Boolean);
   if (
     windows &&
     (!doctor.configured.qemu || !doctor.configured.qemuImg || !doctor.configured.swtpm)
@@ -56,7 +62,7 @@ try {
     throw new Error("Packaged Windows runtime was not configured automatically.");
   await command(["pause", "--wait"]);
   if (!(await snapshot()).machine.paused) throw new Error("Packaged service did not pause.");
-  await command(["service", "stop"]);
+  await command(["service", "stop", "--if-idle"]);
   started = false;
   if (!(await waitForStop())) throw new Error("Packaged service did not stop before restart.");
   await command(["service", "start"]);
