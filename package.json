@@ -1,6 +1,17 @@
 {
   "name": "vectis-workspace",
   "private": true,
+  "files": [
+    "dist/apps/cli/src",
+    "dist/apps/server/src",
+    "dist/apps/mcp/src",
+    "dist/apps/desktop/src",
+    "dist/packages",
+    "dist/convex/_generated/api.js",
+    "apps/desktop/renderer",
+    "apps/desktop/preload.cjs",
+    "skills/vectis"
+  ],
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -18,7 +29,9 @@
     "docs:deploy:dev": "pnpm docs:build && pnpm --filter @vectis/docs exec wrangler deploy --env development",
     "web:dev": "pnpm --filter @vectis/web dev",
     "desktop:build": "pnpm build && pnpm --filter @vectis/desktop build",
-    "desktop:start": "pnpm --filter @vectis/desktop start"
+    "desktop:start": "pnpm --filter @vectis/desktop start",
+    "package:cli": "pnpm build && node dist/scripts/package-cli.js",
+    "package:verify": "pnpm build && node dist/scripts/verify-package.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
