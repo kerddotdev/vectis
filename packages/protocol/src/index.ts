@@ -15,6 +15,11 @@ export const LinuxPreparation = Schema.Struct({
   diskGiB: Schema.Int,
 });
 export type LinuxPreparation = typeof LinuxPreparation.Type;
+export const MacInstallation = Schema.Struct({
+  ...LinuxPreparation.fields,
+  restorePath: Schema.NonEmptyString,
+});
+export type MacInstallation = typeof MacInstallation.Type;
 export const Preparation = Schema.Struct({
   id: Identifier,
   configuration: LinuxPreparation,
@@ -107,8 +112,11 @@ export const RepositoryConnection = Schema.Struct({
 });
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("environment.install-macos"), ...MacInstallation.fields }),
   Schema.Struct({ type: Schema.Literal("environment.prepare-linux"), ...LinuxPreparation.fields }),
   Schema.Struct({ type: Schema.Literal("environment.resume"), id: Identifier }),
+  Schema.Struct({ type: Schema.Literal("environment.resume-macos"), id: Identifier }),
+  Schema.Struct({ type: Schema.Literal("environment.open-macos-setup"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("migration.analyze"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("migration.publish"), previewId: Identifier }),
   Schema.Struct({ type: Schema.Literal("job.scan"), bindingId: Identifier }),
@@ -172,6 +180,21 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "environment.open-macos-setup",
+    description:
+      "Open the owned macOS setup bundle in a local VM console. Cancel the operation to stop it. Guest setup does not imply runner readiness.",
+  },
+  {
+    name: "environment.resume-macos",
+    description:
+      "Inspect or retry an interrupted owned macOS installation after verifying the prior installer stopped. Completed restores are never repeated.",
+  },
+  {
+    name: "environment.install-macos",
+    description:
+      "Install an Apple macOS 26 IPSW into a new owned bundle. Requires an idle Apple Silicon host and local restore image. Finishes with Setup Assistant action required; does not mark a runner ready.",
+  },
   {
     name: "environment.prepare-linux",
     description:
