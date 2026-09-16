@@ -72,6 +72,11 @@ export class VectisClient {
       await this.request("/v1/commands", { key, command }, signal),
     );
   }
+  async operation(id: string, signal?: AbortSignal) {
+    const operation = (await this.status(signal)).operations.find((item) => item.id === id);
+    if (!operation) throw new VectisError("operation_missing", "The operation was not found.");
+    return operation;
+  }
   async wait(id: string, signal: AbortSignal = AbortSignal.timeout(120000)): Promise<Operation> {
     while (!signal.aborted) {
       const snapshot = await this.status(signal).catch((error) => {
