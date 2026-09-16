@@ -98,6 +98,7 @@ const tools = [
 
 const serviceInput = Schema.Struct({
   action: Schema.Literals(["install", "start", "stop", "status", "uninstall"]),
+  ifIdle: Schema.optional(Schema.Boolean),
 });
 const cloudInput = Schema.Struct({
   action: Schema.Literals(["pair", "finish"]),
@@ -198,7 +199,7 @@ export function createMcpServer(
           );
           result =
             input.action === "stop"
-              ? await (await connect()).shutdown()
+              ? await (await connect()).shutdown({ ifIdle: input.ifIdle ?? false })
               : await (await loginService())[input.action]();
           break;
         }

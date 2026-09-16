@@ -40,6 +40,7 @@ async function main() {
       file: { type: "string" },
       key: { type: "string" },
       wait: { type: "boolean" },
+      "if-idle": { type: "boolean" },
       "non-interactive": { type: "boolean" },
       timeout: { type: "string" },
       cpu: { type: "string" },
@@ -100,7 +101,7 @@ Usage: vectis <command> [options]
   service status                Inspect login registration for this home
   service start                 Start the installed or independent background service
   service run                   Run the service in the foreground
-  service stop                  Stop through an authenticated service request
+  service stop [--if-idle]      Stop the service; --if-idle refuses to interrupt active work
   migration analyze <binding-id>  Prepare a repository workflow migration preview
   migration publish <preview-id>  Create or recover its PR without merging
   job scan <binding-id>         Discover missing jobs through the GitHub API
@@ -358,7 +359,7 @@ GitHub pairing require separately configured development services.
     throw new VectisError("unknown_command", "Use operation get, wait or cancel.");
   const api = await client();
   if (command === "service" && subcommand === "stop") {
-    await api.shutdown();
+    await api.shutdown({ ifIdle: values["if-idle"] ?? false });
     output({ stopping: true });
     return;
   }

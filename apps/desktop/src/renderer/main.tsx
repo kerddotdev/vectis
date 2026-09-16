@@ -67,7 +67,7 @@ function Layout() {
   );
 }
 function Overview() {
-  const { snapshot, submit } = useStateApi();
+  const { snapshot, submit, perform, machineId } = useStateApi();
   return (
     <>
       <h1>Your runners.</h1>
@@ -80,6 +80,11 @@ function Overview() {
           {snapshot?.machine.paused ? "Resume new VMs" : "Pause new VMs"}
         </button>
         <span className="muted">Running work continues when paused.</span>
+        {!machineId && (
+          <button disabled={!snapshot} onClick={() => void perform("service.stop-idle")}>
+            Stop service if idle
+          </button>
+        )}
       </div>
       <section className="section">
         <h2>Virtual machines</h2>

@@ -812,6 +812,24 @@ export class Service {
   async drain() {
     await this.queue;
   }
+  beginShutdown(ifIdle: boolean) {
+    const snapshot = this.store.snapshot();
+    if (
+      ifIdle &&
+      (snapshot.preparationBusy ||
+        snapshot.instances.some((instance) => instance.status !== "stopped") ||
+        snapshot.operations.some((operation) =>
+          ["accepted", "running"].includes(operation.status),
+        ) ||
+        this.tasks.size > 0)
+    )
+      throw new VectisError(
+        "service_busy",
+        "The service still has active work or an instance requiring reconciliation.",
+        "Pause new jobs, let active work finish, reconcile interrupted instances, then retry.",
+      );
+    this.closing = true;
+  }
   async close() {
     this.closing = true;
     for (const task of this.tasks.values()) task.abort.abort();

@@ -10,6 +10,7 @@ import {
   VectisError,
   type Command,
   type Connection,
+  type ShutdownOptions,
 } from "../../protocol/src/index.js";
 
 export class VectisClient {
@@ -44,8 +45,8 @@ export class VectisClient {
   async reloadCloud() {
     return this.request("/v1/cloud/reload", {});
   }
-  async shutdown() {
-    return this.request("/v1/shutdown", {});
+  async shutdown(options: ShutdownOptions = {}) {
+    return this.request(options.ifIdle ? "/v1/shutdown-if-idle" : "/v1/shutdown", options);
   }
   async jobs(bindingId: string) {
     return Schema.decodeUnknownSync(Jobs)(

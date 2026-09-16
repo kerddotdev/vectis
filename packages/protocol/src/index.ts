@@ -1,6 +1,8 @@
 import { Schema } from "effect";
 
 export const protocolVersion = 1;
+export const ShutdownOptions = Schema.Struct({ ifIdle: Schema.optional(Schema.Boolean) });
+export type ShutdownOptions = typeof ShutdownOptions.Type;
 export const Identifier = Schema.String.check(
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$/),
 );

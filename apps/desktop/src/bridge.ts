@@ -12,6 +12,7 @@ export type DesktopAction =
   | "command"
   | "service.install"
   | "service.stop"
+  | "service.stop-idle"
   | "chooseDirectory"
   | "chooseRestoreImage"
   | "chooseFile"

@@ -7,6 +7,7 @@ import { Schema } from "effect";
 import {
   capabilities,
   Request,
+  ShutdownOptions,
   VectisError,
   type Connection,
   type CloudStatus,
@@ -133,7 +134,14 @@ export async function startService(
         reply(response, 200, { cloud });
         return;
       }
-      if (request.method === "POST" && request.url === "/v1/shutdown") {
+      if (
+        request.method === "POST" &&
+        (request.url === "/v1/shutdown" || request.url === "/v1/shutdown-if-idle")
+      ) {
+        const shutdown = Schema.decodeUnknownSync(ShutdownOptions, { onExcessProperty: "error" })(
+          await body(request),
+        );
+        service.beginShutdown(request.url === "/v1/shutdown-if-idle" || (shutdown.ifIdle ?? false));
         reply(response, 202, { stopping: true });
         options.onShutdown?.();
         return;
