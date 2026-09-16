@@ -67,6 +67,8 @@ test("bindings deduplicate and disappear from machine admission when disabled", 
     machine.mutation(api.repositoryBindings.setAutomatic, { bindingId: id, enabled: true }),
   ).rejects.toThrow();
   expect(await machine.query(api.repositoryBindings.forMachine, {})).toEqual([]);
+  expect(await t.mutation(internal.repositoryBindings.save, args)).toBe(id);
+  expect((await machine.query(api.repositoryBindings.forMachine, {}))[0]?.automatic).toBe(false);
   await owner.mutation(api.machines.revoke, { id: machineId });
   await expect(t.mutation(internal.repositoryBindings.save, args)).rejects.toThrow();
   await expect(machine.query(api.repositoryBindings.forMachine, {})).rejects.toThrow();

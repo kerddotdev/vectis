@@ -123,7 +123,7 @@ export const disable = mutation({
     const owner = await human(ctx);
     const record = await ctx.db.get("repositoryBindings", args.id);
     if (!record || record.owner !== owner) throw new ConvexError({ code: "binding_missing" });
-    await ctx.db.patch("repositoryBindings", args.id, { enabled: false });
+    await ctx.db.patch("repositoryBindings", args.id, { enabled: false, automatic: false });
   },
 });
 
