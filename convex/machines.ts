@@ -1,3 +1,4 @@
+import { scheduleRunnerDemand } from "./runnerDemand.js";
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server.js";
 import { environmentSummary } from "./schema.js";
@@ -42,7 +43,11 @@ export const revoke = mutation({
   },
 });
 export const heartbeat = mutation({
-  args: { environments: v.optional(v.array(environmentSummary)) },
+  args: {
+    environments: v.optional(v.array(environmentSummary)),
+    paused: v.optional(v.boolean()),
+    runnerIdle: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const record = await machine(ctx);
     const environments = args.environments;
@@ -67,7 +72,10 @@ export const heartbeat = mutation({
     await ctx.db.patch("machines", record._id, {
       lastSeenAt: Date.now(),
       ...(environments ? { environments } : {}),
+      ...(args.paused === undefined ? {} : { paused: args.paused }),
+      ...(args.runnerIdle === undefined ? {} : { runnerIdle: args.runnerIdle }),
     });
+    await scheduleRunnerDemand(ctx, record._id);
   },
 });
 export const self = query({
