@@ -31,7 +31,7 @@ export function windowsVmArguments(input: {
     "-netdev",
     "user,id=net0,hostfwd=tcp:127.0.0.1:0-:22",
     "-device",
-    "virtio-net-pci,netdev=net0",
+    "virtio-net-pci,netdev=net0,romfile=",
     "-chardev",
     "socket,id=chrtpm,path=tpm.sock",
     "-tpmdev",
