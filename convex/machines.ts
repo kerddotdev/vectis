@@ -1,4 +1,4 @@
-import { scheduleRunnerDemand } from "./runnerDemand.js";
+import { scheduleRunnerDemand, scheduleJobScan } from "./runnerDemand.js";
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server.js";
 import { environmentSummary } from "./schema.js";
@@ -76,6 +76,7 @@ export const heartbeat = mutation({
       ...(args.runnerIdle === undefined ? {} : { runnerIdle: args.runnerIdle }),
     });
     await scheduleRunnerDemand(ctx, record._id);
+    await scheduleJobScan(ctx, record._id);
   },
 });
 export const self = query({

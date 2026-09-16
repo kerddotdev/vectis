@@ -129,3 +129,52 @@ test("failed demand is not automatically retried and successful retries are boun
   }
   expect(await operations()).toHaveLength(3);
 });
+
+test("repository scans are deduplicated across machines and retry on later heartbeats", async () => {
+  const { t, heartbeat, operations } = await fixture();
+  await t.run(async (ctx) =>
+    ctx.db.insert("githubApps", {
+      appId: 1,
+      slug: "test",
+      ownerId: 1,
+      clientId: "test",
+      privateKey: "unused",
+      clientSecret: "unused",
+      webhookSecret: "unused",
+    }),
+  );
+  await heartbeat(0);
+  await heartbeat(1);
+  await heartbeat(0);
+  const scans = (await operations()).filter(
+    (item) => JSON.parse(item.commandJson).type === "job.scan",
+  );
+  expect(scans).toHaveLength(1);
+  await t.run(async (ctx) => {
+    for (const binding of await ctx.db.query("repositoryBindings").collect())
+      await ctx.db.patch("repositoryBindings", binding._id, { lastJobScanAt: Date.now() - 600000 });
+    await ctx.db.patch("operations", scans[0]!._id, { key: "old-scan", phase: "failed" });
+  });
+  await heartbeat(0);
+  expect(
+    (await operations()).filter((item) => JSON.parse(item.commandJson).type === "job.scan"),
+  ).toHaveLength(2);
+});
+test("repository polling honors pause and revoked account ownership", async () => {
+  const { t, heartbeat, operations, accountId } = await fixture();
+  await t.run(async (ctx) =>
+    ctx.db.insert("githubApps", {
+      appId: 1,
+      slug: "test",
+      ownerId: 1,
+      clientId: "test",
+      privateKey: "unused",
+      clientSecret: "unused",
+      webhookSecret: "unused",
+    }),
+  );
+  await heartbeat(0, true);
+  await t.run(async (ctx) => ctx.db.patch("githubAccounts", accountId, { owner: "other" }));
+  await heartbeat(1);
+  expect(await operations()).toHaveLength(0);
+});

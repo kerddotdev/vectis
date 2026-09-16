@@ -54,6 +54,7 @@ export default defineSchema({
     environmentId: v.string(),
     enabled: v.boolean(),
     automatic: v.optional(v.boolean()),
+    lastJobScanAt: v.optional(v.number()),
     verifiedAt: v.number(),
   })
     .index("by_owner", ["owner"])
