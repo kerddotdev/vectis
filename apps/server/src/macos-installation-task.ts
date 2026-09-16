@@ -27,7 +27,13 @@ export const MacInstallationRecord = Schema.Struct({
   configuration: MacInstallation,
   directory: Schema.String,
   attemptId: Schema.String,
-  phase: Schema.Literals(["installing", "setup_running", "setup_required", "interrupted"]),
+  phase: Schema.Literals([
+    "installing",
+    "setup_running",
+    "setup_required",
+    "interrupted",
+    "registered",
+  ]),
   bundle: Schema.optional(Schema.String),
   build: Schema.optional(Schema.String),
 });
@@ -35,7 +41,7 @@ export async function recoverMacInstallations(store: Store) {
   for (const value of store.list("macInstallation")) {
     const record = Schema.decodeUnknownSync(MacInstallationRecord)(value);
     if (
-      record.phase !== "setup_required" &&
+      ["installing", "setup_running", "interrupted"].includes(record.phase) &&
       (await preparationStopped(record.directory, record.attemptId))
     ) {
       const bundle = join(record.directory, "base.bundle");

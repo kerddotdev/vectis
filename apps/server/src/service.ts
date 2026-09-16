@@ -1,3 +1,4 @@
+import { completeMacRegistration } from "./macos-registration.js";
 import {
   startMacInstallation,
   recoverMacInstallations,
@@ -465,6 +466,7 @@ export class Service {
               "Stop or reconcile this environment's instances before changing it.",
             );
           this.store.put("environment", command.environment.id, command.environment);
+          completeMacRegistration(this.store, command.environment);
           break;
         case "environment.configure": {
           const current = snapshot.environments.find((item) => item.id === command.id);
