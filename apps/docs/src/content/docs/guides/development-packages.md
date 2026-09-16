@@ -1,0 +1,36 @@
+---
+title: Portable development packages
+description: Build and verify the standalone CLI, MCP server, and local service.
+---
+
+The portable macOS ARM64 development package includes its own pinned Node runtime, CLI, MCP server, background service, Apple virtualization helper, and Keychain helper. It runs outside the source checkout without Node or pnpm on the user's PATH.
+
+This is an ad-hoc-signed development artifact, not a notarized public release. QEMU, qemu-img, swtpm, firmware, and guest operating system images are not included yet. Windows requires the separately configured development runtime. Do not disable Gatekeeper to distribute this artifact.
+
+## Build
+
+Build the native helpers and the TypeScript applications with the pinned project tools. Pass the directory containing both `vectis-vm` and `vectis-keychain`:
+
+```sh
+swift build --package-path native/apple --configuration release
+pnpm package:cli --output /absolute/path/to/new-package --helpers /absolute/path/to/native-binaries
+pnpm package:verify /absolute/path/to/new-package
+```
+
+The output directory must not already exist. The build downloads Node 24.21.0 from nodejs.org and checks its pinned SHA-256 and byte length. The Node license and dependency license files stay in the package. Package contents use an explicit allowlist; environment files and internal documents are excluded. An inspection rejects external dependency symlinks.
+
+`package:verify` runs isolated service start, pause, stop, restart, resume, MCP stdio, and cleanup checks using the packaged runtime with no Node on PATH. It preserves failed-test state if service shutdown cannot be verified. Run it after moving the package outside the checkout to check relocation too.
+
+## Use
+
+Keep the package directory intact and add its `bin` directory to PATH. Do not symlink individual launchers. Both launchers resolve the packaged runtime relative to themselves:
+
+```sh
+/absolute/path/to/package/bin/vectis --help
+/absolute/path/to/package/bin/vectis service start --home /absolute/path/to/test-state --json
+/absolute/path/to/package/bin/vectis-mcp --home /absolute/path/to/test-state
+```
+
+The launchers configure the packaged Apple and Keychain helpers automatically. Explicit `VECTIS_APPLE_HELPER` and `VECTIS_KEYCHAIN_HELPER` overrides remain available for development. Service installation records absolute paths, so stop and uninstall its login registration before moving or removing an installed package. Uninstalling that registration preserves images, configuration, and credentials.
+
+The package does not grant GitHub access or connect a cloud account automatically. Follow the [local setup guide](/docs/guides/local-setup/) and [remote control guide](/docs/guides/remote-control/).
