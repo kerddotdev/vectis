@@ -6,6 +6,7 @@ export const MachineRepositories = Schema.Array(
     repositoryId: Schema.Int,
     repositoryName: Schema.NonEmptyString,
     environmentId: Identifier,
+    automatic: Schema.optional(Schema.Boolean),
   }),
 );
 export type MachineRepositories = typeof MachineRepositories.Type;

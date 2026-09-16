@@ -81,6 +81,7 @@ export async function scheduleRunnerDemand(ctx: MutationCtx, machineId: Id<"mach
           type: "runner.run",
           bindingId: binding._id,
           jobId: job.jobId,
+          automatic: true,
         }),
         phase: "accepted",
         createdAt: now,

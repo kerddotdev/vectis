@@ -26,6 +26,7 @@ export class Service {
     readonly runtime: VmRuntime,
     readonly runnerConnection: () => RunnerBroker & {
       repositories(): Promise<MachineRepositories>;
+      setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
       refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
     } = () => {
       throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
@@ -58,6 +59,11 @@ export class Service {
       let result: unknown;
       const snapshot = this.store.snapshot();
       switch (command.type) {
+        case "repository.automatic": {
+          await this.runnerConnection().setAutomatic(command.bindingId, command.enabled);
+          result = { bindingId: command.bindingId, automatic: command.enabled };
+          break;
+        }
         case "job.refresh": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           const broker = this.runnerConnection();
@@ -117,6 +123,13 @@ export class Service {
                 ? {}
                 : {
                     needed: async () => {
+                      if (
+                        command.automatic &&
+                        !(await broker.repositories()).some(
+                          (item) => item.id === command.bindingId && item.automatic,
+                        )
+                      )
+                        return false;
                       const job = await broker.refreshJob(
                         command.bindingId,
                         demandJobId,

@@ -111,6 +111,7 @@ export const forMachine = query({
           repositoryId: binding.repositoryId,
           repositoryName: `${account.login}/${binding.repositoryName}`,
           environmentId: binding.environmentId,
+          automatic: binding.automatic ?? false,
         });
     }
     return visible;
@@ -123,5 +124,25 @@ export const disable = mutation({
     const record = await ctx.db.get("repositoryBindings", args.id);
     if (!record || record.owner !== owner) throw new ConvexError({ code: "binding_missing" });
     await ctx.db.patch("repositoryBindings", args.id, { enabled: false });
+  },
+});
+
+export const setAutomatic = mutation({
+  args: { bindingId: v.string(), enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    const target = await machine(ctx);
+    const id = ctx.db.normalizeId("repositoryBindings", args.bindingId);
+    const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
+    if (
+      !binding ||
+      !binding.enabled ||
+      binding.machineId !== target._id ||
+      binding.owner !== target.owner
+    )
+      throw new ConvexError({ code: "repository_access_denied" });
+    const account = await ctx.db.get("githubAccounts", binding.accountId);
+    if (account?.owner !== target.owner)
+      throw new ConvexError({ code: "repository_access_denied" });
+    await ctx.db.patch("repositoryBindings", binding._id, { automatic: args.enabled });
   },
 });
