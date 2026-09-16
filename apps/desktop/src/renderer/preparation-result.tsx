@@ -12,10 +12,12 @@ export function PreparationResult({
   result,
   resumable,
   macos = false,
+  windows = false,
 }: {
   result: unknown;
   resumable: boolean;
   macos?: boolean;
+  windows?: boolean;
 }) {
   const { submit } = useStateApi();
   const [confirmation, setConfirmation] = useState("");
@@ -38,7 +40,11 @@ export function PreparationResult({
         <button
           onClick={() =>
             void submit({
-              type: macos ? "environment.resume-macos" : "environment.resume",
+              type: macos
+                ? "environment.resume-macos"
+                : windows
+                  ? "environment.resume-windows"
+                  : "environment.resume",
               id: result.setupId,
             })
           }

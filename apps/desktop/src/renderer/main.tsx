@@ -123,10 +123,13 @@ function Overview() {
                 "environment.install-macos",
                 "environment.resume-macos",
                 "environment.open-macos-setup",
+                "environment.install-windows",
+                "environment.resume-windows",
               ].includes(operation.command) && (
                 <PreparationResult
                   result={operation.result}
                   macos={operation.command.includes("macos")}
+                  windows={operation.command.includes("windows")}
                   resumable={operation.status === "action_required"}
                 />
               )}
@@ -146,6 +149,8 @@ function Overview() {
             {(operation.command === "environment.install-macos" ||
               operation.command === "environment.resume-macos" ||
               operation.command === "environment.open-macos-setup" ||
+              operation.command === "environment.install-windows" ||
+              operation.command === "environment.resume-windows" ||
               operation.command === "environment.prepare-linux" ||
               operation.command === "environment.resume" ||
               operation.command === "runner.run" ||

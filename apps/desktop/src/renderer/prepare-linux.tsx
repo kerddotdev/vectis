@@ -1,6 +1,10 @@
 import { useState } from "react";
 import { Schema } from "effect";
-import { LinuxPreparation, MacInstallation } from "../../../../packages/protocol/src/index.js";
+import {
+  LinuxPreparation,
+  MacInstallation,
+  WindowsInstallation,
+} from "../../../../packages/protocol/src/index.js";
 import { useStateApi } from "./state.js";
 
 export function PrepareLinux() {
@@ -17,7 +21,9 @@ export function PrepareLinux() {
       <p>
         {os === "linux"
           ? "Download verified Ubuntu 24.04 ARM64 and prepare SSH, Git, Docker and runner dependencies."
-          : "Install a local Apple macOS 26 IPSW. Setup Assistant and guest SSH configuration are separate steps; this does not register a ready runner."}
+          : os === "windows"
+            ? "Install Windows 11 ARM64 from your official ISO with separate driver media, UEFI and TPM state. Activation and required licenses remain your responsibility."
+            : "Install a local Apple macOS 26 IPSW. Setup Assistant and guest SSH configuration are separate steps; this does not register a ready runner."}
         Other VMs must be stopped while preparing an image.
       </p>
       <form
@@ -40,10 +46,23 @@ export function PrepareLinux() {
                     type: "environment.prepare-linux" as const,
                     ...Schema.decodeUnknownSync(LinuxPreparation)(fields),
                   }
-                : {
-                    type: "environment.install-macos" as const,
-                    ...Schema.decodeUnknownSync(MacInstallation)({ ...fields, restorePath }),
-                  };
+                : os === "windows"
+                  ? {
+                      type: "environment.install-windows" as const,
+                      ...Schema.decodeUnknownSync(WindowsInstallation)({
+                        ...fields,
+                        isoPath: data.get("isoPath"),
+                        driversPath: data.get("driversPath"),
+                        firmwarePath: data.get("firmwarePath"),
+                        firmwareVarsPath: data.get("firmwareVarsPath"),
+                        imageName: data.get("imageName"),
+                        acceptLicense: data.get("acceptLicense") === "on",
+                      }),
+                    }
+                  : {
+                      type: "environment.install-macos" as const,
+                      ...Schema.decodeUnknownSync(MacInstallation)({ ...fields, restorePath }),
+                    };
             setPending(true);
             setMessage("");
             void submit(command)
@@ -64,6 +83,7 @@ export function PrepareLinux() {
           <select value={os} disabled={pending} onChange={(event) => setOs(event.target.value)}>
             <option value="linux">Ubuntu 24.04 ARM64</option>
             <option value="macos">macOS 26 ARM64</option>
+            <option value="windows">Windows 11 ARM64</option>
           </select>
         </label>
         {os === "macos" && (
@@ -87,11 +107,45 @@ export function PrepareLinux() {
           </label>
         )}
         <fieldset disabled={pending} key={os}>
+          {os === "windows" && (
+            <>
+              <label>
+                Windows ARM64 ISO path
+                <input name="isoPath" required />
+              </label>
+              <label>
+                VirtIO driver ISO path
+                <input name="driversPath" required />
+              </label>
+              <label>
+                ARM64 UEFI code path
+                <input name="firmwarePath" required />
+              </label>
+              <label>
+                Blank raw UEFI variables template path
+                <input name="firmwareVarsPath" required />
+              </label>
+              <label>
+                Windows image name
+                <input name="imageName" defaultValue="Windows 11 Pro" required />
+              </label>
+              <label>
+                <input name="acceptLicense" type="checkbox" required />I accept the Windows license
+                terms for this installation.
+              </label>
+            </>
+          )}
           <label>
             Environment ID
             <input
               name="id"
-              defaultValue={os === "linux" ? "ubuntu-24-arm64" : "macos-26-arm64"}
+              defaultValue={
+                os === "linux"
+                  ? "ubuntu-24-arm64"
+                  : os === "windows"
+                    ? "windows-11-arm64"
+                    : "macos-26-arm64"
+              }
               required
               pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}"
             />
@@ -100,7 +154,13 @@ export function PrepareLinux() {
             Name
             <input
               name="name"
-              defaultValue={os === "linux" ? "Ubuntu 24.04 ARM64" : "macOS 26 ARM64"}
+              defaultValue={
+                os === "linux"
+                  ? "Ubuntu 24.04 ARM64"
+                  : os === "windows"
+                    ? "Windows 11 ARM64"
+                    : "macOS 26 ARM64"
+              }
               required
             />
           </label>
@@ -162,14 +222,18 @@ export function PrepareLinux() {
             <input
               name="diskGiB"
               type="number"
-              min={os === "linux" ? "16" : "40"}
+              min={os === "linux" ? "16" : os === "windows" ? "64" : "40"}
               max="2048"
-              defaultValue={os === "linux" ? "32" : "64"}
+              defaultValue={os === "linux" ? "32" : os === "windows" ? "96" : "64"}
               required
             />
           </label>
           <button type="submit">
-            {os === "linux" ? "Prepare Linux environment" : "Install macOS"}
+            {os === "linux"
+              ? "Prepare Linux environment"
+              : os === "windows"
+                ? "Install Windows"
+                : "Install macOS"}
           </button>
         </fieldset>
       </form>
