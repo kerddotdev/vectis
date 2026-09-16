@@ -69,3 +69,14 @@ vectis runner reconcile <operation-id> --wait --json
 Runner reconciliation finds the original cloud lease by its stable request key. It cannot delete another binding's runner or remove a registration while VM exit is unconfirmed. Missing cloud evidence remains `action_required`; do not submit fresh runner requests to hide that state.
 
 In the desktop, use **Connections > Start runner** and follow the operation in **Overview**. Active operations offer **Cancel operation**; interrupted ones offer **Reconcile runner**. MCP exposes these same operations through `vectis_command` and the shared capability schema.
+
+## Disconnect a repository
+
+```sh
+vectis repository disconnect <binding-id> --json
+vectis operation wait <operation-id> --json
+```
+
+Disconnection disables new manual and automatic runner admission for that repository binding on this machine. Running jobs can finish and their registrations can still be cleaned up. Other machines and environments keep their own connections. Repeating disconnection is safe.
+
+The GitHub App installation and workflow files remain unchanged. Jobs requesting the disconnected runner label may wait until compatible capacity is available. Reconnect with `repository connect` when needed; automatic admission stays disabled until explicitly enabled again.
