@@ -26,6 +26,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     const broker = {
       refreshJob: vi.fn(async () => ({
         jobId: 1,
+        labels: [],
         status: "completed" as const,
         conclusion: "success",
       })),

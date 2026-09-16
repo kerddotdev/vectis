@@ -83,7 +83,11 @@ export const Command = Schema.Union([
     jobId: Schema.Int.check(Schema.isGreaterThan(0)),
   }),
   Schema.Struct({ type: Schema.Literal("runner.reconcile"), id: Identifier }),
-  Schema.Struct({ type: Schema.Literal("runner.run"), bindingId: Identifier }),
+  Schema.Struct({
+    type: Schema.Literal("runner.run"),
+    bindingId: Identifier,
+    jobId: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),

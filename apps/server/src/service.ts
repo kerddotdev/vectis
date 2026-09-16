@@ -1,3 +1,4 @@
+import { matchesRunnerLabels } from "../../../packages/github/src/runner-labels.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { JobRefresh } from "../../../packages/protocol/src/jobs.js";
 import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
@@ -105,12 +106,31 @@ export class Service {
             throw new VectisError("setup_required", "Prepare this repository's environment first.");
           const abort = new AbortController();
           let startId: string | undefined;
+          const demandJobId = command.jobId;
           const done = runRunnerTask(
             command.bindingId,
             operation.id,
             environment,
             {
               broker,
+              ...(demandJobId === undefined
+                ? {}
+                : {
+                    needed: async () => {
+                      const job = await broker.refreshJob(
+                        command.bindingId,
+                        demandJobId,
+                        abort.signal,
+                      );
+                      if (job.status !== "queued") return false;
+                      if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
+                        throw new VectisError(
+                          "runner_labels_mismatch",
+                          "The GitHub job requires different runner capabilities.",
+                        );
+                      return true;
+                    },
+                  }),
               start: async () => {
                 const started = this.submit(`${operation.id}:start`, {
                   type: "environment.start",

@@ -9,6 +9,7 @@ async function fixture() {
   const broker = {
     refreshJob: vi.fn(async () => ({
       jobId: 1,
+      labels: [],
       status: "completed" as const,
       conclusion: "success",
     })),

@@ -101,6 +101,7 @@ test("recovers a completely missing webhook using the authorized repository API"
   const { device, bindingId, t } = await fixture();
   expect(await device.action(api.githubJobs.refresh, { bindingId, jobId: 4 })).toEqual({
     jobId: 4,
+    labels: ["vectis-mac"],
     status: "completed",
     conclusion: "success",
   });
