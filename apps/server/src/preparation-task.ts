@@ -121,7 +121,18 @@ export async function startPreparation(
       const issue =
         error instanceof VectisError
           ? error
-          : new VectisError("preparation_interrupted", "Guest preparation did not complete.");
+          : bounded.aborted
+            ? new VectisError("preparation_cancelled", "Preparation stopped and can be resumed.")
+            : error instanceof Error && "code" in error && error.code === "ENOSPC"
+              ? new VectisError("insufficient_disk", "The image storage volume ran out of space.")
+              : error instanceof Error &&
+                  "code" in error &&
+                  ["EACCES", "EPERM"].includes(String(error.code))
+                ? new VectisError(
+                    "storage_unavailable",
+                    "The selected image storage is not accessible.",
+                  )
+                : new VectisError("preparation_interrupted", "Guest preparation did not complete.");
       store.update(operation, {
         status: "action_required",
         message: issue.message,
