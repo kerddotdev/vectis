@@ -14,7 +14,7 @@ if (!values.output || !values.helpers)
   throw new Error(
     "Usage: pnpm package:cli --output <new-directory> --helpers <native-bin-directory>",
   );
-const output = resolve(values.output);
+let output = resolve(values.output);
 const helpers = resolve(values.helpers);
 const root = await realpath(process.cwd());
 const nodeSource = {
@@ -33,6 +33,7 @@ async function run(executable: string, args: string[]) {
 }
 await mkdir(dirname(output), { recursive: true, mode: 0o700 });
 await mkdir(output, { mode: 0o700 });
+output = await realpath(output);
 const application = join(output, "application");
 await run("pnpm", [
   "--filter",
