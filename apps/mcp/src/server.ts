@@ -69,7 +69,7 @@ const tools = [
   {
     name: "vectis_status",
     description:
-      "Read the real local machine, environments, instances and operations. Requires a running Vectis service.",
+      "Read the selected machine, environments, instances and operations. Requires a running Vectis service.",
     inputSchema: emptyInput,
     annotations: { readOnlyHint: true },
   },
@@ -107,9 +107,24 @@ const cloudSchema = Schema.toJsonSchemaDocument(cloudInput);
 const serviceSchema = Schema.toJsonSchemaDocument(serviceInput);
 
 export function createMcpServer(
-  connect: () => Promise<VectisClient>,
+  connect: () => Promise<
+    Pick<
+      VectisClient,
+      | "status"
+      | "storage"
+      | "doctor"
+      | "repositories"
+      | "githubAccounts"
+      | "jobs"
+      | "submit"
+      | "wait"
+      | "shutdown"
+      | "capabilities"
+    >
+  >,
   loginService?: () => Promise<LaunchAgent>,
   pairing?: { home: string; credentials: KeychainCredentials },
+  machineId?: string,
 ) {
   const availableTools = loginService
     ? [
@@ -210,7 +225,14 @@ export function createMcpServer(
           result = await (await connect()).status();
           break;
         case "vectis_capabilities":
-          result = { protocolVersion: 1, capabilities, requestSchema: commandSchema };
+          result = {
+            protocolVersion: 1,
+            capabilities,
+            requestSchema: commandSchema,
+            target: machineId
+              ? { type: "remote", machineId, capabilities: await (await connect()).capabilities() }
+              : { type: "local" },
+          };
           break;
         case "vectis_command": {
           const input = Schema.decodeUnknownSync(Request, { onExcessProperty: "error" })(
