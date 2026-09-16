@@ -1,16 +1,23 @@
+import { relocatePackageLinks, verifyPackageLinks } from "./release/package-links.js";
 import { packager } from "@electron/packager";
 import { access, mkdir, readFile, realpath } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Schema } from "effect";
 
 const { values } = parseArgs({
-  options: { package: { type: "string" }, output: { type: "string" } },
+  options: {
+    package: { type: "string" },
+    output: { type: "string" },
+    sign: { type: "boolean" },
+    "keychain-profile": { type: "string" },
+  },
 });
 if (!values.package || !values.output)
   throw new Error(
     "Usage: pnpm package:desktop --package <portable-package> --output <new-directory>",
   );
+if (values["keychain-profile"] && !values.sign) throw new Error("Notarization requires --sign.");
 const source = await realpath(values.package);
 const output = resolve(values.output);
 const manifest = Schema.decodeUnknownSync(
@@ -38,9 +45,45 @@ const paths = await packager({
   asar: false,
   prune: false,
   derefSymlinks: false,
+  afterCopy: [({ buildPath }) => relocatePackageLinks(join(source, "application"), buildPath)],
   overwrite: false,
   extraResource: join(source, "runtime"),
   appCategoryType: "public.app-category.developer-tools",
   extendInfo: { LSMinimumSystemVersion: "15.0" },
+  ...(values.sign
+    ? {
+        osxSign: {
+          continueOnError: false,
+          preEmbedProvisioningProfile: false,
+          optionsForFile: (path: string) => {
+            switch (basename(path)) {
+              case "vectis-vm":
+                return { entitlements: ["com.apple.security.virtualization"] };
+              case "vectis-keychain":
+                return { entitlements: [] };
+              case "node":
+                return {
+                  entitlements: [
+                    "com.apple.security.cs.allow-jit",
+                    "com.apple.security.cs.allow-unsigned-executable-memory",
+                  ],
+                };
+              default:
+                return {};
+            }
+          },
+        },
+      }
+    : {}),
+  ...(values["keychain-profile"]
+    ? { osxNotarize: { keychainProfile: values["keychain-profile"] } }
+    : {}),
 });
-console.log(JSON.stringify({ paths, signing: "development-only", notarized: false }));
+for (const path of paths) await verifyPackageLinks(path);
+console.log(
+  JSON.stringify({
+    paths,
+    signing: values.sign ? "developer-id" : "development-only",
+    notarized: Boolean(values["keychain-profile"]),
+  }),
+);
