@@ -58,7 +58,7 @@ codesign --force --sign - --entitlements native/apple/entitlements.plist native/
 
 Set `VECTIS_APPLE_HELPER` to the absolute executable path before starting the service. A previously running service must be restarted to pick up runtime configuration. Use `environment register --file environment.json` to register the prepared image. See the [storage guide](/docs/guides/storage/) for the file format.
 
-Registering an environment does not install tools or a GitHub runner in it. Current command execution evidence comes from the Ubuntu cloud-init proof script, not a finished interactive guest management interface.
+Registering an environment does not install its operating system or toolchains. Once its guest SSH access is prepared, the shared runner lifecycle installs the official runner and executes jobs in disposable instances. See the [runner guide](/docs/guides/runners/) for manual and automatic admission.
 
 ## Operation outcomes
 
@@ -87,4 +87,4 @@ pnpm vectis status --home /absolute/path/to/vectis-state --json
 
 The service and CLI keep raw credentials in macOS Keychain. The web approval contains only credential fingerprints. An MCP process configured with the same Keychain helper exposes `vectis_cloud` for the same pair and finish actions. Human approval is always explicit.
 
-This connects a machine to Vectis. GitHub App installation and official Actions runner provisioning are separate steps that are not yet available through this setup flow.
+This connects a machine to Vectis. Continue with [GitHub connections](/docs/guides/github/) and the [runner guide](/docs/guides/runners/) to connect repositories and run jobs. Guest OS preparation remains a separate step.
