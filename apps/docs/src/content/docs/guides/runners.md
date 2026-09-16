@@ -5,6 +5,15 @@ description: Start, observe, cancel, and reconcile a service-managed GitHub runn
 
 The local service can run one official GitHub Actions runner in a disposable guest. This development path requires a paired machine, a connected private personal repository, and a prepared ARM64 environment with pinned guest SSH access. Organization and public repository runner policies are not enabled yet.
 
+After pairing the machine and linking a GitHub identity in the browser, connect a prepared environment:
+
+```sh
+vectis github accounts --json
+vectis repository connect <repository-name> --account <account-id> --environment <environment-id> --wait --json
+```
+
+The account ID must come from verified account discovery. The connection checks the current GitHub App installation and repository access. Repeating the same connection reuses its binding. The desktop provides the equivalent account, repository and environment form under Connections; MCP accepts `repository.connect`.
+
 Discover the repository binding, then request a runner:
 
 ```sh
@@ -24,7 +33,7 @@ runs-on: [self-hosted, macOS, ARM64, vectis-macos-26-arm64]
 
 GitHub assigns queued jobs to available runners. Starting a runner does not assign it to a particular job or automatically dispatch a workflow. Automatic admission can be enabled per binding as described below. Migration PR creation is still being integrated. The manual runner task is bounded to six hours after listener startup.
 
-A successful Vectis operation confirms that its runner process completed and cleanup succeeded. Use `vectis job list <binding-id> --json`, MCP `vectis_jobs`, or **Connections > Refresh GitHub jobs** to read the latest 100 observed GitHub jobs for the repository. These records come from signed GitHub webhooks and include the GitHub conclusion. If an event has not arrived, the record can be absent or stale. Use `vectis job refresh <binding-id> <job-id> --wait --json` to recover a known job directly from the repository API. Scheduled repository-wide discovery of completely missed jobs is still being integrated. Check the GitHub Actions run for the job's actual result. The listener's exit code alone is not a job result.
+A successful Vectis operation confirms that its runner process completed and cleanup succeeded. Use `vectis job list <binding-id> --json`, MCP `vectis_jobs`, or **Connections > Refresh GitHub jobs** to read the latest 100 observed GitHub jobs for the repository. These records come from signed GitHub webhooks and include the GitHub conclusion. If an event has not arrived, the record can be absent or stale. Use `vectis job refresh <binding-id> <job-id> --wait --json` to recover a known job directly from the repository API. Use `vectis job scan <binding-id> --wait --json` or **Discover missing jobs** to discover queued and running workflows without knowing a job ID. The scan also revisits previously active runs. Automatic bindings request this read periodically, at most once per repository per five-minute scheduling window while a connected machine is unpaused. Large queues or API limits can produce `action_required` with a partial scan; use known job IDs to recover specific missing records. Scans never approve fork workflows. Check the GitHub Actions run for the job's actual result. The listener's exit code alone is not a job result.
 
 ## Automatic admission
 
