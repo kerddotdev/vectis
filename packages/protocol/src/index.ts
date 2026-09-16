@@ -5,6 +5,29 @@ export const Identifier = Schema.String.check(
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$/),
 );
 export const GuestOS = Schema.Literals(["linux", "macos", "windows"]);
+export const LinuxPreparation = Schema.Struct({
+  id: Identifier,
+  name: Schema.NonEmptyString,
+  imageDirectory: Schema.NonEmptyString,
+  storagePath: Schema.NonEmptyString,
+  cpu: Schema.Int,
+  memoryMiB: Schema.Int,
+  diskGiB: Schema.Int,
+});
+export type LinuxPreparation = typeof LinuxPreparation.Type;
+export const Preparation = Schema.Struct({
+  id: Identifier,
+  configuration: LinuxPreparation,
+  phase: Schema.Literals([
+    "downloading",
+    "extracting",
+    "provisioning",
+    "booting",
+    "prepared",
+    "interrupted",
+  ]),
+});
+export type Preparation = typeof Preparation.Type;
 export const Environment = Schema.Struct({
   id: Identifier,
   name: Schema.NonEmptyString,
