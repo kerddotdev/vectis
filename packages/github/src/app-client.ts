@@ -8,6 +8,14 @@ const Installation = Schema.Struct({
   suspended_at: Schema.NullOr(Schema.String),
 });
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString });
+export class GitHubApprovalError extends Error {
+  readonly code = "public_runner_approval_required";
+  readonly nextStep =
+    "In GitHub repository Settings > Actions > General, require approval for all external contributors, then retry. Vectis never approves runs automatically.";
+  constructor() {
+    super("Public runner admission requires approval for every external contributor.");
+  }
+}
 export class GitHubApiError extends Error {
   constructor(readonly status: number) {
     super(`GitHub API request failed (${status}).`);
@@ -77,7 +85,7 @@ export class GitHubAppClient {
     repo: string;
     repositoryId?: number;
     githubUserId: number;
-    purpose?: "runners" | "jobs" | "migration-read" | "migration-write";
+    purpose?: "runners" | "cleanup" | "jobs" | "migration-read" | "migration-write";
   }) {
     if (
       !/^[A-Za-z0-9-]+$/.test(input.owner) ||
@@ -129,10 +137,29 @@ export class GitHubAppClient {
     )(await this.request(token, path));
     if (
       (input.repositoryId !== undefined && repository.id !== input.repositoryId) ||
-      repository.owner.id !== input.githubUserId ||
-      !repository.private
+      repository.owner.id !== input.githubUserId
     )
-      throw new Error("This runner path requires a verified private personal repository.");
+      throw new Error("This runner path requires a verified personal repository.");
+    if (
+      !repository.private &&
+      (input.purpose === undefined ||
+        input.purpose === "runners" ||
+        input.purpose === "migration-write")
+    ) {
+      let policyToken = token;
+      if (input.purpose === "migration-write") {
+        policyToken = Schema.decodeUnknownSync(AccessToken)(
+          await this.request(jwt, `/app/installations/${installation.id}/access_tokens`, {
+            repository_ids: [repository.id],
+            permissions: { administration: "read", metadata: "read" },
+          }),
+        ).token;
+      }
+      const policy = Schema.decodeUnknownSync(Schema.Struct({ approval_policy: Schema.String }))(
+        await this.request(policyToken, `${path}/actions/permissions/fork-pr-contributor-approval`),
+      );
+      if (policy.approval_policy !== "all_external_contributors") throw new GitHubApprovalError();
+    }
     return { token, path, installationId: installation.id, repositoryId: repository.id };
   }
 }

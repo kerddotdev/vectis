@@ -72,7 +72,7 @@ test("foreign owners, suspended installations and repository mismatches cannot o
     ),
   );
   await expect(new GitHubAppClient(app).repositoryToken(input)).rejects.toThrow(
-    "verified private personal repository",
+    "verified personal repository",
   );
 });
 
@@ -172,3 +172,69 @@ for (const purpose of ["migration-read", "migration-write"] as const) {
     ).toBe(123);
   });
 }
+
+test("public runner admission requires approval for every external contributor", async () => {
+  let approval = "first_time_contributors";
+  const fetch = vi.fn(async (url: string) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 7, type: "User" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped-token" });
+    if (url.endsWith("/fork-pr-contributor-approval"))
+      return Response.json({ approval_policy: approval });
+    return Response.json({ id: 123, private: false, owner: { id: 7 } });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const client = new GitHubAppClient(app);
+  await expect(client.repositoryToken(input)).rejects.toThrow(
+    "approval for every external contributor",
+  );
+  approval = "all_external_contributors";
+  await expect(client.repositoryToken(input)).resolves.toMatchObject({ repositoryId: 123 });
+  approval = "first_time_contributors";
+  await expect(client.repositoryToken(input)).rejects.toThrow(
+    "approval for every external contributor",
+  );
+  fetch.mockClear();
+  await expect(client.repositoryToken({ ...input, purpose: "cleanup" })).resolves.toMatchObject({
+    repositoryId: 123,
+  });
+  expect(fetch.mock.calls.some(([url]) => url.includes("fork-pr-contributor-approval"))).toBe(
+    false,
+  );
+});
+
+test("public migration publication uses a separate read-only policy token", async () => {
+  let tokens = 0;
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 7, type: "User" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) {
+      tokens++;
+      if (tokens === 2)
+        expect(JSON.parse(String(init?.body))).toEqual({
+          repository_ids: [123],
+          permissions: { administration: "read", metadata: "read" },
+        });
+      return Response.json({ token: tokens === 1 ? "migration-token" : "policy-token" });
+    }
+    if (url.endsWith("/fork-pr-contributor-approval")) {
+      expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer policy-token");
+      return Response.json({ approval_policy: "all_external_contributors" });
+    }
+    return Response.json({ id: 123, private: false, owner: { id: 7 } });
+  });
+  await expect(
+    new GitHubAppClient(app).repositoryToken({ ...input, purpose: "migration-write" }),
+  ).resolves.toMatchObject({ token: "migration-token" });
+  expect(tokens).toBe(2);
+});
