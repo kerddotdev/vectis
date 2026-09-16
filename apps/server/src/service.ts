@@ -1,3 +1,8 @@
+import {
+  startMacInstallation,
+  recoverMacInstallations,
+  hasUnconfirmedMacInstallation,
+} from "./macos-installation-task.js";
 import { preparationDirectory } from "../../../packages/runner/src/linux-preparation.js";
 import { startPreparation } from "./preparation-task.js";
 import { preparationStopped } from "../../../packages/runner/src/preparation-process.js";
@@ -51,6 +56,7 @@ export class Service {
     store.recover();
   }
   async initialize() {
+    await recoverMacInstallations(this.store);
     for (const value of this.store.list("preparation")) {
       const preparation = Schema.decodeUnknownSync(Preparation)(value);
       if (
@@ -83,7 +89,7 @@ export class Service {
       let result: unknown;
       const snapshot = this.store.snapshot();
       if (
-        this.preparing &&
+        (this.preparing || hasUnconfirmedMacInstallation(this.store)) &&
         [
           "environment.register",
           "environment.configure",
@@ -96,8 +102,28 @@ export class Service {
           "Finish or cancel the active image preparation before changing environments or starting VMs.",
         );
       switch (command.type) {
+        case "environment.install-macos":
+        case "environment.resume-macos":
+        case "environment.open-macos-setup": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          if (this.preparing)
+            throw new VectisError("preparation_busy", "An image preparation is already active.");
+          const active = await startMacInstallation(this.store, this.runtime, operation, command);
+          this.preparing = operation.id;
+          const done = active.done.finally(() => {
+            this.preparing = undefined;
+            this.tasks.delete(operation.id);
+          });
+          this.tasks.set(operation.id, { abort: active.abort, done });
+          return;
+        }
         case "environment.prepare-linux":
         case "environment.resume": {
+          if (hasUnconfirmedMacInstallation(this.store))
+            throw new VectisError(
+              "reconciliation_required",
+              "A macOS installer needs exit verification.",
+            );
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           if (this.preparing)
             throw new VectisError("preparation_busy", "An image preparation is already active.");
