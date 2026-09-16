@@ -1,4 +1,10 @@
 import { discardMacInstallation } from "./macos-discard.js";
+import {
+  startWindowsInstallation,
+  recoverWindowsInstallations,
+  hasUnconfirmedWindowsInstallation,
+} from "./windows-installation-task.js";
+import type { SetupCredentials } from "../../../packages/runner/src/windows-media.js";
 import { completeMacRegistration } from "./macos-registration.js";
 import {
   startMacInstallation,
@@ -55,10 +61,12 @@ export class Service {
     } = () => {
       throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
     },
+    readonly setupCredentials?: SetupCredentials,
   ) {
     store.recover();
   }
   async initialize() {
+    await recoverWindowsInstallations(this.store);
     await recoverMacInstallations(this.store);
     for (const value of this.store.list("preparation")) {
       const preparation = Schema.decodeUnknownSync(Preparation)(value);
@@ -92,7 +100,7 @@ export class Service {
       let result: unknown;
       const snapshot = this.store.snapshot();
       if (
-        (this.preparing || hasUnconfirmedMacInstallation(this.store)) &&
+        (this.preparing || snapshot.preparationBusy) &&
         [
           "environment.register",
           "environment.configure",
@@ -105,6 +113,26 @@ export class Service {
           "Finish or cancel the active image preparation before changing environments or starting VMs.",
         );
       switch (command.type) {
+        case "environment.install-windows":
+        case "environment.resume-windows": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          if (this.preparing)
+            throw new VectisError("preparation_busy", "An image preparation is already active.");
+          const active = await startWindowsInstallation(
+            this.store,
+            this.runtime,
+            operation,
+            command,
+            this.setupCredentials,
+          );
+          this.preparing = operation.id;
+          const done = active.done.finally(() => {
+            this.preparing = undefined;
+            this.tasks.delete(operation.id);
+          });
+          this.tasks.set(operation.id, { abort: active.abort, done });
+          return;
+        }
         case "environment.discard-macos": {
           if (this.preparing)
             throw new VectisError(
@@ -117,6 +145,11 @@ export class Service {
         case "environment.install-macos":
         case "environment.resume-macos":
         case "environment.open-macos-setup": {
+          if (hasUnconfirmedWindowsInstallation(this.store))
+            throw new VectisError(
+              "reconciliation_required",
+              "A Windows installer needs exit verification.",
+            );
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           if (this.preparing)
             throw new VectisError("preparation_busy", "An image preparation is already active.");
@@ -131,10 +164,13 @@ export class Service {
         }
         case "environment.prepare-linux":
         case "environment.resume": {
-          if (hasUnconfirmedMacInstallation(this.store))
+          if (
+            hasUnconfirmedMacInstallation(this.store) ||
+            hasUnconfirmedWindowsInstallation(this.store)
+          )
             throw new VectisError(
               "reconciliation_required",
-              "A macOS installer needs exit verification.",
+              "A guest installer needs exit verification.",
             );
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           if (this.preparing)

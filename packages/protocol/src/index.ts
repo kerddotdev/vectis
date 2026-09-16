@@ -125,6 +125,11 @@ export const RepositoryConnection = Schema.Struct({
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("environment.install-windows"),
+    ...WindowsInstallation.fields,
+  }),
+  Schema.Struct({ type: Schema.Literal("environment.resume-windows"), id: Identifier }),
+  Schema.Struct({
     type: Schema.Literal("environment.discard-macos"),
     id: Identifier,
     environmentId: Identifier,
@@ -198,6 +203,16 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "environment.install-windows",
+    description:
+      "Prepare Windows 11 ARM64 from local installation and driver ISOs with explicit license acceptance, private UEFI/TPM state and pinned guest SSH keys. Requires configured QEMU, qemu-img, swtpm and Keychain.",
+  },
+  {
+    name: "environment.resume-windows",
+    description:
+      "Continue an owned Windows installation after verifying its previous VM stopped. Preserves its disk and setup identity.",
+  },
   {
     name: "environment.discard-macos",
     description:

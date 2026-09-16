@@ -48,14 +48,14 @@ export class Store {
       Schema.Struct({ id: Schema.String, name: Schema.String, paused: Schema.Boolean }),
     )(this.get("machine", "self"));
     return {
-      preparationBusy: [...this.list("preparation"), ...this.list("macInstallation")].some(
-        (value) => {
-          const { phase } = Schema.decodeUnknownSync(Schema.Struct({ phase: Schema.String }))(
-            value,
-          );
-          return ["booting", "installing", "setup_running"].includes(phase);
-        },
-      ),
+      preparationBusy: [
+        ...this.list("preparation"),
+        ...this.list("macInstallation"),
+        ...this.list("windowsInstallation"),
+      ].some((value) => {
+        const { phase } = Schema.decodeUnknownSync(Schema.Struct({ phase: Schema.String }))(value);
+        return ["booting", "installing", "setup_running"].includes(phase);
+      }),
       protocolVersion: 1,
       machine,
       environments: this.list("environment").map((value) =>
