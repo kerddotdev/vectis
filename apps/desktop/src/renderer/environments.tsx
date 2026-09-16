@@ -5,7 +5,7 @@ import { Environment } from "../../../../packages/protocol/src/index.js";
 import { useStateApi } from "./state.js";
 
 export function Environments() {
-  const { snapshot, submit, perform } = useStateApi();
+  const { snapshot, submit, perform, machineId } = useStateApi();
   const [storage, setStorage] = useState("");
   const [issue, setIssue] = useState("");
   async function register(event: FormEvent<HTMLFormElement>) {
@@ -96,6 +96,7 @@ export function Environments() {
           </label>
           <button
             type="button"
+            disabled={!!machineId}
             className="secondary"
             onClick={() =>
               void perform("chooseDirectory").then((value) => {
@@ -149,7 +150,7 @@ export function Environments() {
   );
 }
 function EnvironmentRow({ environment }: { environment: Environment }) {
-  const { submit, perform } = useStateApi();
+  const { submit, perform, machineId } = useStateApi();
   const [cpu, setCpu] = useState(environment.cpu);
   const [memoryMiB, setMemory] = useState(environment.memoryMiB);
   const [storagePath, setStorage] = useState(environment.storagePath ?? "");
@@ -217,6 +218,7 @@ function EnvironmentRow({ environment }: { environment: Environment }) {
           </label>
           <button
             type="button"
+            disabled={!!machineId}
             className="secondary"
             onClick={() =>
               void perform("chooseDirectory").then((value) => {
