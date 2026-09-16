@@ -1,0 +1,50 @@
+---
+title: Install a Windows guest
+description: Prepare a local Windows 11 ARM64 image with private setup credentials and pinned SSH access.
+---
+
+The Windows installer is under integration testing. It uses a local official Windows 11 ARM64 ISO, ARM64 VirtIO network drivers and QEMU with Apple Silicon hardware acceleration. It does not fall back to CPU emulation. Runtime and firmware installation are currently explicit prerequisites.
+
+## Prerequisites
+
+Configure QEMU, qemu-img, swtpm and the Vectis Keychain helper in the local service. Supply an ARM64 UEFI code image and a blank **raw** UEFI variable-store template compatible with that firmware. Do not use another VM's variable store or TPM state.
+
+Choose existing directories for the base image and disposable VMs. Preparation requires an idle host, at least 30 GiB of free image storage, at least 2 CPU cores, 4096 MiB of guest memory and a virtual disk of at least 64 GiB. CPU and memory allocations must fit the host's limits. A thin virtual disk grows as Windows writes to it.
+
+Use installation media you obtained from trusted publishers. Vectis fingerprints these local files and rejects changed media on resume; a local fingerprint does not establish publisher authenticity. The current unattended recipe targets English installation media and the selected Windows image name, normally `Windows 11 Pro`.
+
+You must accept the applicable Windows license terms. Vectis does not provide a Windows license, activate Windows or bypass activation requirements.
+
+## Start installation
+
+In desktop **Environments > Prepare a guest image**, select **Windows 11 ARM64** and provide the media paths and resource limits. The equivalent CLI command is:
+
+```sh
+vectis environment install-windows windows-11-arm64 \
+  --iso-path /absolute/path/to/windows-arm64.iso \
+  --drivers-path /absolute/path/to/virtio-win.iso \
+  --firmware-path /absolute/path/to/uefi-code.fd \
+  --firmware-vars-path /absolute/path/to/blank-uefi-vars.fd \
+  --image-directory /absolute/path/to/images \
+  --storage-path /absolute/path/to/vms \
+  --cpu 4 --memory-mib 8192 --disk-gib 96 \
+  --image-name 'Windows 11 Pro' --accept-license --json
+vectis operation wait <operation-id> --timeout 3600000 --json
+```
+
+The service creates a dedicated disk, UEFI variables, TPM state and setup identity. The local administrator password is generated into macOS Keychain. Temporary answer files and setup media contain guest credentials and are private local files: do not share them or upload them in diagnostics.
+
+The recipe creates a local `vectis` account, disables automatic login after bootstrap, installs OpenSSH Server, restricts guest SSH to the QEMU host address and uses dedicated pinned keys. It does not share host directories or credentials with the guest. Windows setup and OpenSSH installation can require internet access.
+
+The service reports success only after checking guest ARM64 architecture, clock synchronization and the setup marker over SSH, then observing a completed guest shutdown. It removes temporary setup media after completion. A successful setup registers the base environment; connecting a repository and observing its first Actions job are separate steps. Additional build tools are not implicitly installed.
+
+## Interruption and recovery
+
+```sh
+vectis operation cancel <operation-id> --json
+vectis environment resume-windows <setup-id> --json
+```
+
+Closing the desktop does not cancel the service operation. Cancellation preserves the owned disk for diagnosis and resume. The previous VM must have a matching exit receipt before another attempt is admitted. An uncertain process state blocks new VM starts.
+
+An interrupted operation reports `action_required` with the setup ID and private directory. Its `setup.ppm` screenshot and `preparation.log` can help diagnose guest setup failures. Screenshots may contain guest information; keep them local. Resume uses the same setup identity and disk, not a second fresh installation. A changed environment configuration requires a separate setup.
