@@ -74,3 +74,50 @@ test("installer completion is observed on stdout without trusting exit zero alon
       expect(await preparationStopped(directory, "install")).toBe(true);
     },
   ));
+
+test("setup observes only complete validated guest network events", () =>
+  fixture(
+    'process.stdout.write(\'noise\\n{"event":"vm.running","macAddress":"bad"}\\n{"event":"vm.running",\');setTimeout(()=>process.stdout.write(\'"macAddress":"02:11:22:33:44:55"}\\n\'),10);',
+    async (helper, directory) => {
+      const addresses: string[] = [];
+      await runPreparationProcess(
+        {
+          helper,
+          directory,
+          id: "network",
+          args: [],
+          marker: '"vm.running"',
+          markerStream: "stdout",
+          onRunning: (address) => {
+            addresses.push(address);
+          },
+        },
+        new AbortController().signal,
+      );
+      expect(addresses).toEqual(["02:11:22:33:44:55"]);
+    },
+  ));
+
+test("failure to persist a setup event closes its owned process", () =>
+  fixture(
+    'process.stdin.resume();process.stdin.on("end",()=>process.exit(0));process.stdout.write(\'{"event":"vm.running","macAddress":"02:11:22:33:44:55"}\\n\');',
+    async (helper, directory) => {
+      await expect(
+        runPreparationProcess(
+          {
+            helper,
+            directory,
+            id: "failed-network",
+            args: [],
+            marker: '"vm.running"',
+            markerStream: "stdout",
+            onRunning: () => {
+              throw new Error("State cannot be persisted");
+            },
+          },
+          AbortSignal.timeout(3000),
+        ),
+      ).rejects.toMatchObject({ code: "guest_preparation_failed" });
+      expect(await preparationStopped(directory, "failed-network")).toBe(true);
+    },
+  ));

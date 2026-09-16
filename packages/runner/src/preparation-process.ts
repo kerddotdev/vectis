@@ -56,6 +56,7 @@ export async function runPreparationProcess(
     args: readonly string[];
     marker: string;
     markerStream: "stdout" | "stderr";
+    onRunning?: (macAddress: string) => void;
   },
   signal: AbortSignal,
 ) {
@@ -74,10 +75,35 @@ export async function runPreparationProcess(
   let serial = "";
   let prepared = false;
   let events = "";
+  let pendingEvents = "";
+  const runningEvent = Schema.Struct({
+    event: Schema.Literal("vm.running"),
+    macAddress: Schema.String.check(Schema.isPattern(/^(?:[a-fA-F0-9]{2}:){5}[a-fA-F0-9]{2}$/)),
+  });
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     events = (events + chunk).slice(-16384);
     if (input.markerStream === "stdout" && events.includes(input.marker)) prepared = true;
+    if (input.onRunning) {
+      pendingEvents = (pendingEvents + chunk).slice(-16384);
+      const lines = pendingEvents.split("\n");
+      pendingEvents = lines.pop() ?? "";
+      for (const line of lines) {
+        let event: unknown;
+        try {
+          event = JSON.parse(line);
+        } catch {
+          continue;
+        }
+        if (!Schema.is(runningEvent)(event)) continue;
+        try {
+          input.onRunning(event.macAddress);
+        } catch {
+          failed = true;
+          stop();
+        }
+      }
+    }
   });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {

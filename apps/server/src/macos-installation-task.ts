@@ -40,6 +40,7 @@ export const MacInstallationRecord = Schema.Struct({
   ]),
   bundle: Schema.optional(Schema.String),
   build: Schema.optional(Schema.String),
+  macAddress: Schema.optional(Schema.String),
 });
 export async function recoverMacInstallations(store: Store) {
   for (const value of store.list("macInstallation")) {
@@ -159,7 +160,12 @@ export async function startMacInstallation(
       );
     const abort = new AbortController();
     const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(3600000)]);
-    const record = { ...previous, phase: "setup_running", attemptId: operation.id };
+    const record = {
+      ...previous,
+      phase: "setup_running",
+      attemptId: operation.id,
+      macAddress: undefined,
+    };
     store.put("macInstallation", record.id, record);
     const result = {
       setupId: record.id,
@@ -189,6 +195,14 @@ export async function startMacInstallation(
         ],
         marker: '"vm.running"',
         markerStream: "stdout",
+        onRunning: (macAddress) => {
+          const current = Schema.decodeUnknownSync(MacInstallationRecord)(
+            store.get("macInstallation", record.id),
+          );
+          if (current.attemptId !== operation.id)
+            throw new VectisError("setup_changed", "The setup session changed.");
+          store.put("macInstallation", record.id, { ...current, macAddress });
+        },
       },
       signal,
     )
@@ -197,7 +211,10 @@ export async function startMacInstallation(
         () => "Guest console stopped or could not start. Guest setup still requires verification.",
       )
       .then((message) => {
-        store.put("macInstallation", record.id, { ...record, phase: "setup_required" });
+        const current = Schema.decodeUnknownSync(MacInstallationRecord)(
+          store.get("macInstallation", record.id),
+        );
+        store.put("macInstallation", record.id, { ...current, phase: "setup_required" });
         store.update(operation, {
           status: "action_required",
           message,
