@@ -127,6 +127,7 @@ function Overview() {
             )}
             {(operation.command === "runner.run" ||
               operation.command === "job.refresh" ||
+              operation.command === "job.scan" ||
               operation.command === "repository.connect") &&
               operation.status === "running" && (
                 <button

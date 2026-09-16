@@ -27,6 +27,16 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
       <button className="secondary" disabled={pending} onClick={() => void refresh()}>
         {pending ? "Reading jobs" : "Refresh GitHub jobs"}
       </button>
+      <button
+        className="secondary"
+        onClick={() => {
+          void submit({ type: "job.scan", bindingId }).then((value) =>
+            setRequested(value !== undefined),
+          );
+        }}
+      >
+        Discover missing jobs
+      </button>
       <form
         onSubmit={(event) => {
           event.preventDefault();

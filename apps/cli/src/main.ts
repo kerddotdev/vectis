@@ -64,6 +64,7 @@ Usage: vectis <command> [options]
   service start                 Start the installed or independent background service
   service run                   Run the service in the foreground
   service stop                  Stop through an authenticated service request
+  job scan <binding-id>         Discover missing jobs through the GitHub API
   job refresh <binding-id> <job-id>  Recover a job state directly from GitHub
   job list <binding-id>         Read recent GitHub job status for a connected repository
   repository enable-auto <id>   Enable automatic runners for matching queued jobs
@@ -308,6 +309,8 @@ GitHub pairing require separately configured development services.
       bindingId: id,
       enabled: subcommand === "enable-auto",
     });
+  else if (command === "job" && subcommand === "scan" && id)
+    request = decodeCommand({ type: "job.scan", bindingId: id });
   else if (command === "job" && subcommand === "refresh" && id && positionals[3])
     request = decodeCommand({ type: "job.refresh", bindingId: id, jobId: Number(positionals[3]) });
   else if (command === "runner" && subcommand === "reconcile" && id)
