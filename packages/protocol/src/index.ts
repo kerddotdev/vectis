@@ -140,6 +140,13 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("environment.resume"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.resume-macos"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.open-macos-setup"), id: Identifier }),
+  Schema.Struct({
+    type: Schema.Literal("environment.connect-macos-guest"),
+    id: Identifier,
+    openTerminal: Schema.optional(Schema.Boolean),
+  }),
+  Schema.Struct({ type: Schema.Literal("environment.verify-macos-guest"), id: Identifier }),
+  Schema.Struct({ type: Schema.Literal("environment.finish-macos-setup"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("migration.analyze"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("migration.publish"), previewId: Identifier }),
   Schema.Struct({ type: Schema.Literal("job.scan"), bindingId: Identifier }),
@@ -234,9 +241,23 @@ export const capabilities = [
       "Inspect or retry an interrupted owned macOS installation after verifying the prior installer stopped. Completed restores are never repeated.",
   },
   {
+    name: "environment.connect-macos-guest",
+    description:
+      "Prepare dedicated guest SSH enrollment for an open macOS setup. Optional openTerminal asks the host user for their guest password locally; no password is stored or transported.",
+  },
+  {
+    name: "environment.verify-macos-guest",
+    description:
+      "Verify the open macOS guest through its dedicated SSH identity, including ARM64, time and guest FileVault state.",
+  },
+  {
+    name: "environment.finish-macos-setup",
+    description: "Register a verified macOS setup after its guest has stopped.",
+  },
+  {
     name: "environment.install-macos",
     description:
-      "Install an Apple macOS 26 IPSW into a new owned bundle. Requires an idle Apple Silicon host and local restore image. Finishes with Setup Assistant action required; does not mark a runner ready.",
+      "Install an Apple macOS 26 IPSW into a new owned bundle. Requires an idle Apple Silicon host. Downloads pinned Apple media unless a local restore image is supplied. Finishes with Setup Assistant action required; does not mark a runner ready.",
   },
   {
     name: "environment.prepare-linux",

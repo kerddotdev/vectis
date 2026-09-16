@@ -41,6 +41,7 @@ export const MacInstallationRecord = Schema.Struct({
   bundle: Schema.optional(Schema.String),
   build: Schema.optional(Schema.String),
   macAddress: Schema.optional(Schema.String),
+  sshVerifiedAttempt: Schema.optional(Schema.String),
 });
 export async function recoverMacInstallations(store: Store) {
   for (const value of store.list("macInstallation")) {
@@ -165,6 +166,7 @@ export async function startMacInstallation(
       phase: "setup_running",
       attemptId: operation.id,
       macAddress: undefined,
+      sshVerifiedAttempt: undefined,
     };
     store.put("macInstallation", record.id, record);
     const result = {
