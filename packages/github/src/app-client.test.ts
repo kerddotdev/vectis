@@ -121,3 +121,26 @@ test("runner deletion accepts empty responses and preserves HTTP failure status 
     client.delete("scoped-token", "/repos/test-owner/sandbox/actions/runners/5"),
   ).rejects.toMatchObject({ status: 404, message: "GitHub API request failed (404)." });
 });
+
+test("job inspection uses read-only Actions permission without runner administration", async () => {
+  vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 7, type: "User" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) {
+      expect(JSON.parse(String(init?.body))).toEqual({
+        repository_ids: [123],
+        permissions: { actions: "read", metadata: "read" },
+      });
+      return Response.json({ token: "read-only-secret" });
+    }
+    return Response.json({ id: 123, private: true, owner: { id: 7 } });
+  });
+  expect(
+    (await new GitHubAppClient(app).repositoryToken({ ...input, purpose: "jobs" })).repositoryId,
+  ).toBe(123);
+});
