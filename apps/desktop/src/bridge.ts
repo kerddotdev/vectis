@@ -9,6 +9,7 @@ export type DesktopAction =
   | "service.install"
   | "service.stop"
   | "chooseDirectory"
+  | "chooseRestoreImage"
   | "cloud.pair"
   | "cloud.finish"
   | "open.pull"

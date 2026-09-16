@@ -117,9 +117,16 @@ function Overview() {
               <strong>{operation.command}</strong>
               <p>{operation.message}</p>
               <code>{operation.id}</code>
-              {["environment.prepare-linux", "environment.resume"].includes(operation.command) && (
+              {[
+                "environment.prepare-linux",
+                "environment.resume",
+                "environment.install-macos",
+                "environment.resume-macos",
+                "environment.open-macos-setup",
+              ].includes(operation.command) && (
                 <PreparationResult
                   result={operation.result}
+                  macos={operation.command.includes("macos")}
                   resumable={operation.status === "action_required"}
                 />
               )}
@@ -136,7 +143,10 @@ function Overview() {
                 Reconcile runner
               </button>
             )}
-            {(operation.command === "environment.prepare-linux" ||
+            {(operation.command === "environment.install-macos" ||
+              operation.command === "environment.resume-macos" ||
+              operation.command === "environment.open-macos-setup" ||
+              operation.command === "environment.prepare-linux" ||
               operation.command === "environment.resume" ||
               operation.command === "runner.run" ||
               operation.command === "job.refresh" ||
