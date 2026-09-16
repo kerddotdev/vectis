@@ -14,6 +14,32 @@ async function digest(file: FileHandle, signal: AbortSignal) {
   for await (const chunk of stream) hash.update(chunk);
   return hash.digest("hex");
 }
+export async function inspectLocalArtifact(path: string, signal: AbortSignal) {
+  signal.throwIfAborted();
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const before = await file.stat();
+    if (!before.isFile() || before.size === 0)
+      throw new VectisError(
+        "invalid_artifact",
+        "Installation media must be a non-empty regular file.",
+      );
+    const sha256 = await digest(file, signal);
+    const after = await file.stat();
+    if (
+      before.size !== after.size ||
+      before.mtimeMs !== after.mtimeMs ||
+      before.ctimeMs !== after.ctimeMs
+    )
+      throw new VectisError(
+        "artifact_changed",
+        "Installation media changed while it was being inspected.",
+      );
+    return { sha256, bytes: after.size };
+  } finally {
+    await file.close();
+  }
+}
 export async function downloadArtifact(
   artifact: Artifact,
   destination: string,

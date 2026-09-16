@@ -3,7 +3,7 @@ import { mkdtemp, readFile, writeFile, rm, stat, symlink } from "node:fs/promise
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test, vi } from "vitest";
-import { downloadArtifact } from "./artifact.js";
+import { downloadArtifact, inspectLocalArtifact } from "./artifact.js";
 const bytes = Buffer.from("verified-image-bytes");
 const artifact = {
   url: "https://images.test/image",
@@ -120,4 +120,22 @@ test("rejects symlinks and preserves partial data on cancellation", () =>
     ).rejects.toThrow();
     expect(await readFile(destination + ".part")).toEqual(bytes.subarray(0, 5));
     await expect(stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+  }));
+
+test("local installation fingerprints reject symlinks, empty media and cancelled reads", () =>
+  fixture(async (destination) => {
+    await writeFile(destination, bytes);
+    expect(await inspectLocalArtifact(destination, AbortSignal.timeout(1000))).toEqual({
+      sha256: artifact.sha256,
+      bytes: bytes.length,
+    });
+    await symlink(destination, destination + ".link");
+    await expect(
+      inspectLocalArtifact(destination + ".link", AbortSignal.timeout(1000)),
+    ).rejects.toMatchObject({ code: "ELOOP" });
+    await expect(inspectLocalArtifact(destination, AbortSignal.abort())).rejects.toThrow();
+    await writeFile(destination, "");
+    await expect(
+      inspectLocalArtifact(destination, AbortSignal.timeout(1000)),
+    ).rejects.toMatchObject({ code: "invalid_artifact" });
   }));
