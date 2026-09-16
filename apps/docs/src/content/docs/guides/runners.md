@@ -22,9 +22,24 @@ A workflow must target the environment label `vectis-<environment-id>`, along wi
 runs-on: [self-hosted, macOS, ARM64, vectis-macos-26-arm64]
 ```
 
-GitHub assigns queued jobs to available runners. Starting a runner does not assign it to a particular job or automatically dispatch a workflow. Automatic demand scheduling and migration PR creation are still being integrated. The manual runner task is bounded to six hours after listener startup.
+GitHub assigns queued jobs to available runners. Starting a runner does not assign it to a particular job or automatically dispatch a workflow. Automatic admission can be enabled per binding as described below. Migration PR creation is still being integrated. The manual runner task is bounded to six hours after listener startup.
 
-A successful Vectis operation confirms that its runner process completed and cleanup succeeded. Use `vectis job list <binding-id> --json`, MCP `vectis_jobs`, or **Connections > Refresh GitHub jobs** to read the latest 100 observed GitHub jobs for the repository. These records come from signed GitHub webhooks and include the GitHub conclusion. If an event has not arrived, the record can be absent or stale; API-based resynchronization is still being integrated. Check the GitHub Actions run for the job's actual result. The listener's exit code alone is not a job result.
+A successful Vectis operation confirms that its runner process completed and cleanup succeeded. Use `vectis job list <binding-id> --json`, MCP `vectis_jobs`, or **Connections > Refresh GitHub jobs** to read the latest 100 observed GitHub jobs for the repository. These records come from signed GitHub webhooks and include the GitHub conclusion. If an event has not arrived, the record can be absent or stale. Use `vectis job refresh <binding-id> <job-id> --wait --json` to recover a known job directly from the repository API. Scheduled repository-wide discovery of completely missed jobs is still being integrated. Check the GitHub Actions run for the job's actual result. The listener's exit code alone is not a job result.
+
+## Automatic admission
+
+```sh
+vectis repository enable-auto <binding-id> --wait --json
+vectis repository disable-auto <binding-id> --wait --json
+```
+
+Automatic mode is disabled until explicitly enabled for a repository binding. A connected, unpaused, idle machine checks queued demand on its heartbeat. Admission requires the environment's Vectis label and all other requested labels to match. The current scheduler admits one automatic runner per idle machine; manual VM requests still share the host resource budget.
+
+Before starting a VM, and again before registering its runner, the service reads the job directly from GitHub. Completed or cancelled demand does not start a new runner. GitHub can assign the runner to a different compatible queued job. If the original demand still waits after verified successful cleanup, the scheduler permits at most three sequential attempts. Failed, interrupted or explicitly cancelled attempts require inspection rather than automatic retry.
+
+Disabling automatic mode stops future admission, including queued requests that have not started. Pausing the machine leaves already running jobs alone. An offline machine is not treated as available capacity. Repeated heartbeats and competing machines cannot create a second reservation for the same active demand.
+
+The desktop offers the same mode switch under Connections. MCP accepts `repository.automatic` through `vectis_command`. To request a single runner guarded by a known job's current state, use `runner run <binding-id> --job-id <job-id>`.
 
 ## Cancel and recover
 
@@ -44,4 +59,4 @@ vectis runner reconcile <operation-id> --wait --json
 
 Runner reconciliation finds the original cloud lease by its stable request key. It cannot delete another binding's runner or remove a registration while VM exit is unconfirmed. Missing cloud evidence remains `action_required`; do not submit fresh runner requests to hide that state.
 
-In the desktop, use **Connections > Start runner** and follow the operation in **Overview**. Active operations offer **Cancel runner**; interrupted ones offer **Reconcile runner**. MCP exposes these same operations through `vectis_command` and the shared capability schema.
+In the desktop, use **Connections > Start runner** and follow the operation in **Overview**. Active operations offer **Cancel operation**; interrupted ones offer **Reconcile runner**. MCP exposes these same operations through `vectis_command` and the shared capability schema.
