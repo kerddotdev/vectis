@@ -21,6 +21,19 @@ export const phase = v.union(
   v.literal("cancelled"),
 );
 export default defineSchema({
+  controllers: defineTable({
+    owner: v.string(),
+    name: v.string(),
+    requestDigest: v.string(),
+    credentialDigest: v.string(),
+    pairingExpiresAt: v.number(),
+    expiresAt: v.number(),
+    revoked: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_request", ["requestDigest"])
+    .index("by_owner", ["owner"])
+    .index("by_owner_active", ["owner", "revoked"]),
   migrationPreviews: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),
