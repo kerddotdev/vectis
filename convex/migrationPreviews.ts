@@ -8,7 +8,7 @@ import { machine } from "./auth.js";
 export const verified = internalQuery({
   args: { bindingId: v.string() },
   handler: async (ctx, args) => {
-    const { target, binding } = await bindingAuthority(ctx, args.bindingId, true);
+    const { target, binding, environment } = await bindingAuthority(ctx, args.bindingId, true);
     const leases = await ctx.db
       .query("runnerLeases")
       .withIndex("by_machine_phase", (q) => q.eq("machineId", target._id).eq("phase", "released"))
@@ -21,9 +21,11 @@ export const verified = internalQuery({
       )
       .order("desc")
       .take(100);
+    if (!environment?.revision) return false;
     return leases.some(
       (lease) =>
         lease.bindingId === binding._id &&
+        lease.environmentRevision === environment.revision &&
         lease.owner === target.owner &&
         lease.runnerId !== undefined &&
         jobs.some(
@@ -38,7 +40,7 @@ export const verified = internalQuery({
 export const save = internalMutation({
   args: { bindingId: v.string(), reportJson: v.string() },
   handler: async (ctx, args) => {
-    const { target, binding } = await bindingAuthority(ctx, args.bindingId, true);
+    const { target, binding, environment } = await bindingAuthority(ctx, args.bindingId, true);
     if (new TextEncoder().encode(args.reportJson).length > 768 * 1024)
       throw new ConvexError({ code: "migration_preview_too_large" });
     const report = Schema.decodeUnknownSync(RepositoryMigration)(JSON.parse(args.reportJson));
@@ -55,6 +57,7 @@ export const save = internalMutation({
       machineId: target._id,
       bindingId: binding._id,
       reportJson: JSON.stringify(report),
+      ...(environment?.revision ? { environmentRevision: environment.revision } : {}),
       createdAt: Date.now(),
       expiresAt: Date.now() + 86400000,
     });
@@ -73,7 +76,9 @@ export const owned = internalQuery({
       preview.expiresAt < Date.now()
     )
       throw new ConvexError({ code: "migration_preview_unavailable" });
-    await bindingAuthority(ctx, preview.bindingId, true);
+    const { environment } = await bindingAuthority(ctx, preview.bindingId, true);
+    if (!preview.environmentRevision || preview.environmentRevision !== environment?.revision)
+      throw new ConvexError({ code: "migration_environment_changed" });
     return preview;
   },
 });

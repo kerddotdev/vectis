@@ -37,7 +37,15 @@ async function fixture() {
       revoked: false,
       createdAt: 1,
       environments: [
-        { id: "mac", name: "Mac", os: "macos", cpu: 2, memoryMiB: 4096, state: "ready" },
+        {
+          id: "mac",
+          name: "Mac",
+          os: "macos",
+          cpu: 2,
+          memoryMiB: 4096,
+          state: "ready",
+          revision: "a".repeat(64),
+        },
       ],
     });
     const accountId = await ctx.db.insert("githubAccounts", {
@@ -105,6 +113,7 @@ test("migration publication requires a successful job on a cleaned runner from t
       os: "macos",
       key: "run",
       phase: "ready",
+      environmentRevision: "a".repeat(64),
       runnerId: 6,
       createdAt: 1,
       updatedAt: 1,
@@ -130,4 +139,22 @@ test("preview reads and writes recheck ownership, expiry and machine revocation"
   await expect(device.query(internal.migrationPreviews.owned, { previewId })).rejects.toThrow();
   await t.run(async (ctx) => ctx.db.patch("machines", machineId, { revoked: true }));
   await expect(device.mutation(internal.migrationPreviews.save, args)).rejects.toThrow();
+});
+
+test("changing the prepared environment invalidates retained previews", async () => {
+  const { t, device, machineId, bindingId } = await fixture();
+  const previewId = await device.mutation(internal.migrationPreviews.save, {
+    bindingId,
+    reportJson: JSON.stringify(report),
+  });
+  await t.run(async (ctx) => {
+    const target = await ctx.db.get("machines", machineId);
+    if (!target?.environments) throw new Error("Missing inventory");
+    await ctx.db.patch("machines", machineId, {
+      environments: target.environments.map((item) => ({ ...item, revision: "b".repeat(64) })),
+    });
+  });
+  await expect(device.query(internal.migrationPreviews.owned, { previewId })).rejects.toThrow(
+    "migration_environment_changed",
+  );
 });

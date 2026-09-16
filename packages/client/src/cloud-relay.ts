@@ -1,3 +1,4 @@
+import { environmentRevision } from "./environment-revision.js";
 import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
 import type { RepositoryConnection } from "../../protocol/src/repositories.js";
 import { JobRefresh, JobScan } from "../../protocol/src/jobs.js";
@@ -82,16 +83,21 @@ export function startCloudRelay(
                 operation.command === "runner.run" &&
                 ["accepted", "running", "action_required"].includes(operation.status),
             ),
-          environments: snapshot.environments
-            .slice(0, 100)
-            .map(({ id, name, os, cpu, memoryMiB, state }) => ({
-              id,
-              name,
-              os,
-              cpu,
-              memoryMiB,
-              state,
-            })),
+          environments: await Promise.all(
+            snapshot.environments.slice(0, 100).map(async (environment) => {
+              const { id, name, os, cpu, memoryMiB, state } = environment;
+              const revision = await environmentRevision(environment);
+              return {
+                id,
+                name,
+                os,
+                cpu,
+                memoryMiB,
+                state: revision ? state : ("action_required" as const),
+                ...(revision ? { revision } : {}),
+              };
+            }),
+          ),
         }),
         abort.signal,
       );

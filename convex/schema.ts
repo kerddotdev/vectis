@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { installation, verifiedUser } from "./githubValidators.js";
 
 export const environmentSummary = v.object({
+  revision: v.optional(v.string()),
   id: v.string(),
   name: v.string(),
   os: v.union(v.literal("linux"), v.literal("macos"), v.literal("windows")),
@@ -25,6 +26,7 @@ export default defineSchema({
     machineId: v.id("machines"),
     bindingId: v.id("repositoryBindings"),
     reportJson: v.string(),
+    environmentRevision: v.optional(v.string()),
     createdAt: v.number(),
     expiresAt: v.number(),
   }).index("by_machine", ["machineId"]),
@@ -75,6 +77,7 @@ export default defineSchema({
     environmentId: v.string(),
     os: v.union(v.literal("linux"), v.literal("macos"), v.literal("windows")),
     key: v.string(),
+    environmentRevision: v.optional(v.string()),
     phase: v.union(
       v.literal("preparing"),
       v.literal("ready"),

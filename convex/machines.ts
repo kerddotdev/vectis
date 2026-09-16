@@ -58,6 +58,7 @@ export const heartbeat = mutation({
         environments.some(
           (item) =>
             !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$/.test(item.id) ||
+            (item.revision !== undefined && !/^[a-f0-9]{64}$/.test(item.revision)) ||
             !item.name.trim() ||
             item.name.length > 100 ||
             !Number.isSafeInteger(item.cpu) ||
