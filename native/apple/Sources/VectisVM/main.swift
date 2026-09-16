@@ -154,6 +154,10 @@ if showConsole { NSApplication.shared.setActivationPolicy(.regular) }
 let controller = Controller()
 Task { @MainActor in
     do {
+        if CommandLine.arguments.dropFirst().first == "restore-info" {
+            try await restoreImageInfo(arguments: CommandLine.arguments)
+            exit(0)
+        }
         if CommandLine.arguments.dropFirst().first == "install-macos" {
             try await installMac(arguments: CommandLine.arguments)
             exit(0)
