@@ -36,6 +36,8 @@ async function main() {
       timeout: { type: "string" },
       cpu: { type: "string" },
       "job-id": { type: "string" },
+      account: { type: "string" },
+      environment: { type: "string" },
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
     },
@@ -51,6 +53,8 @@ async function main() {
 
 Usage: vectis <command> [options]
 
+  github accounts               List verified accounts available to this paired machine
+  repository connect <name>     Connect using --account <id> and --environment <id>
   github connect                Open the guided GitHub account connection
   cloud pair [--url <deployment>]  Begin browser-approved machine pairing
   cloud finish                  Complete an approved pairing from Keychain
@@ -259,6 +263,10 @@ GitHub pairing require separately configured development services.
     output({ stopping: true });
     return;
   }
+  if (command === "github" && subcommand === "accounts") {
+    output(await api.githubAccounts());
+    return;
+  }
   if (command === "job" && subcommand === "list" && id) {
     output(await api.jobs(id));
     return;
@@ -312,6 +320,19 @@ GitHub pairing require separately configured development services.
     });
   else if (command === "operation" && subcommand === "cancel" && id)
     request = decodeCommand({ type: "operation.cancel", id });
+  else if (
+    command === "repository" &&
+    subcommand === "connect" &&
+    id &&
+    values.account &&
+    values.environment
+  )
+    request = decodeCommand({
+      type: "repository.connect",
+      accountId: values.account,
+      repositoryName: id,
+      environmentId: values.environment,
+    });
   else if (command === "environment" && subcommand === "register" && values.file)
     request = {
       type: "environment.register",

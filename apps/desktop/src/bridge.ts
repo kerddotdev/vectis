@@ -3,6 +3,7 @@ export type DesktopAction =
   | "storage"
   | "doctor"
   | "repositories"
+  | "github.accounts"
   | "jobs"
   | "command"
   | "service.install"

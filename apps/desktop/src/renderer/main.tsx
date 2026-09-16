@@ -14,6 +14,7 @@ import { MachineRepositories } from "../../../../packages/protocol/src/repositor
 import { Diagnostics } from "../../../../packages/protocol/src/diagnostics.js";
 import { StorageReport } from "../../../../packages/protocol/src/storage.js";
 import { StateProvider, useStateApi } from "./state.js";
+import { ConnectRepository } from "./connect-repository.js";
 import { RepositoryJobs } from "./repository-jobs.js";
 import { Environments } from "./environments.js";
 import "./style.css";
@@ -124,7 +125,9 @@ function Overview() {
                 Reconcile runner
               </button>
             )}
-            {(operation.command === "runner.run" || operation.command === "job.refresh") &&
+            {(operation.command === "runner.run" ||
+              operation.command === "job.refresh" ||
+              operation.command === "repository.connect") &&
               operation.status === "running" && (
                 <button
                   className="secondary"
@@ -295,6 +298,7 @@ function Connections() {
       <h1>Connections</h1>
       <p>Connect this Mac and your GitHub accounts. Build files stay on your machine.</p>
       <button onClick={() => void perform("open.github")}>Connect GitHub</button>
+      <ConnectRepository />
       <section className="section">
         <h2>Connected repositories</h2>
         <button disabled={loading} onClick={() => void discover()}>
