@@ -7,6 +7,7 @@ import { ConvexError } from "convex/values";
 import { Schema } from "effect";
 import { api } from "../../../convex/_generated/api.js";
 import { PairingDescriptor } from "../../../packages/protocol/src/pairing.js";
+import { RemoteAccess, readControllerRequest } from "./remote-access.js";
 import { GitHubConnections } from "./github.js";
 import "./style.css";
 
@@ -28,6 +29,8 @@ function readPairing() {
     return null;
   }
 }
+const controllerRequest =
+  location.pathname === "/connect" ? readControllerRequest(deploymentUrl) : null;
 const request = location.pathname === "/connect" ? readPairing() : null;
 
 function Pairing() {
@@ -146,7 +149,9 @@ function App() {
       </header>
       <main>
         {location.pathname === "/connect" ? (
-          new URLSearchParams(location.search).get("github") === "1" ? (
+          new URLSearchParams(location.search).get("controller") === "1" ? (
+            <RemoteAccess request={controllerRequest} />
+          ) : new URLSearchParams(location.search).get("github") === "1" ? (
             <GitHubConnections />
           ) : (
             <Pairing />
