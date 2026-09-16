@@ -55,6 +55,10 @@ async function fixture() {
     return { machineId, accountId, foreignId };
   });
   let repositoryPrivate = true;
+  let ownerType = "User";
+  let ownerId = 7;
+  let permission = "admin";
+  let permissionUserId = 7;
   let approvalPolicy = "first_time_contributors";
   let beforeRepository: (() => Promise<void>) | undefined;
   const fetch = vi.fn(async (url: string) => {
@@ -62,14 +66,16 @@ async function fixture() {
       return Response.json({
         id: 3,
         app_id: 42,
-        account: { id: 7, type: "User" },
+        account: { id: ownerId, type: ownerType },
         suspended_at: null,
       });
+    if (url.endsWith("/permission"))
+      return Response.json({ permission, user: { id: permissionUserId } });
     if (url.endsWith("/access_tokens")) return Response.json({ token: "test-token" });
     if (url.endsWith("/fork-pr-contributor-approval"))
       return Response.json({ approval_policy: approvalPolicy });
     await beforeRepository?.();
-    return Response.json({ id: 2, private: repositoryPrivate, owner: { id: 7 } });
+    return Response.json({ id: 2, private: repositoryPrivate, owner: { id: ownerId } });
   });
   vi.stubGlobal("fetch", fetch);
   return {
@@ -78,6 +84,12 @@ async function fixture() {
     accountId,
     foreignId,
     fetch,
+    setOrganization: (role: string, userId = 7) => {
+      ownerType = "Organization";
+      ownerId = 99;
+      permission = role;
+      permissionUserId = userId;
+    },
     setPublicPolicy: (policy: string) => {
       repositoryPrivate = false;
       approvalPolicy = policy;
@@ -138,4 +150,32 @@ test("public connections return an actionable approval error and persist only af
   await expect(device.action(api.githubRepositories.connectMachine, input)).resolves.toEqual(
     expect.any(String),
   );
+});
+
+test("organization bindings retain a separate repository owner and reject non-admin identities", async () => {
+  const { device, accountId, setOrganization, t } = await fixture();
+  const input = {
+    accountId,
+    repositoryName: "sandbox",
+    repositoryOwner: "test-org",
+    environmentId: "windows",
+  };
+  setOrganization("write");
+  await expect(device.action(api.githubRepositories.connectMachine, input)).rejects.toThrow(
+    "repository_admin_required",
+  );
+  setOrganization("admin", 8);
+  await expect(device.action(api.githubRepositories.connectMachine, input)).rejects.toThrow(
+    "repository_admin_required",
+  );
+  expect(await t.run((ctx) => ctx.db.query("repositoryBindings").collect())).toEqual([]);
+  setOrganization("admin");
+  const id = await device.action(api.githubRepositories.connectMachine, input);
+  expect(await device.query(api.repositoryBindings.forMachine, {})).toMatchObject([
+    { id, repositoryName: "test-org/sandbox" },
+  ]);
+  expect(await t.run((ctx) => ctx.db.get("repositoryBindings", id))).toMatchObject({
+    repositoryOwner: "test-org",
+    accountId,
+  });
 });

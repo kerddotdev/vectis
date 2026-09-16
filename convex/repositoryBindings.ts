@@ -45,12 +45,14 @@ const bindingFields = {
   ...authority,
   repositoryId: v.number(),
   repositoryName: v.string(),
+  repositoryOwner: v.optional(v.string()),
   installationId: v.number(),
   environmentId: v.string(),
 };
 async function saveBinding(ctx: MutationCtx, args: ObjectType<typeof bindingFields>) {
   await authorized(ctx, args);
   if (
+    (args.repositoryOwner !== undefined && !/^[A-Za-z0-9-]+$/.test(args.repositoryOwner)) ||
     !Number.isSafeInteger(args.repositoryId) ||
     args.repositoryId <= 0 ||
     !Number.isSafeInteger(args.installationId) ||
@@ -107,7 +109,7 @@ export const forMachine = query({
         visible.push({
           id: binding._id,
           repositoryId: binding.repositoryId,
-          repositoryName: `${account.login}/${binding.repositoryName}`,
+          repositoryName: `${binding.repositoryOwner ?? account.login}/${binding.repositoryName}`,
           environmentId: binding.environmentId,
           automatic: binding.automatic ?? false,
         });
@@ -175,6 +177,7 @@ export const saveForMachine = internalMutation({
     accountId: v.id("githubAccounts"),
     repositoryId: v.number(),
     repositoryName: v.string(),
+    repositoryOwner: v.optional(v.string()),
     installationId: v.number(),
     environmentId: v.string(),
   },

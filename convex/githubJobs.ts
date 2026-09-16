@@ -22,10 +22,11 @@ export const refresh = action({
     if (!authority.binding.enabled) throw new ConvexError({ code: "repository_access_denied" });
     const client = new GitHubAppClient(authority.app);
     const access = await client.repositoryToken({
-      owner: authority.account.login,
+      owner: authority.binding.repositoryOwner ?? authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
       githubUserId: authority.account.githubId,
+      githubLogin: authority.account.login,
       purpose: "jobs",
     });
     if (access.installationId !== authority.binding.installationId)
@@ -59,10 +60,11 @@ export const scan = action({
     if (!authority.binding.enabled) throw new ConvexError({ code: "repository_access_denied" });
     const client = new GitHubAppClient(authority.app);
     const access = await client.repositoryToken({
-      owner: authority.account.login,
+      owner: authority.binding.repositoryOwner ?? authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
       githubUserId: authority.account.githubId,
+      githubLogin: authority.account.login,
       purpose: "jobs",
     });
     if (access.installationId !== authority.binding.installationId)
