@@ -9,6 +9,12 @@ async function fixture() {
   const broker = {
     connectRepository: vi.fn(async () => "binding"),
     setAutomatic: vi.fn(async () => {}),
+    analyzeMigration: vi.fn(async () => {
+      throw new Error("unused");
+    }),
+    publishMigration: vi.fn(async () => {
+      throw new Error("unused");
+    }),
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob: vi.fn(async () => ({
       jobId: 1,

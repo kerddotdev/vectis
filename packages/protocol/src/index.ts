@@ -83,6 +83,8 @@ export const RepositoryConnection = Schema.Struct({
 });
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("migration.analyze"), bindingId: Identifier }),
+  Schema.Struct({ type: Schema.Literal("migration.publish"), previewId: Identifier }),
   Schema.Struct({ type: Schema.Literal("job.scan"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("repository.connect"), ...RepositoryConnection.fields }),
   Schema.Struct({
@@ -144,6 +146,16 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "migration.analyze",
+    description:
+      "Inspect repository workflows at a pinned commit and retain a reviewable migration preview.",
+  },
+  {
+    name: "migration.publish",
+    description:
+      "Create or recover a migration PR from a retained preview after verifying local runner success. Never merges.",
+  },
   {
     name: "github.accounts",
     description: "List the paired machine owner's verified GitHub identities.",

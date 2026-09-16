@@ -1,3 +1,4 @@
+import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
 import type { RepositoryConnection } from "../../protocol/src/repositories.js";
 import { JobRefresh, JobScan } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
@@ -148,6 +149,24 @@ export function startCloudRelay(
       );
   }
   return {
+    async analyzeMigration(bindingId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const result = await interruptible(
+        cloud.action(api.githubMigrations.analyze, { bindingId }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+      );
+      return Schema.decodeUnknownSync(MigrationAnalysis)(result);
+    },
+    async publishMigration(previewId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const result = await interruptible(
+        cloud.action(api.githubMigrations.publish, { previewId }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+      );
+      return Schema.decodeUnknownSync(MigrationPublication)(result);
+    },
     async githubAccounts() {
       requireConnection();
       return interruptible(
