@@ -3,7 +3,7 @@ title: Run a disposable runner
 description: Start, observe, cancel, and reconcile a service-managed GitHub runner.
 ---
 
-The local service can run one official GitHub Actions runner in a disposable guest. This development path requires a paired machine, a connected personal repository, and a prepared ARM64 environment with pinned guest SSH access. Organization repository authorization is still being integrated. Public repositories require GitHub approval for all external contributors before connection and each new runner registration.
+The local service can run one official GitHub Actions runner in a disposable guest. This development path requires a paired machine, a connected personal or organization repository, and a prepared ARM64 environment with pinned guest SSH access. Organization repositories require a verified GitHub account with current administrator access. Public repositories require GitHub approval for all external contributors before connection and each new runner registration.
 
 After pairing the machine and linking a GitHub identity in the browser, connect a prepared environment:
 
@@ -88,3 +88,16 @@ In GitHub repository **Settings > Actions > General**, require approval for **al
 A maintainer remains responsible for reviewing external code before approval. This is an approval-based trust model, not a guarantee for arbitrary hostile workloads. Migration leaves privileged workflow triggers for manual review. A fork needs its own App installation and Vectis connection for its own runs; it does not inherit upstream capacity.
 
 Changing the approval policy blocks future registrations, but does not prevent cleanup of existing runners. The public-policy behavior has isolated API and authorization tests; the complete external-fork approval scenario still requires a dedicated live acceptance test.
+
+## Organization repositories
+
+Select your verified personal GitHub identity, then supply the repository's organization separately:
+
+```sh
+vectis repository connect example-repo --owner example-org \
+  --account <verified-account-id> --environment <environment-id> --json
+```
+
+Desktop and web offer the same optional repository-owner field. Vectis checks the [user's effective repository permission](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user) through the installed App. It requires `admin` and matches the returned user ID to the verified identity. It repeats this check for new runner registration, job API reads and migration access. Organization membership alone is insufficient.
+
+The runner remains repository-scoped; this does not create an organization-wide pool or Vectis team. Removing a user's admin access blocks new admission while the existing owner can still clean up registrations issued by Vectis. App removal or repository access revocation can require manual cleanup. Live organization acceptance remains separate from the isolated authorization tests.

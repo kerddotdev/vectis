@@ -3,7 +3,7 @@ title: Migrate repository workflows
 description: Inspect workflow changes and create an idempotent migration pull request.
 ---
 
-Connect a personal repository to a prepared ARM64 environment first. Repository migration currently uses the paired machine's verified GitHub account and App installation. Public repositories must require GitHub approval for all external contributors before publication. Organization authorization is still being integrated.
+Connect a personal or organization repository to a prepared ARM64 environment first. Repository migration currently uses the paired machine's verified GitHub account and App installation. Public repositories must require GitHub approval for all external contributors before publication. Organization repositories require current repository administrator access for the verified GitHub identity.
 
 ```sh
 vectis repository list --json
