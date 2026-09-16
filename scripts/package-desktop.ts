@@ -59,6 +59,8 @@ const paths = await packager({
             switch (basename(path)) {
               case "vectis-vm":
                 return { entitlements: ["com.apple.security.virtualization"] };
+              case "qemu-system-aarch64":
+                return { entitlements: ["com.apple.security.hypervisor"] };
               case "vectis-keychain":
                 return { entitlements: [] };
               case "node":

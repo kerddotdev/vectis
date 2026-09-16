@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, shell, session } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -22,6 +23,14 @@ if (app.isPackaged) {
   process.env.VECTIS_NODE_EXECUTABLE ??= join(runtime, "bin", "node");
   process.env.VECTIS_APPLE_HELPER ??= join(runtime, "vectis-vm");
   process.env.VECTIS_KEYCHAIN_HELPER ??= join(runtime, "vectis-keychain");
+  for (const [variable, executable] of [
+    ["VECTIS_QEMU", "qemu-system-aarch64"],
+    ["VECTIS_QEMU_IMG", "qemu-img"],
+    ["VECTIS_SWTPM", "swtpm"],
+  ] as const) {
+    const binary = join(runtime, "windows", "bin", executable);
+    if (existsSync(binary)) process.env[variable] ??= binary;
+  }
 }
 const home = process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
 const page = fileURLToPath(
