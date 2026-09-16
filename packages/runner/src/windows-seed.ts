@@ -89,9 +89,11 @@ Subsystem sftp sftp-server.exe
   Set-NetFirewallRule -Name OpenSSH-Server-In-TCP -Enabled True -Profile Any -RemoteAddress 10.0.2.2
   Set-Service sshd -StartupType Automatic
   Start-Service sshd
+  Set-ExecutionPolicy -Scope Process RemoteSigned -Force
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
   Get-ComputerInfo -Property WindowsProductName,WindowsVersion,OsBuildNumber | ConvertTo-Json | Set-Content (Join-Path $root 'toolchain.json')
   Remove-Item C:\Windows\Panther\unattend.xml,C:\Windows\Panther\Unattend\unattend.xml,C:\Windows\System32\Sysprep\unattend.xml -Force -ErrorAction SilentlyContinue
+  Remove-Item (Join-Path $root 'failed') -Force -ErrorAction SilentlyContinue
   'SETUP_ID' | Set-Content (Join-Path $root 'prepared') -Encoding ascii
 } catch {
   'Guest preparation failed. Inspect Windows setup and service diagnostics.' | Set-Content (Join-Path $root 'failed')
