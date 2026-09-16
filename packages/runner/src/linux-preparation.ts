@@ -1,3 +1,4 @@
+import type { RuntimeOptions } from "./runtime.js";
 import { Schema } from "effect";
 import { constants } from "node:fs";
 import {
@@ -32,15 +33,19 @@ export function preparationDirectory(preparation: Preparation) {
     `vectis-${preparation.configuration.id}-${preparation.id}`,
   );
 }
-export async function validatePreparation(input: LinuxPreparation, helper: string | undefined) {
+export async function validatePreparation(
+  input: LinuxPreparation,
+  options: Pick<RuntimeOptions, "appleHelper" | "qemuImg">,
+) {
   if (process.platform !== "darwin" || process.arch !== "arm64")
     throw new VectisError("unsupported_host", "Guest preparation requires an Apple Silicon Mac.");
-  if (!helper)
+  if (!options.appleHelper || !options.qemuImg)
     throw new VectisError(
       "runtime_missing",
-      "Configure the Apple virtualization helper before preparing a guest.",
+      "Configure the Apple virtualization helper and qemu-img before preparing a guest.",
     );
-  await access(helper, constants.X_OK);
+  await access(options.appleHelper, constants.X_OK);
+  await access(options.qemuImg, constants.X_OK);
   if (
     !Number.isInteger(input.cpu) ||
     input.cpu < 1 ||
@@ -73,12 +78,14 @@ export async function validatePreparation(input: LinuxPreparation, helper: strin
 }
 export async function prepareLinux(
   preparation: Preparation,
-  helper: string,
+  options: Pick<RuntimeOptions, "appleHelper" | "qemuImg">,
   signal: AbortSignal,
   progress: (phase: Preparation["phase"], received?: number) => void,
 ): Promise<Environment> {
   const input = preparation.configuration;
-  await validatePreparation(input, helper);
+  await validatePreparation(input, options);
+  if (!options.appleHelper || !options.qemuImg)
+    throw new VectisError("runtime_missing", "The Apple helper and qemu-img are required.");
   const directory = preparationDirectory(preparation);
   const marker = join(directory, "setup.json");
   const owner = JSON.stringify({ id: preparation.id, configuration: input });
@@ -118,18 +125,15 @@ export async function prepareLinux(
       "reconciliation_required",
       "The previous preparation guest has not been confirmed stopped.",
     );
-  const archive = join(directory, "ubuntu.tar.gz");
+  const archive = join(directory, "ubuntu.qcow2");
   progress("downloading");
   await downloadArtifact(ubuntuImage, archive, signal, (received) =>
     progress("downloading", received),
   );
-  progress("extracting");
-  await runProcess(
-    "/usr/bin/tar",
-    ["-xzf", archive, "-C", directory, "--", ubuntuImage.disk],
-    signal,
-  );
-  const raw = join(directory, ubuntuImage.disk);
+  progress("converting");
+  const raw = join(directory, "source.raw");
+  await rm(raw, { force: true });
+  await runProcess(options.qemuImg, ["convert", "-f", "qcow2", "-O", "raw", archive, raw], signal);
   const base = join(directory, "disk.img");
   await rm(base, { force: true });
   await copyFile(raw, base, constants.COPYFILE_FICLONE);
@@ -199,7 +203,7 @@ export async function prepareLinux(
   try {
     await runPreparationGuest(
       {
-        helper,
+        helper: options.appleHelper,
         directory,
         id: preparation.id,
         cpu: input.cpu,

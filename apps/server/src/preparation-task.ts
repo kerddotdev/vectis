@@ -69,13 +69,11 @@ export async function startPreparation(
         "Another preparation guest needs exit verification.",
       );
   }
-  const helper = runtime.options.appleHelper;
-  await validatePreparation(preparation.configuration, helper);
-  if (!helper) throw new VectisError("runtime_missing", "The Apple helper is required.");
+  await validatePreparation(preparation.configuration, runtime.options);
   store.put("preparation", preparation.id, preparation);
   const abort = new AbortController();
   const bounded = AbortSignal.any([abort.signal, AbortSignal.timeout(3600000)]);
-  const done = prepareLinux(preparation, helper, bounded, (phase, received) => {
+  const done = prepareLinux(preparation, runtime.options, bounded, (phase, received) => {
     preparation = { ...preparation, phase };
     store.put("preparation", preparation.id, preparation);
     operation = store.update(operation, {

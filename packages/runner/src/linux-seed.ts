@@ -3,10 +3,9 @@ import { VectisError } from "../../protocol/src/index.js";
 
 export const ubuntuImage = {
   revision: "ubuntu-24.04-arm64-20260911",
-  url: "https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-arm64.tar.gz",
-  sha256: "82d61182744e8a4f3d388a1965208abb351daa47a689c49165bfb0c41471af35",
-  bytes: 535880744,
-  disk: "noble-server-cloudimg-arm64.img",
+  url: "https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-arm64.img",
+  sha256: "7b682958a67ff5de068e36de6af8b75fa645d296af5a70d6500527f6a33781db",
+  bytes: 619621888,
 };
 export function linuxSeed(input: {
   id: string;

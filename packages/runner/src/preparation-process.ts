@@ -46,7 +46,7 @@ export async function runPreparationGuest(
       join(directory, "seed.iso"),
     ],
     {
-      stdio: ["pipe", "ignore", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, VECTIS_EXIT_RECEIPT: receipt, VECTIS_INSTANCE_ID: id },
     },
   );
@@ -57,6 +57,11 @@ export async function runPreparationGuest(
   });
   let serial = "";
   let prepared = false;
+  let events = "";
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (chunk: string) => {
+    events = (events + chunk).slice(-16384);
+  });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
     serial = (serial + chunk).slice(-65536);
@@ -79,7 +84,7 @@ export async function runPreparationGuest(
     signal.removeEventListener("abort", stop);
     clearTimeout(force);
     child.stdin.destroy();
-    await writeFile(join(directory, "preparation.log"), serial, { mode: 0o600 });
+    await writeFile(join(directory, "preparation.log"), events + "\n" + serial, { mode: 0o600 });
     if (child.pid)
       await writeFile(receipt, JSON.stringify({ instanceId: id, pid: child.pid }), { mode: 0o600 });
   }

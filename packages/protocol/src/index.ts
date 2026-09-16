@@ -21,6 +21,7 @@ export const Preparation = Schema.Struct({
   phase: Schema.Literals([
     "downloading",
     "extracting",
+    "converting",
     "provisioning",
     "booting",
     "prepared",
@@ -174,7 +175,7 @@ export const capabilities = [
   {
     name: "environment.prepare-linux",
     description:
-      "Download and verify Ubuntu 24.04 ARM64, prepare guest SSH and Docker, and register the environment. Requires an idle Apple Silicon host and configured helper.",
+      "Download and verify Ubuntu 24.04 ARM64, prepare guest SSH and Docker, and register the environment. Requires an idle Apple Silicon host, Apple helper and qemu-img.",
   },
   {
     name: "environment.resume",
