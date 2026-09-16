@@ -17,6 +17,13 @@ import {
 import { runtimeDiagnostics } from "../../../packages/runner/src/diagnostics.js";
 import { githubConnection } from "../../../packages/client/src/github.js";
 import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
+import {
+  beginControllerLogin,
+  finishControllerLogin,
+  logoutController,
+} from "../../../packages/client/src/controller-login.js";
+import { controllerClient } from "../../../packages/client/src/controller.js";
+import { RemoteClient } from "../../../packages/client/src/remote.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { localClient } from "../../../packages/client/src/local.js";
@@ -26,6 +33,7 @@ async function main() {
     allowPositionals: true,
     options: {
       home: { type: "string" },
+      machine: { type: "string" },
       url: { type: "string" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
@@ -56,7 +64,20 @@ async function main() {
   const home = values.home ?? process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
   const output = (value: unknown) =>
     process.stdout.write(JSON.stringify(value, null, values.json ? undefined : 2) + "\n");
-  const client = () => localClient(home);
+  const credentials = () => {
+    const helper = process.env.VECTIS_KEYCHAIN_HELPER;
+    if (!helper)
+      throw new VectisError(
+        "setup_required",
+        "Remote access requires VECTIS_KEYCHAIN_HELPER.",
+        "Configure the native Keychain helper for this CLI.",
+      );
+    return new KeychainCredentials(helper);
+  };
+  const client = async () =>
+    values.machine
+      ? new RemoteClient(await controllerClient(home, credentials()), values.machine)
+      : localClient(home);
 
   const [command = "help", subcommand, id] = positionals;
   if (values.help || command === "help") {
@@ -64,6 +85,10 @@ async function main() {
 
 Usage: vectis <command> [options]
 
+  login [--url <deployment>]    Begin browser-approved remote control, no local service required
+  login finish                  Complete approved remote access using Keychain
+  logout                        Revoke this CLI connection and remove local credentials
+  machine list                  List owned cloud machines and last-seen presence
   github accounts               List verified accounts available to this paired machine
   repository connect <name>     Connect using --account <id> and --environment <id>, optional --owner <organization>
   github connect                Open the guided GitHub account connection
@@ -112,6 +137,7 @@ Usage: vectis <command> [options]
 
 Options:
   --home <directory>             Isolated Vectis state directory
+  --machine <id>                 Send mutations and operation get/wait to this remote machine
   --json                        Machine-readable JSON output
   --name <text>                Prepared environment display name (default: Ubuntu 24.04 ARM64)
   --image-directory <path>      Existing directory for prepared base images
@@ -133,6 +159,41 @@ Examples:
 Only capabilities reported by this build are supported. Cloud setup and
 GitHub pairing require separately configured development services.
 `);
+    return;
+  }
+  if (values.machine && ["service", "cloud", "login", "logout", "machine"].includes(command))
+    throw new VectisError("invalid_target", "This command does not accept --machine.");
+  if (
+    command === "login" ||
+    command === "logout" ||
+    (command === "machine" && subcommand === "list")
+  ) {
+    const store = credentials();
+    const result =
+      command === "logout"
+        ? await logoutController(home, store)
+        : command === "machine"
+          ? await (await controllerClient(home, store)).request({ type: "machines.list" })
+          : subcommand === "finish"
+            ? await finishControllerLogin(home, store)
+            : subcommand === undefined
+              ? await beginControllerLogin(
+                  home,
+                  values.url ?? "https://clear-hare-471.convex.cloud",
+                  values.name ?? "Vectis CLI",
+                  store,
+                )
+              : (() => {
+                  throw new VectisError("unknown_command", "Use login or login finish.");
+                })();
+    output(result);
+    if (
+      result &&
+      typeof result === "object" &&
+      "state" in result &&
+      ["action_required", "pending"].includes(String(result.state))
+    )
+      process.exitCode = 3;
     return;
   }
   if (command === "github" && subcommand === "connect") {
@@ -158,6 +219,10 @@ GitHub pairing require separately configured development services.
     return;
   }
   if (command === "capabilities") {
+    if (values.machine) {
+      output(await (await client()).capabilities());
+      return;
+    }
     output({
       protocolVersion: 1,
       capabilities,
@@ -168,6 +233,10 @@ GitHub pairing require separately configured development services.
     return;
   }
   if (command === "doctor") {
+    if (values.machine) {
+      output(await (await client()).doctor());
+      return;
+    }
     try {
       output(await (await localClient(home)).doctor());
     } catch {
@@ -314,7 +383,7 @@ GitHub pairing require separately configured development services.
     const operation =
       subcommand === "wait"
         ? await api.wait(id, AbortSignal.timeout(Number(values.timeout ?? 120000)))
-        : (await api.status()).operations.find((item) => item.id === id);
+        : await api.operation(id);
     if (!operation) throw new VectisError("operation_missing", "Operation not found.");
     output(operation);
     if (operation.status === "failed" || operation.status === "cancelled") process.exitCode = 1;
