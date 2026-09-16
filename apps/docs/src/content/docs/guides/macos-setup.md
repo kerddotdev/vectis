@@ -38,3 +38,13 @@ vectis environment resume-macos <setup-id> --json
 After interruption, the service verifies the previous process has stopped. A completed restore is preserved. A failed restore retries into a new bundle and retains interrupted files for inspection; it does not overwrite uncertain disk state. Inspect the private `preparation.log` in the operation's image directory for errors.
 
 A setup console is a local interactive operation. Remote callers can request it, but must use the host's screen to complete guest OS steps. No VNC or guest password is exposed through the cloud.
+
+## Discard an unused setup
+
+To permanently remove a stopped, unregistered setup, confirm its exact environment ID:
+
+```sh
+vectis environment discard-macos <setup-id> --environment <environment-id> --json
+```
+
+Desktop offers the same confirmation beside the setup operation. This deletes the current attempt's owned image directory, including its guest disk and setup logs. It preserves the source IPSW, registered environments, and older interrupted attempt directories. Active or registered setups and directories without matching ownership metadata cannot be discarded.
