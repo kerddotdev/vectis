@@ -42,6 +42,12 @@ async function main() {
       "disk-gib": { type: "string" },
       "image-directory": { type: "string" },
       "restore-path": { type: "string" },
+      "iso-path": { type: "string" },
+      "drivers-path": { type: "string" },
+      "firmware-path": { type: "string" },
+      "firmware-vars-path": { type: "string" },
+      "image-name": { type: "string" },
+      "accept-license": { type: "boolean" },
       environment: { type: "string" },
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
@@ -84,6 +90,8 @@ Usage: vectis <command> [options]
   doctor                        Inspect host and runtime prerequisites
   pause | resume                Control new instance admission
   environment install-macos <id>  Install --restore-path <IPSW> with --image-directory and --storage-path
+  environment install-windows <id>  Install ARM64 Windows with --iso-path, --drivers-path, --firmware-path, --firmware-vars-path, --image-directory, --storage-path and --accept-license
+  environment resume-windows <setup-id>  Continue an interrupted Windows installation
   environment discard-macos <setup-id> --environment <id>  Permanently discard a stopped unregistered setup
   environment open-macos-setup <setup-id>  Open the local guest setup console
   environment resume-macos <setup-id>  Inspect or retry an interrupted macOS installation
@@ -372,6 +380,25 @@ GitHub pairing require separately configured development services.
       memoryMiB: Number(values["memory-mib"] ?? 4096),
       diskGiB: Number(values["disk-gib"] ?? 64),
     });
+  else if (command === "environment" && subcommand === "install-windows" && id)
+    request = decodeCommand({
+      type: "environment.install-windows",
+      id,
+      name: values.name ?? "Windows 11 ARM64",
+      isoPath: values["iso-path"],
+      driversPath: values["drivers-path"],
+      firmwarePath: values["firmware-path"],
+      firmwareVarsPath: values["firmware-vars-path"],
+      imageName: values["image-name"] ?? "Windows 11 Pro",
+      acceptLicense: values["accept-license"] ?? false,
+      imageDirectory: values["image-directory"],
+      storagePath: values["storage-path"],
+      cpu: Number(values.cpu ?? 4),
+      memoryMiB: Number(values["memory-mib"] ?? 8192),
+      diskGiB: Number(values["disk-gib"] ?? 96),
+    });
+  else if (command === "environment" && subcommand === "resume-windows" && id)
+    request = decodeCommand({ type: "environment.resume-windows", id });
   else if (command === "environment" && subcommand === "discard-macos" && id && values.environment)
     request = decodeCommand({
       type: "environment.discard-macos",
