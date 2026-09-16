@@ -149,3 +149,50 @@ test.each(["installing", "setup_running"])(
     }
   },
 );
+
+test("a service restart preserves a macOS download source without requiring a VM exit receipt", async () => {
+  const store = new Store(":memory:");
+  const { operation } = store.accept("download", "download", "environment.install-macos");
+  store.update(operation, {
+    status: "running",
+    result: { setupId: "setup", phase: "downloading" },
+  });
+  const source = {
+    directory: "/isolated/restore",
+    owner: "setup",
+    artifact: { url: "https://images.test/restore.ipsw", sha256: "a".repeat(64), bytes: 123 },
+  };
+  store.put("macInstallation", "setup", {
+    id: "setup",
+    attemptId: operation.id,
+    directory: "/isolated/attempt",
+    phase: "downloading",
+    restoreDownload: source,
+    configuration: {
+      id: "mac",
+      name: "Mac",
+      cpu: 2,
+      memoryMiB: 4096,
+      diskGiB: 64,
+      imageDirectory: "/isolated",
+      storagePath: "/isolated",
+    },
+  });
+  try {
+    expect(store.snapshot().preparationBusy).toBe(true);
+    store.recover();
+    await recoverMacInstallations(store);
+    expect(store.get("macInstallation", "setup")).toMatchObject({
+      phase: "interrupted",
+      restoreDownload: source,
+    });
+    expect(hasUnconfirmedMacInstallation(store)).toBe(false);
+    expect(store.snapshot().preparationBusy).toBe(false);
+    expect(store.snapshot().operations[0]).toMatchObject({
+      status: "action_required",
+      result: { phase: "interrupted", setupId: "setup", restoreDirectory: source.directory },
+    });
+  } finally {
+    store.close();
+  }
+});

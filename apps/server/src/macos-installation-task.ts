@@ -1,3 +1,4 @@
+import { MacRestoreDownload, macosRestore } from "../../../packages/runner/src/macos-restore.js";
 import { hasReservedEnvironment } from "./preparation-state.js";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -28,7 +29,9 @@ export const MacInstallationRecord = Schema.Struct({
   configuration: MacInstallation,
   directory: Schema.String,
   attemptId: Schema.String,
+  restoreDownload: Schema.optional(MacRestoreDownload),
   phase: Schema.Literals([
+    "downloading",
     "installing",
     "setup_running",
     "setup_required",
@@ -41,6 +44,25 @@ export const MacInstallationRecord = Schema.Struct({
 export async function recoverMacInstallations(store: Store) {
   for (const value of store.list("macInstallation")) {
     const record = Schema.decodeUnknownSync(MacInstallationRecord)(value);
+    if (record.phase === "downloading") {
+      store.put("macInstallation", record.id, { ...record, phase: "interrupted" });
+      const operation = store.snapshot().operations.find((item) => item.id === record.attemptId);
+      if (operation?.status === "action_required")
+        store.update(operation, {
+          message:
+            "The restore download was interrupted. Resume the same setup to reuse partial bytes.",
+          result: {
+            setupId: record.id,
+            directory: record.directory,
+            phase: "interrupted",
+            ...(record.restoreDownload
+              ? { restoreDirectory: record.restoreDownload.directory }
+              : {}),
+            nextStep: `Use environment resume-macos ${record.id}.`,
+          },
+        });
+      continue;
+    }
     if (
       ["installing", "setup_running", "interrupted"].includes(record.phase) &&
       (await preparationStopped(record.directory, record.attemptId))
@@ -197,7 +219,11 @@ export async function startMacInstallation(
     });
     return { abort: new AbortController(), done: Promise.resolve() };
   }
-  await validateMacInstallation(configuration, runtime.options.appleHelper);
+  await validateMacInstallation(
+    configuration,
+    runtime.options.appleHelper,
+    previous?.restoreDownload,
+  );
   const helper = runtime.options.appleHelper;
   if (!helper)
     throw new VectisError("runtime_missing", "Configure the Apple virtualization helper.");
@@ -210,16 +236,68 @@ export async function startMacInstallation(
     attemptId: operation.id,
     configuration,
     directory,
-    phase: "installing",
+    phase: configuration.restorePath ? "installing" : "downloading",
+    ...(configuration.restorePath
+      ? {}
+      : {
+          restoreDownload: previous?.restoreDownload ?? {
+            directory: join(configuration.imageDirectory, `vectis-restore-${operation.id}`),
+            owner: previous?.id ?? operation.id,
+            artifact: {
+              url: macosRestore.url,
+              sha256: macosRestore.sha256,
+              bytes: macosRestore.bytes,
+            },
+          },
+        }),
   };
   store.put("macInstallation", record.id, record);
+  const restoreDetails = record.restoreDownload
+    ? { restoreDirectory: record.restoreDownload.directory }
+    : {};
   operation = store.update(operation, {
-    result: { setupId: record.id, directory, phase: "installing" },
-    message: "Installing macOS from the selected Apple restore image.",
+    result: {
+      setupId: record.id,
+      directory,
+      phase: record.phase,
+      ...restoreDetails,
+    },
+    message: configuration.restorePath
+      ? "Installing macOS from the selected Apple restore image."
+      : "Downloading the pinned macOS 26 restore image from Apple.",
   });
   const abort = new AbortController();
   const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(3600000)]);
-  const done = installMacGuest(configuration, helper, directory, operation.id, signal)
+  let lastProgressAt = 0;
+  let lastProgressPhase = "";
+  const done = installMacGuest(
+    configuration,
+    helper,
+    directory,
+    operation.id,
+    signal,
+    record.restoreDownload,
+    (phase, received) => {
+      const now = Date.now();
+      if (phase === lastProgressPhase && now - lastProgressAt < 1000) return;
+      lastProgressAt = now;
+      lastProgressPhase = phase;
+      store.put("macInstallation", record.id, { ...record, phase });
+      operation = store.update(operation, {
+        message:
+          phase === "downloading"
+            ? "Downloading and verifying the Apple restore image."
+            : "Installing macOS from the verified restore image.",
+        result: {
+          setupId: record.id,
+          directory,
+          ...restoreDetails,
+          phase,
+          ...(received === undefined ? {} : { receivedBytes: received }),
+        },
+      });
+    },
+  )
     .then(({ bundle, build }) => {
       store.put("macInstallation", record.id, {
         ...record,
@@ -233,6 +311,7 @@ export async function startMacInstallation(
         result: {
           setupId: record.id,
           directory,
+          ...restoreDetails,
           bundle,
           build,
           phase: "setup_required",
@@ -242,19 +321,22 @@ export async function startMacInstallation(
         },
       });
     })
-    .catch(() => {
+    .catch((error: unknown) => {
       store.put("macInstallation", record.id, { ...record, phase: "interrupted" });
       store.update(operation, {
         status: "action_required",
         message: signal.aborted
           ? "macOS installation stopped."
-          : "macOS installation did not complete.",
+          : error instanceof VectisError
+            ? error.message
+            : "macOS installation did not complete.",
         result: {
           setupId: record.id,
           directory,
+          ...restoreDetails,
           phase: "interrupted",
-          code: "macos_installation_interrupted",
-          nextStep: `Inspect the private preparation log, then use environment resume-macos ${record.id}. Retried installs use a new bundle and retain interrupted files for inspection.`,
+          code: error instanceof VectisError ? error.code : "macos_installation_interrupted",
+          nextStep: `${error instanceof VectisError ? error.nextStep : "Inspect the private preparation log if restore started."} Then use environment resume-macos ${record.id}. Partial downloads are retained; retried restores use a new bundle.`,
         },
       });
     });

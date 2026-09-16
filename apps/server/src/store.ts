@@ -54,7 +54,7 @@ export class Store {
         ...this.list("windowsInstallation"),
       ].some((value) => {
         const { phase } = Schema.decodeUnknownSync(Schema.Struct({ phase: Schema.String }))(value);
-        return ["booting", "installing", "setup_running"].includes(phase);
+        return ["downloading", "booting", "installing", "setup_running"].includes(phase);
       }),
       protocolVersion: 1,
       machine,

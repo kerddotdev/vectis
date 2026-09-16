@@ -4,10 +4,19 @@ import { cpus, totalmem } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { Schema } from "effect";
 import { VectisError, type MacInstallation } from "../../protocol/src/index.js";
+import {
+  prepareMacRestore,
+  remainingMacRestoreBytes,
+  type MacRestoreDownload,
+} from "./macos-restore.js";
 import { availableHostMemory } from "./memory.js";
 import { runPreparationProcess } from "./preparation-process.js";
 
-export async function validateMacInstallation(input: MacInstallation, helper?: string) {
+export async function validateMacInstallation(
+  input: MacInstallation,
+  helper?: string,
+  download?: MacRestoreDownload,
+) {
   if (process.platform !== "darwin" || process.arch !== "arm64")
     throw new VectisError("unsupported_host", "macOS installation requires an Apple Silicon Mac.");
   if (!helper)
@@ -26,8 +35,9 @@ export async function validateMacInstallation(input: MacInstallation, helper?: s
       "Select available CPUs, at least 4096 MiB RAM within the host budget, and a 40-2048 GiB disk.",
     );
   if (
-    !isAbsolute(input.restorePath) ||
-    !(await stat(input.restorePath).catch(() => undefined))?.isFile()
+    input.restorePath !== undefined &&
+    (!isAbsolute(input.restorePath) ||
+      !(await stat(input.restorePath).catch(() => undefined))?.isFile())
   )
     throw new VectisError(
       "restore_image_missing",
@@ -42,10 +52,12 @@ export async function validateMacInstallation(input: MacInstallation, helper?: s
     await access(directory, constants.W_OK | constants.X_OK);
   }
   const space = await statfs(input.imageDirectory);
-  if (space.bavail * space.bsize < 40 * 1024 ** 3)
+  const required =
+    40 * 1024 ** 3 + (input.restorePath ? 0 : await remainingMacRestoreBytes(download));
+  if (space.bavail * space.bsize < required)
     throw new VectisError(
       "insufficient_disk",
-      "macOS installation requires at least 40 GiB of free image storage.",
+      "macOS installation requires 40 GiB free, or 60 GiB when downloading the restore image.",
     );
 }
 export async function installMacGuest(
@@ -54,8 +66,10 @@ export async function installMacGuest(
   directory: string,
   id: string,
   signal: AbortSignal,
+  download?: MacRestoreDownload,
+  progress: (phase: "downloading" | "installing", received?: number) => void = () => {},
 ) {
-  await validateMacInstallation(input, helper);
+  await validateMacInstallation(input, helper, download);
   if (input.memoryMiB * 1024 ** 2 > (await availableHostMemory()))
     throw new VectisError("insufficient_memory", "Not enough available memory to install macOS.");
   await mkdir(directory, { mode: 0o700 });
@@ -63,6 +77,19 @@ export async function installMacGuest(
     flag: "wx",
     mode: 0o600,
   });
+  const restorePath =
+    input.restorePath ??
+    (download
+      ? await prepareMacRestore(download, signal, (received) => progress("downloading", received))
+      : undefined);
+  if (!restorePath)
+    throw new VectisError("restore_image_missing", "The restore source is unavailable.");
+  if (input.memoryMiB * 1024 ** 2 > (await availableHostMemory()))
+    throw new VectisError(
+      "insufficient_memory",
+      "Not enough available memory to install macOS after downloading.",
+    );
+  progress("installing");
   const bundle = join(directory, "base.bundle");
   await runPreparationProcess(
     {
@@ -71,7 +98,7 @@ export async function installMacGuest(
       id,
       args: [
         "install-macos",
-        input.restorePath,
+        restorePath,
         bundle,
         String(input.cpu),
         String(input.memoryMiB),
