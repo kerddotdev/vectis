@@ -12,3 +12,23 @@ test("recovery never silently retries an uncertain side effect", () => {
     store.close();
   }
 });
+
+test("inactive setup prompts do not reserve capacity but unconfirmed guest processes do", () => {
+  const store = new Store(":memory:");
+  try {
+    store.put("macInstallation", "mac", { phase: "setup_required" });
+    store.put("preparation", "linux", { phase: "interrupted" });
+    expect(store.snapshot().preparationBusy).toBe(false);
+    for (const phase of ["installing", "setup_running"]) {
+      store.put("macInstallation", "mac", { phase });
+      expect(store.snapshot().preparationBusy).toBe(true);
+    }
+    store.put("macInstallation", "mac", { phase: "registered" });
+    store.put("preparation", "linux", { phase: "booting" });
+    expect(store.snapshot().preparationBusy).toBe(true);
+    store.put("preparation", "linux", { phase: "prepared" });
+    expect(store.snapshot().preparationBusy).toBe(false);
+  } finally {
+    store.close();
+  }
+});

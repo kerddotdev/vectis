@@ -96,18 +96,19 @@ export function startCloudRelay(
         cloud.mutation(api.machines.heartbeat, {
           paused: snapshot.machine.paused,
           runnerIdle:
+            snapshot.preparationBusy !== true &&
             snapshot.instances.every((instance) => instance.status === "stopped") &&
-            !snapshot.operations.some(
-              (operation) =>
-                [
-                  "runner.run",
-                  "environment.prepare-linux",
-                  "environment.resume",
-                  "environment.install-macos",
-                  "environment.resume-macos",
-                  "environment.open-macos-setup",
-                ].includes(operation.command) &&
-                ["accepted", "running", "action_required"].includes(operation.status),
+            !snapshot.operations.some((operation) =>
+              operation.command === "runner.run"
+                ? ["accepted", "running", "action_required"].includes(operation.status)
+                : [
+                    "environment.prepare-linux",
+                    "environment.resume",
+                    "environment.install-macos",
+                    "environment.resume-macos",
+                    "environment.open-macos-setup",
+                  ].includes(operation.command) &&
+                  ["accepted", "running"].includes(operation.status),
             ),
           environments: await Promise.all(
             snapshot.environments.slice(0, 100).map(async (environment) => {

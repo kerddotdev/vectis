@@ -97,6 +97,7 @@ export const CloudStatus = Schema.Struct({
 });
 export type CloudStatus = typeof CloudStatus.Type;
 export const Snapshot = Schema.Struct({
+  preparationBusy: Schema.optional(Schema.Boolean),
   protocolVersion: Schema.Literal(1),
   machine: Machine,
   environments: Schema.Array(Environment),
