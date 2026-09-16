@@ -42,3 +42,11 @@ For OpenSSH, enable public-key authentication and install the image's authorized
 ## Distribution
 
 No QEMU or firmware binaries are committed here. QEMU is GPL v2 software with component-specific licenses; see the exact source archive's `COPYING` and `LICENSE` files and [upstream licensing documentation](https://www.qemu.org/docs/master/about/license.html). A binary distribution must include corresponding source with this patch and the applicable license materials, including separately supplied firmware and TPM components. The patch is provided under GPL-2.0-or-later, matching the modified source file.
+
+## Relocatable development runtime
+
+`pnpm package:windows-runtime --qemu <patched-binary> --qemu-img <binary> --swtpm <binary> --qemu-source <matching-source-directory> --output <new-directory>` stages a local development runtime. It copies ARM64 libraries recursively, rewrites their Mach-O loader references, and ad-hoc signs the copies. The original executables and Homebrew installation are unchanged. It rejects unresolved loader paths and conflicting library filenames, then checks all three executables with no Homebrew on PATH.
+
+The QEMU launcher supplies an explicit data directory. Windows boots from the configured NVMe disk; the network device's unused PXE ROM is disabled, so startup does not silently load firmware from Homebrew. ARM64 UEFI code and guest images remain explicit environment inputs.
+
+`BUILD.json` records source hashes and unresolved release requirements. This staging output is not approved for redistribution: corresponding sources and license notices for every bundled dependency must be assembled before publishing. The QEMU license and Vectis patch alone do not cover the dependency bundle.
