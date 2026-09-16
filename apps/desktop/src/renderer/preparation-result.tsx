@@ -5,6 +5,7 @@ const Progress = Schema.Struct({
   setupId: Schema.String,
   receivedBytes: Schema.optional(Schema.Number),
   directory: Schema.optional(Schema.String),
+  restoreDirectory: Schema.optional(Schema.String),
   nextStep: Schema.optional(Schema.String),
   phase: Schema.optional(Schema.String),
 });
@@ -28,6 +29,7 @@ export function PreparationResult({
         <p>Downloaded {Math.floor(result.receivedBytes / 1024 ** 2)} MiB</p>
       )}
       {result.directory && <p>Image directory: {result.directory}</p>}
+      {result.restoreDirectory && <p>Restore download directory: {result.restoreDirectory}</p>}
       {result.nextStep && <p>{result.nextStep}</p>}
       {macos && result.phase === "setup_required" && (
         <button

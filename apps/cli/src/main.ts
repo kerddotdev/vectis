@@ -114,7 +114,7 @@ Usage: vectis <command> [options]
   capabilities                  Discover supported commands and schemas
   doctor                        Inspect host and runtime prerequisites
   pause | resume                Control new instance admission
-  environment install-macos <id>  Install --restore-path <IPSW> with --image-directory and --storage-path
+  environment install-macos <id>  Install with --image-directory and --storage-path; optional --restore-path <IPSW>
   environment install-windows <id>  Install ARM64 Windows with --iso-path, --drivers-path, --firmware-path, --firmware-vars-path, --image-directory, --storage-path and --accept-license
   environment resume-windows <setup-id>  Continue an interrupted Windows installation
   environment discard-macos <setup-id> --environment <id>  Permanently discard a stopped unregistered setup
