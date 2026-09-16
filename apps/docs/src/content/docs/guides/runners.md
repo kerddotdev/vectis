@@ -3,7 +3,7 @@ title: Run a disposable runner
 description: Start, observe, cancel, and reconcile a service-managed GitHub runner.
 ---
 
-The local service can run one official GitHub Actions runner in a disposable guest. This development path requires a paired machine, a connected private personal repository, and a prepared ARM64 environment with pinned guest SSH access. Organization and public repository runner policies are not enabled yet.
+The local service can run one official GitHub Actions runner in a disposable guest. This development path requires a paired machine, a connected personal repository, and a prepared ARM64 environment with pinned guest SSH access. Organization repository authorization is still being integrated. Public repositories require GitHub approval for all external contributors before connection and each new runner registration.
 
 After pairing the machine and linking a GitHub identity in the browser, connect a prepared environment:
 
@@ -80,3 +80,11 @@ vectis operation wait <operation-id> --json
 Disconnection disables new manual and automatic runner admission for that repository binding on this machine. Running jobs can finish and their registrations can still be cleaned up. Other machines and environments keep their own connections. Repeating disconnection is safe.
 
 The GitHub App installation and workflow files remain unchanged. Jobs requesting the disconnected runner label may wait until compatible capacity is available. Reconnect with `repository connect` when needed; automatic admission stays disabled until explicitly enabled again.
+
+## Public repositories
+
+In GitHub repository **Settings > Actions > General**, require approval for **all external contributors**. Vectis reads the [repository approval policy](https://docs.github.com/en/rest/actions/permissions#get-fork-pr-contributor-approval-permissions-for-a-repository) before public runner admission and migration publication. A weaker, unreadable or unknown policy blocks those operations. Vectis does not change the policy or approve workflow runs.
+
+A maintainer remains responsible for reviewing external code before approval. This is an approval-based trust model, not a guarantee for arbitrary hostile workloads. Migration leaves privileged workflow triggers for manual review. A fork needs its own App installation and Vectis connection for its own runs; it does not inherit upstream capacity.
+
+Changing the approval policy blocks future registrations, but does not prevent cleanup of existing runners. The public-policy behavior has isolated API and authorization tests; the complete external-fork approval scenario still requires a dedicated live acceptance test.
