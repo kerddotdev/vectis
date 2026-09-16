@@ -1,3 +1,4 @@
+import { hasReservedEnvironment } from "./preparation-state.js";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { availableHostMemory } from "../../../packages/runner/src/memory.js";
@@ -113,16 +114,7 @@ export async function startMacInstallation(
     previous?.configuration ?? Schema.decodeUnknownSync(MacInstallation)(command);
   if (snapshot.environments.some((item) => item.id === configuration.id))
     throw new VectisError("environment_exists", "This environment is already registered.");
-  if (
-    !previous &&
-    store
-      .list("macInstallation")
-      .some(
-        (value) =>
-          Schema.decodeUnknownSync(MacInstallationRecord)(value).configuration.id ===
-          configuration.id,
-      )
-  )
+  if (!previous && hasReservedEnvironment(store, configuration.id))
     throw new VectisError(
       "installation_exists",
       "Resume the existing installation for this environment identifier.",
