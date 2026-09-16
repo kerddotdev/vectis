@@ -16,6 +16,14 @@ export class GitHubApprovalError extends Error {
     super("Public runner admission requires approval for every external contributor.");
   }
 }
+export class GitHubAdminError extends Error {
+  readonly code = "repository_admin_required";
+  readonly nextStep =
+    "Connect a verified GitHub account with current administrator access to this organization repository, then retry.";
+  constructor() {
+    super("Organization runners require verified repository administrator access.");
+  }
+}
 export class GitHubApiError extends Error {
   constructor(readonly status: number) {
     super(`GitHub API request failed (${status}).`);
@@ -85,6 +93,7 @@ export class GitHubAppClient {
     repo: string;
     repositoryId?: number;
     githubUserId: number;
+    githubLogin?: string;
     purpose?: "runners" | "cleanup" | "jobs" | "migration-read" | "migration-write";
   }) {
     if (
@@ -101,12 +110,12 @@ export class GitHubAppClient {
     );
     if (
       installation.app_id !== this.app.appId ||
-      installation.account.type !== "User" ||
-      installation.account.id !== input.githubUserId ||
+      !["User", "Organization"].includes(installation.account.type) ||
+      (installation.account.type === "User" && installation.account.id !== input.githubUserId) ||
       installation.suspended_at !== null
     )
       throw new Error(
-        "This runner path requires an active installation owned by the verified personal GitHub account.",
+        "This runner path requires an active installation authorized for the verified GitHub account.",
       );
     const { token } = Schema.decodeUnknownSync(AccessToken)(
       await this.request(jwt, `/app/installations/${installation.id}/access_tokens`, {
@@ -137,9 +146,20 @@ export class GitHubAppClient {
     )(await this.request(token, path));
     if (
       (input.repositoryId !== undefined && repository.id !== input.repositoryId) ||
-      repository.owner.id !== input.githubUserId
+      repository.owner.id !== installation.account.id
     )
-      throw new Error("This runner path requires a verified personal repository.");
+      throw new Error(
+        "This runner path requires a verified repository in the selected installation.",
+      );
+    if (installation.account.type === "Organization" && input.purpose !== "cleanup") {
+      if (!input.githubLogin || !/^[A-Za-z0-9-]+$/.test(input.githubLogin))
+        throw new GitHubAdminError();
+      const permission = Schema.decodeUnknownSync(
+        Schema.Struct({ permission: Schema.String, user: Schema.Struct({ id: Schema.Int }) }),
+      )(await this.request(token, `${path}/collaborators/${input.githubLogin}/permission`));
+      if (permission.permission !== "admin" || permission.user.id !== input.githubUserId)
+        throw new GitHubAdminError();
+    }
     if (
       !repository.private &&
       (input.purpose === undefined ||

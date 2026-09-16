@@ -72,7 +72,7 @@ test("foreign owners, suspended installations and repository mismatches cannot o
     ),
   );
   await expect(new GitHubAppClient(app).repositoryToken(input)).rejects.toThrow(
-    "verified personal repository",
+    "verified repository in the selected installation",
   );
 });
 
@@ -237,4 +237,46 @@ test("public migration publication uses a separate read-only policy token", asyn
     new GitHubAppClient(app).repositoryToken({ ...input, purpose: "migration-write" }),
   ).resolves.toMatchObject({ token: "migration-token" });
   expect(tokens).toBe(2);
+});
+
+test("organization admission rechecks the verified user's current repository admin role", async () => {
+  let permission = "write";
+  let userId = 7;
+  const fetch = vi.fn(async (url: string) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 99, type: "Organization" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped-token" });
+    if (url.endsWith("/permission")) return Response.json({ permission, user: { id: userId } });
+    return Response.json({ id: 123, private: true, owner: { id: 99 } });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const client = new GitHubAppClient(app);
+  const organization = { ...input, owner: "test-org", githubLogin: "verified-user" };
+  await expect(client.repositoryToken(organization)).rejects.toMatchObject({
+    code: "repository_admin_required",
+  });
+  permission = "admin";
+  userId = 8;
+  await expect(client.repositoryToken(organization)).rejects.toMatchObject({
+    code: "repository_admin_required",
+  });
+  userId = 7;
+  await expect(client.repositoryToken(organization)).resolves.toMatchObject({
+    path: "/repos/test-org/sandbox",
+    repositoryId: 123,
+  });
+  permission = "read";
+  await expect(client.repositoryToken(organization)).rejects.toMatchObject({
+    code: "repository_admin_required",
+  });
+  fetch.mockClear();
+  await expect(
+    client.repositoryToken({ ...organization, purpose: "cleanup" }),
+  ).resolves.toMatchObject({ repositoryId: 123 });
+  expect(fetch.mock.calls.some(([url]) => url.includes("/collaborators/"))).toBe(false);
 });
