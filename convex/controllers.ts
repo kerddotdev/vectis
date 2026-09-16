@@ -2,7 +2,8 @@ import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
 import { mutation, query, internalMutation, internalQuery } from "./_generated/server.js";
 import { human } from "./auth.js";
-import { submitForOwner } from "./operations.js";
+import { submitInspection, getInspection } from "./inspections.js";
+import { submitForOwner, cancelForOwner } from "./operations.js";
 import { ControllerRequest } from "../packages/protocol/src/controller.js";
 
 export const approve = mutation({
@@ -126,6 +127,12 @@ export const execute = internalMutation({
     );
     const owner = credential.owner;
     switch (request.type) {
+      case "operation.cancel":
+        return { operationId: await cancelForOwner(ctx, owner, request.id) };
+      case "query.submit":
+        return submitInspection(ctx, owner, request.machineId, request.key, request.query);
+      case "query.get":
+        return getInspection(ctx, owner, request.id);
       case "controller.revoke":
         await ctx.db.patch("controllers", credential._id, { revoked: true });
         return { revoked: true };

@@ -10,7 +10,30 @@ export const ControllerApproval = Schema.Struct({
 });
 export type ControllerApproval = typeof ControllerApproval.Type;
 
+export const LocalQuery = Schema.Union([
+  Schema.Struct({
+    name: Schema.Literals([
+      "status",
+      "storage",
+      "doctor",
+      "repositories",
+      "github.accounts",
+      "capabilities",
+    ]),
+  }),
+  Schema.Struct({ name: Schema.Literal("jobs"), bindingId: Identifier }),
+  Schema.Struct({ name: Schema.Literal("operation"), id: Identifier }),
+]);
+export type LocalQuery = typeof LocalQuery.Type;
 export const ControllerRequest = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
+  Schema.Struct({
+    type: Schema.Literal("query.submit"),
+    machineId: Identifier,
+    key: Identifier,
+    query: LocalQuery,
+  }),
+  Schema.Struct({ type: Schema.Literal("query.get"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("controller.revoke") }),
   Schema.Struct({ type: Schema.Literal("machines.list") }),
   Schema.Struct({

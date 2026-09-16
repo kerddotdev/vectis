@@ -110,3 +110,17 @@ export const acknowledge = mutation({
     });
   },
 });
+
+export async function cancelForOwner(ctx: MutationCtx, owner: string, target: string) {
+  const id = ctx.db.normalizeId("operations", target);
+  const operation = id ? await ctx.db.get("operations", id) : null;
+  if (!operation || operation.owner !== owner) throw new ConvexError({ code: "operation_missing" });
+  if (["succeeded", "failed", "cancelled", "action_required"].includes(operation.phase))
+    return operation._id;
+  await ctx.db.patch("operations", operation._id, {
+    cancelRequested: true,
+    updatedAt: Date.now(),
+    ...(operation.phase === "accepted" ? { phase: "cancelled" as const } : {}),
+  });
+  return operation._id;
+}

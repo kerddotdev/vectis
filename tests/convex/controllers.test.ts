@@ -124,3 +124,27 @@ test("expired controllers cannot retain access or reveal another owner's operati
   await t.run((ctx) => ctx.db.patch("controllers", controllerId, { expiresAt: Date.now() - 1 }));
   await expect(execute({ type: "machines.list" })).rejects.toThrow();
 });
+
+test("cancelling an offline queued command prevents the host from receiving it", async () => {
+  const t = convexTest(schema, modules);
+  const owner = t.withIdentity(identity("owner"));
+  const controllerId = await owner.mutation(api.controllers.approve, approval());
+  const machineId = await owner.mutation(api.machines.enroll, {
+    localId: "offline",
+    name: "Offline",
+  });
+  const id = await owner.mutation(api.operations.submit, {
+    machineId,
+    key: "queued",
+    commandJson: JSON.stringify({ type: "machine.pause", paused: true }),
+  });
+  await t.mutation(internal.controllers.execute, {
+    controllerId,
+    digest: hash(credential),
+    requestJson: JSON.stringify({ type: "operation.cancel", id }),
+  });
+  expect(await owner.query(api.operations.get, { id })).toMatchObject({
+    phase: "cancelled",
+    cancelRequested: true,
+  });
+});
