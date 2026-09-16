@@ -2,7 +2,10 @@ import { matchesRunnerLabels } from "../../../packages/github/src/runner-labels.
 import { setTimeout as delay } from "node:timers/promises";
 import type { JobRefresh } from "../../../packages/protocol/src/jobs.js";
 import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
-import type { MachineRepositories } from "../../../packages/protocol/src/repositories.js";
+import type {
+  MachineRepositories,
+  RepositoryConnection,
+} from "../../../packages/protocol/src/repositories.js";
 import { runRunnerTask } from "./runner-task.js";
 import { createHash } from "node:crypto";
 import { cpus, totalmem } from "node:os";
@@ -26,6 +29,7 @@ export class Service {
     readonly runtime: VmRuntime,
     readonly runnerConnection: () => RunnerBroker & {
       repositories(): Promise<MachineRepositories>;
+      connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
       setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
       refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
     } = () => {
@@ -59,6 +63,51 @@ export class Service {
       let result: unknown;
       const snapshot = this.store.snapshot();
       switch (command.type) {
+        case "repository.connect": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          const environment = snapshot.environments.find(
+            (item) => item.id === command.environmentId,
+          );
+          if (environment?.state !== "ready")
+            throw new VectisError(
+              "setup_required",
+              "Prepare the local environment before connecting a repository.",
+            );
+          const broker = this.runnerConnection();
+          const abort = new AbortController();
+          const done = broker
+            .connectRepository(
+              {
+                accountId: command.accountId,
+                repositoryName: command.repositoryName,
+                environmentId: command.environmentId,
+              },
+              abort.signal,
+            )
+            .then((bindingId) => {
+              this.store.update(operation, {
+                status: "succeeded",
+                message: "Repository connected.",
+                result: { bindingId },
+              });
+            })
+            .catch(() => {
+              this.store.update(operation, {
+                status: "action_required",
+                message: "Repository connection could not be confirmed.",
+                result: {
+                  code: "repository_connection_unconfirmed",
+                  nextStep:
+                    "List repository connections before retrying; then check the account, environment and GitHub App access.",
+                },
+              });
+            })
+            .finally(() => {
+              this.tasks.delete(operation.id);
+            });
+          this.tasks.set(operation.id, { abort, done });
+          return;
+        }
         case "repository.automatic": {
           await this.runnerConnection().setAutomatic(command.bindingId, command.enabled);
           result = { bindingId: command.bindingId, automatic: command.enabled };

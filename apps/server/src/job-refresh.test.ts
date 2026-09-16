@@ -14,6 +14,7 @@ test("job refresh does not block machine control and retries reuse its durable o
   );
   const service = new Service(store, new VmRuntime({ home: "/unused-isolated-home" }), () => ({
     refreshJob,
+    connectRepository: async () => "binding",
     setAutomatic: async () => {},
     repositories: async () => [],
     findRunner: async () => null,
@@ -54,6 +55,7 @@ test("disabling automatic admission cancels a queued demand before guest startup
   const start = vi.spyOn(runtime, "start");
   const service = new Service(store, runtime, () => ({
     refreshJob,
+    connectRepository: async () => "binding",
     setAutomatic: async () => {},
     repositories: async () => [
       {

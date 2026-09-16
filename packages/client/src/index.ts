@@ -1,6 +1,6 @@
 import { Jobs } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
-import { MachineRepositories } from "../../protocol/src/repositories.js";
+import { GitHubAccounts, MachineRepositories } from "../../protocol/src/repositories.js";
 import { Diagnostics } from "../../protocol/src/diagnostics.js";
 import { StorageReport } from "../../protocol/src/storage.js";
 import {
@@ -51,6 +51,9 @@ export class VectisClient {
     return Schema.decodeUnknownSync(Jobs)(
       await this.request(`/v1/jobs?bindingId=${encodeURIComponent(bindingId)}`),
     );
+  }
+  async githubAccounts() {
+    return Schema.decodeUnknownSync(GitHubAccounts)(await this.request("/v1/github/accounts"));
   }
   async repositories() {
     return Schema.decodeUnknownSync(MachineRepositories)(await this.request("/v1/repositories"));
