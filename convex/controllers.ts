@@ -20,6 +20,7 @@ export const approve = mutation({
       !/^[a-f0-9]{64}$/.test(args.credentialDigest) ||
       !args.name.trim() ||
       args.name.length > 100 ||
+      !Number.isFinite(args.expiresAt) ||
       args.expiresAt <= now ||
       args.expiresAt > now + 600000
     )
@@ -125,6 +126,9 @@ export const execute = internalMutation({
     );
     const owner = credential.owner;
     switch (request.type) {
+      case "controller.revoke":
+        await ctx.db.patch("controllers", credential._id, { revoked: true });
+        return { revoked: true };
       case "machines.list": {
         const machines = await ctx.db
           .query("machines")

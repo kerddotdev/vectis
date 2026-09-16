@@ -11,6 +11,7 @@ export const ControllerApproval = Schema.Struct({
 export type ControllerApproval = typeof ControllerApproval.Type;
 
 export const ControllerRequest = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("controller.revoke") }),
   Schema.Struct({ type: Schema.Literal("machines.list") }),
   Schema.Struct({
     type: Schema.Literal("operation.submit"),
