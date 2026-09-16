@@ -21,6 +21,7 @@ test("uncertain publication remains actionable and does not block or duplicate m
     refreshJob: async () => ({ jobId: 1, labels: [], status: "queued", conclusion: null }),
     repositories: async () => [],
     connectRepository: async () => "binding",
+    disconnectRepository: async () => {},
     setAutomatic: async () => {},
     findRunner: async () => null,
     prepareRunner: async () => ({ state: "released", id: "unused" }),

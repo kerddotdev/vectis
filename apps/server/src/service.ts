@@ -47,6 +47,7 @@ export class Service {
       publishMigration(previewId: string, signal: AbortSignal): Promise<MigrationPublication>;
       repositories(): Promise<MachineRepositories>;
       connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
+      disconnectRepository(bindingId: string): Promise<void>;
       setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
       scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
       refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
@@ -227,6 +228,11 @@ export class Service {
             });
           this.tasks.set(operation.id, { abort, done });
           return;
+        }
+        case "repository.disconnect": {
+          await this.runnerConnection().disconnectRepository(command.bindingId);
+          result = { bindingId: command.bindingId, connected: false };
+          break;
         }
         case "repository.automatic": {
           await this.runnerConnection().setAutomatic(command.bindingId, command.enabled);

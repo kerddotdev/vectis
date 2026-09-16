@@ -112,6 +112,7 @@ export const RepositoryConnection = Schema.Struct({
 });
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("repository.disconnect"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.install-macos"), ...MacInstallation.fields }),
   Schema.Struct({ type: Schema.Literal("environment.prepare-linux"), ...LinuxPreparation.fields }),
   Schema.Struct({ type: Schema.Literal("environment.resume"), id: Identifier }),
@@ -180,6 +181,11 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "repository.disconnect",
+    description:
+      "Disable a repository connection on this machine. Running jobs can finish and release registrations. Workflows and the GitHub App installation are preserved.",
+  },
   {
     name: "environment.open-macos-setup",
     description:

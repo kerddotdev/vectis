@@ -195,6 +195,13 @@ export function startCloudRelay(
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
       );
     },
+    async disconnectRepository(bindingId: string) {
+      requireConnection();
+      await interruptible(
+        cloud.mutation(api.repositoryBindings.disconnectForMachine, { bindingId }),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
     async setAutomatic(bindingId: string, enabled: boolean) {
       requireConnection();
       await interruptible(
