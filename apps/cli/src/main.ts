@@ -37,6 +37,7 @@ async function main() {
       cpu: { type: "string" },
       "job-id": { type: "string" },
       account: { type: "string" },
+      owner: { type: "string" },
       name: { type: "string" },
       "disk-gib": { type: "string" },
       "image-directory": { type: "string" },
@@ -58,7 +59,7 @@ async function main() {
 Usage: vectis <command> [options]
 
   github accounts               List verified accounts available to this paired machine
-  repository connect <name>     Connect using --account <id> and --environment <id>
+  repository connect <name>     Connect using --account <id> and --environment <id>, optional --owner <organization>
   github connect                Open the guided GitHub account connection
   cloud pair [--url <deployment>]  Begin browser-approved machine pairing
   cloud finish                  Complete an approved pairing from Keychain
@@ -353,6 +354,7 @@ GitHub pairing require separately configured development services.
       type: "repository.connect",
       accountId: values.account,
       repositoryName: id,
+      ...(values.owner ? { repositoryOwner: values.owner } : {}),
       environmentId: values.environment,
     });
   else if (command === "repository" && subcommand === "disconnect" && id)

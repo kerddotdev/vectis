@@ -23,7 +23,10 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
           error instanceof ConvexError &&
           Schema.is(
             Schema.Struct({
-              code: Schema.Literal("public_runner_approval_required"),
+              code: Schema.Literals([
+                "public_runner_approval_required",
+                "repository_admin_required",
+              ]),
               message: Schema.String,
               nextStep: Schema.String,
             }),
@@ -207,7 +210,14 @@ export function startCloudRelay(
       signal.throwIfAborted();
       requireConnection();
       return interruptible(
-        cloud.action(api.githubRepositories.connectMachine, input),
+        cloud.action(api.githubRepositories.connectMachine, {
+          accountId: input.accountId,
+          environmentId: input.environmentId,
+          repositoryName: input.repositoryName,
+          ...(input.repositoryOwner === undefined
+            ? {}
+            : { repositoryOwner: input.repositoryOwner }),
+        }),
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
       );
     },

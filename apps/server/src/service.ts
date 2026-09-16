@@ -201,6 +201,7 @@ export class Service {
               {
                 accountId: command.accountId,
                 repositoryName: command.repositoryName,
+                ...(command.repositoryOwner ? { repositoryOwner: command.repositoryOwner } : {}),
                 environmentId: command.environmentId,
               },
               abort.signal,

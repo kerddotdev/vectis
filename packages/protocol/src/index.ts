@@ -106,6 +106,7 @@ export const Snapshot = Schema.Struct({
 });
 export type Snapshot = typeof Snapshot.Type;
 export const RepositoryConnection = Schema.Struct({
+  repositoryOwner: Schema.optional(Schema.String.check(Schema.isPattern(/^[A-Za-z0-9-]+$/))),
   accountId: Identifier,
   repositoryName: Schema.NonEmptyString,
   environmentId: Identifier,
