@@ -89,3 +89,28 @@ test("discard rejects active or registered setup, foreign markers, and symlink d
     await f.close();
   }
 });
+
+test("discard preserves registered images reached through a different symlink path", async () => {
+  const f = await fixture();
+  try {
+    const image = join(f.directory, "another-image.img");
+    const alias = join(f.root, "image-alias.img");
+    await writeFile(image, "registered image");
+    await symlink(image, alias);
+    f.store.put("environment", "other", {
+      id: "other",
+      name: "Other",
+      os: "linux",
+      state: "ready",
+      basePath: alias,
+      cpu: 2,
+      memoryMiB: 4096,
+    });
+    await expect(discardMacInstallation(f.store, "setup", "mac")).rejects.toMatchObject({
+      code: "installation_in_use",
+    });
+    expect(await readFile(alias, "utf8")).toBe("registered image");
+  } finally {
+    await f.close();
+  }
+});

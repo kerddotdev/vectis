@@ -1,5 +1,5 @@
-import { lstat, readFile, rm } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { lstat, readFile, realpath, rm } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { Schema } from "effect";
 import { MacInstallation, VectisError } from "../../../packages/protocol/src/index.js";
 import { MacInstallationRecord, recoverMacInstallations } from "./macos-installation-task.js";
@@ -9,6 +9,18 @@ export async function discardMacInstallation(store: Store, id: string, environme
   await recoverMacInstallations(store);
   const record = Schema.decodeUnknownSync(MacInstallationRecord)(store.get("macInstallation", id));
   const snapshot = store.snapshot();
+  const canonical = async (path: string) => realpath(path).catch(() => resolve(path));
+  const root = await canonical(record.directory);
+  const referencedPaths = [
+    ...snapshot.environments.map((environment) => environment.basePath),
+    ...snapshot.instances.flatMap((instance) =>
+      instance.status !== "stopped" && instance.directory ? [instance.directory] : [],
+    ),
+  ];
+  const referenced = (await Promise.all(referencedPaths.map(canonical))).some((path) => {
+    const child = relative(root, path);
+    return child === "" || (!isAbsolute(child) && child !== ".." && !child.startsWith("../"));
+  });
   if (record.configuration.id !== environmentId)
     throw new VectisError(
       "confirmation_mismatch",
@@ -18,6 +30,7 @@ export async function discardMacInstallation(store: Store, id: string, environme
     record.phase === "installing" ||
     record.phase === "setup_running" ||
     record.phase === "registered" ||
+    referenced ||
     snapshot.environments.some(
       (environment) =>
         environment.id === environmentId ||
