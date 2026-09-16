@@ -112,6 +112,7 @@ await writeFile(
   JSON.stringify(
     {
       name: "vectis",
+      license: "MIT",
       version: "0.1.0-dev",
       private: true,
       type: "module",

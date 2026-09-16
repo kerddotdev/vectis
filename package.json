@@ -1,6 +1,7 @@
 {
   "name": "vectis-workspace",
   "private": true,
+  "license": "MIT",
   "files": [
     "dist/apps/cli/src",
     "dist/apps/server/src",
@@ -10,7 +11,9 @@
     "dist/convex/_generated/api.js",
     "apps/desktop/renderer",
     "apps/desktop/preload.cjs",
-    "skills/vectis"
+    "skills/vectis",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "type": "module",
   "scripts": {
