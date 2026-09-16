@@ -17,6 +17,7 @@ import { executeGuest } from "./guest.js";
 import { verifyGuestReadiness } from "./guest-ready.js";
 import { runProcess } from "./process.js";
 import { waitForQemu } from "./qmp.js";
+import { windowsBootstrapCommand } from "./windows-seed.js";
 import { windowsVmArguments } from "./windows-arguments.js";
 import { prepareWindowsMedia, type SetupCredentials } from "./windows-media.js";
 import type { RuntimeOptions } from "./runtime.js";
@@ -95,6 +96,7 @@ export async function installWindowsGuest(
   if (!options.qemu || !options.qemuImg || !options.swtpm)
     throw new VectisError("runtime_missing", "Windows runtimes are missing.");
   const marker = join(directory, "setup.json");
+  const resuming = !!(await stat(marker).catch(() => undefined));
   const owner = JSON.stringify({ id: setupId, configuration: input });
   try {
     await mkdir(directory, { mode: 0o700 });
@@ -244,6 +246,7 @@ export async function installWindowsGuest(
       hostKeyAlias: input.id,
     };
     let screenshotAt = 0;
+    let bootstrapRetried = false;
     while (!bounded.aborted) {
       if (Date.now() - screenshotAt > 30000) {
         screenshotAt = Date.now();
@@ -257,10 +260,32 @@ export async function installWindowsGuest(
       try {
         const result = await executeGuest(
           connection,
-          `[Console]::WriteLine([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() + ' ' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()); Get-Content C:\\ProgramData\\Vectis\\prepared`,
+          `[Console]::WriteLine([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() + ' ' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()); if (Test-Path C:\\ProgramData\\Vectis\\failed) { Write-Output 'VECTIS_SETUP_FAILED' } else { Get-Content C:\\ProgramData\\Vectis\\prepared }`,
           { signal: AbortSignal.any([bounded, AbortSignal.timeout(15000)]), shell: "powershell" },
         );
         const lines = result.stdout.trim().split(/\r?\n/);
+        if (lines.at(-1)?.trim() === "VECTIS_SETUP_FAILED") {
+          if (!resuming || bootstrapRetried)
+            throw new VectisError(
+              "guest_preparation_failed",
+              "Windows bootstrap reported a failure. Inspect guest diagnostics and resume setup after correcting the cause.",
+            );
+          bootstrapRetried = true;
+          const retry = await executeGuest(
+            connection,
+            `${windowsBootstrapCommand}; exit $LASTEXITCODE`,
+            {
+              signal: AbortSignal.any([bounded, AbortSignal.timeout(300000)]),
+              shell: "powershell",
+            },
+          );
+          if (retry.exitCode !== 0)
+            throw new VectisError(
+              "guest_preparation_failed",
+              "Windows bootstrap could not complete with the resumed setup media.",
+            );
+          continue;
+        }
         if (result.exitCode === 0 && lines.at(-1)?.trim() === setupId) {
           verifyGuestReadiness(lines[0] ?? "");
           const shutdown = await executeGuest(connection, "shutdown.exe /s /t 3", {

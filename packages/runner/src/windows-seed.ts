@@ -12,6 +12,9 @@ function component(name: string, contents: string) {
   return `<component name="${name}" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">${contents}</component>`;
 }
 
+const bootstrap = `$ErrorActionPreference='Stop'; $media=@(Get-Volume | Where-Object FileSystemLabel -eq 'VECTIS_SETUP'); if($media.Count -ne 1){throw 'Setup media unavailable'}; & ($media[0].DriveLetter + ':\\prepare.ps1')`;
+export const windowsBootstrapCommand = `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(bootstrap, "utf16le").toString("base64")}`;
+
 export function windowsSeed(input: {
   id: string;
   password: string;
@@ -32,8 +35,6 @@ export function windowsSeed(input: {
       "invalid_setup_identity",
       "Expected a generated setup ID, strong local password and Windows image name.",
     );
-  const launch = `$ErrorActionPreference='Stop'; $media=@(Get-Volume | Where-Object FileSystemLabel -eq 'VECTIS_SETUP'); if($media.Count -ne 1){throw 'Setup media unavailable'}; & ($media[0].DriveLetter + ':\\prepare.ps1')`;
-  const encoded = Buffer.from(launch, "utf16le").toString("base64");
   const password = `<Password><Value>${xml(input.password)}</Value><PlainText>true</PlainText></Password>`;
   const language =
     "<InputLocale>en-US</InputLocale><SystemLocale>en-US</SystemLocale><UILanguage>en-US</UILanguage><UserLocale>en-US</UserLocale>";
@@ -47,7 +48,7 @@ ${component("Microsoft-Windows-PnpCustomizationsWinPE", '<DriverPaths><PathAndCr
 <settings pass="specialize">${component("Microsoft-Windows-Shell-Setup", "<ComputerName>VECTIS-CI</ComputerName><TimeZone>UTC</TimeZone>")}</settings>
 <settings pass="oobeSystem">
 ${component("Microsoft-Windows-International-Core", language)}
-${component("Microsoft-Windows-Shell-Setup", `<OOBE><HideEULAPage>true</HideEULAPage><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><ProtectYourPC>3</ProtectYourPC></OOBE><UserAccounts><LocalAccounts><LocalAccount wcm:action="add">${password}<Name>vectis</Name><DisplayName>Vectis CI</DisplayName><Group>Administrators</Group></LocalAccount></LocalAccounts></UserAccounts><AutoLogon>${password}<Enabled>true</Enabled><LogonCount>1</LogonCount><Username>vectis</Username></AutoLogon><FirstLogonCommands><SynchronousCommand wcm:action="add"><Order>1</Order><Description>Prepare the Vectis guest</Description><CommandLine>powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${encoded}</CommandLine></SynchronousCommand></FirstLogonCommands>`)}
+${component("Microsoft-Windows-Shell-Setup", `<OOBE><HideEULAPage>true</HideEULAPage><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><ProtectYourPC>3</ProtectYourPC></OOBE><UserAccounts><LocalAccounts><LocalAccount wcm:action="add">${password}<Name>vectis</Name><DisplayName>Vectis CI</DisplayName><Group>Administrators</Group></LocalAccount></LocalAccounts></UserAccounts><AutoLogon>${password}<Enabled>true</Enabled><LogonCount>1</LogonCount><Username>vectis</Username></AutoLogon><FirstLogonCommands><SynchronousCommand wcm:action="add"><Order>1</Order><Description>Prepare the Vectis guest</Description><CommandLine>${windowsBootstrapCommand}</CommandLine></SynchronousCommand></FirstLogonCommands>`)}
 </settings></unattend>
 `;
   const script = String.raw`$ErrorActionPreference = 'Stop'
