@@ -10,9 +10,11 @@ import { executeGuest } from "../../../packages/runner/src/guest.js";
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
 vi.mock("../../../packages/runner/src/guest.js", () => ({ executeGuest: vi.fn() }));
 
-test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
-  "a listening runner does not block pause, cancellation or ordered VM cleanup",
-  async () => {
+test
+  .skipIf(process.platform !== "darwin" || process.arch !== "arm64")
+  .each(["starting", "listening"] as const)(
+  "a %s runner does not block pause, cancellation or ordered VM cleanup",
+  async (phase) => {
     const home = await mkdtemp(join(tmpdir(), "vectis-runner-task-"));
     const store = new Store(":memory:");
     const helper = join(home, "helper");
@@ -58,7 +60,12 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
         );
       }),
     };
-    const service = new Service(store, new VmRuntime({ home, appleHelper: helper }), () => broker);
+    const runtime = new VmRuntime({ home, appleHelper: helper });
+    const service = new Service(store, runtime, () => broker);
+    let release = () => {};
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     vi.mocked(readyGuest).mockResolvedValue({
       host: "192.168.64.2",
       port: 22,
@@ -94,23 +101,44 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
         },
       });
       await service.drain();
+      const validation =
+        phase === "starting"
+          ? vi.spyOn(runtime, "validate").mockImplementationOnce(() => pending)
+          : undefined;
       const run = service.submit("run", { type: "runner.run", bindingId: "binding" });
-      await vi.waitFor(() => expect(broker.prepareRunner).toHaveBeenCalledOnce());
+      if (validation) await vi.waitFor(() => expect(validation).toHaveBeenCalledOnce());
+      else await vi.waitFor(() => expect(broker.prepareRunner).toHaveBeenCalledOnce());
       const replay = service.submit("run", { type: "runner.run", bindingId: "binding" });
       expect(replay.id).toBe(run.id);
       service.submit("pause", { type: "machine.pause", paused: true });
       await service.drain();
       expect(store.snapshot().machine.paused).toBe(true);
-      expect(store.snapshot().instances[0]?.status).toBe("running");
+      expect(store.snapshot().instances[0]?.status).toBe(
+        phase === "starting" ? "interrupted" : "running",
+      );
       service.submit("cancel", { type: "operation.cancel", id: run.id });
+      if (phase === "starting") {
+        await vi.waitFor(() =>
+          expect(
+            store
+              .snapshot()
+              .operations.filter(
+                (item) => item.command === "operation.cancel" && item.status === "succeeded",
+              ),
+          ).toHaveLength(2),
+        );
+        release();
+      }
       await vi.waitFor(() =>
         expect(store.snapshot().operations.find((item) => item.id === run.id)?.status).toBe(
           "cancelled",
         ),
       );
-      expect(broker.releaseRunner).toHaveBeenCalledOnce();
+      expect(broker.prepareRunner).toHaveBeenCalledTimes(phase === "starting" ? 0 : 1);
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(phase === "starting" ? 0 : 1);
       expect(store.snapshot().instances).toHaveLength(1);
     } finally {
+      release();
       await service.close();
       store.close();
       await rm(home, { recursive: true, force: true });

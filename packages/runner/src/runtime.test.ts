@@ -64,6 +64,23 @@ hostTest("explicit stop waits for process exit and cleanup", async () => {
   expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
 });
 
+hostTest("startup cancellation terminates an owned helper before readiness", async () => {
+  const { home, runtime, environment } = await fixture(
+    'require("node:fs").writeFileSync(require("node:path").join(__dirname, "started"), String(process.pid)); setInterval(() => {}, 1000);',
+  );
+  const abort = new AbortController();
+  const result = runtime.start("cancel", environment, () => {}, abort.signal);
+  const rejected = expect(result).rejects.toBeInstanceOf(Error);
+  await vi.waitFor(async () =>
+    expect(await readFile(join(home, "started"), "utf8")).toMatch(/^\d+$/),
+  );
+  abort.abort();
+  await rejected;
+  expect(await runtime.hasWorkDirectory("cancel")).toBe(false);
+  const pid = Number(await readFile(join(home, "started"), "utf8"));
+  expect(() => process.kill(pid, 0)).toThrow();
+});
+
 hostTest(
   "custom VM storage is separate from service state and cleanup preserves its parent",
   async () => {

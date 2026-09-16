@@ -34,7 +34,7 @@ export class VmRuntime {
   directoryFor(id: string, environment: Environment) {
     return join(environment.storagePath ?? join(this.options.home, "instances"), id);
   }
-  async validate(environment: Environment) {
+  validateResources(environment: Environment) {
     if (
       !isAbsolute(environment.basePath) ||
       (environment.storagePath && !isAbsolute(environment.storagePath))
@@ -53,6 +53,9 @@ export class VmRuntime {
         "invalid_resources",
         "VM memory exceeds the host budget of 75 percent.",
       );
+  }
+  async validate(environment: Environment) {
+    this.validateResources(environment);
     const base = await stat(resolve(environment.basePath)).catch(() => undefined);
     if (!base || (environment.os === "macos" ? !base.isDirectory() : !base.isFile()))
       throw new VectisError(
@@ -81,8 +84,11 @@ export class VmRuntime {
     id: string,
     environment: Environment,
     onExit: (cleaned: boolean) => void,
+    signal?: AbortSignal,
   ): Promise<OwnedInstance> {
+    signal?.throwIfAborted();
     await this.validate(environment);
+    signal?.throwIfAborted();
     if (process.platform !== "darwin" || process.arch !== "arm64")
       throw new VectisError("unsupported_host", "This release requires an Apple Silicon Mac.");
     if (environment.memoryMiB * 1024 * 1024 > (await availableHostMemory()))
@@ -112,6 +118,7 @@ export class VmRuntime {
     const directory = this.directoryFor(id, environment);
     await mkdir(directory, { mode: 0o700 });
     try {
+      signal?.throwIfAborted();
       let args: string[];
       if (environment.os === "windows") {
         if (
@@ -138,16 +145,11 @@ export class VmRuntime {
           });
         else await mkdir(join(directory, "tpm"), { mode: 0o700 });
         const disk = join(directory, "disk.qcow2");
-        await runProcess(this.options.qemuImg, [
-          "create",
-          "-f",
-          "qcow2",
-          "-F",
-          "qcow2",
-          "-b",
-          resolve(environment.basePath),
-          disk,
-        ]);
+        await runProcess(
+          this.options.qemuImg,
+          ["create", "-f", "qcow2", "-F", "qcow2", "-b", resolve(environment.basePath), disk],
+          signal,
+        );
         args = windowsVmArguments({
           firmwarePath: environment.firmwarePath,
           cpu: environment.cpu,
@@ -155,7 +157,7 @@ export class VmRuntime {
         });
       } else {
         const destination = join(directory, environment.os === "macos" ? "bundle" : "disk.img");
-        await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination]);
+        await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination], signal);
         args = [
           "run",
           environment.os,
@@ -178,6 +180,7 @@ export class VmRuntime {
           import.meta.url,
         ),
       );
+      signal?.throwIfAborted();
       const child = spawn(
         supervised ? process.execPath : executable,
         supervised ? [supervisor, executable, ...args] : args,
@@ -210,17 +213,25 @@ export class VmRuntime {
       void settled.catch(() => {});
       const instance = { id, process: child, directory, settled };
       this.owned.set(id, instance);
+      const cancel = () => {
+        void this.stop(id).catch(() => {});
+      };
+      signal?.addEventListener("abort", cancel, { once: true });
       let network: { macAddress?: string; sshHost?: string; sshPort?: number } = {};
       try {
+        signal?.throwIfAborted();
         if (environment.os === "windows")
           network = { sshHost: "127.0.0.1", sshPort: await waitForQemu(child) };
         else network = await waitForAppleVm(child);
+        signal?.throwIfAborted();
         if (child.exitCode !== null || child.signalCode !== null)
           throw new VectisError("vm_start_failed", "The VM stopped during startup.");
       } catch (error) {
         if (this.owned.has(id)) await this.stop(id);
         else await settled;
         throw error;
+      } finally {
+        signal?.removeEventListener("abort", cancel);
       }
       child.stdout?.resume();
       child.stderr?.resume();
