@@ -109,22 +109,13 @@ export function PrepareLinux() {
         <fieldset disabled={pending} key={os}>
           {os === "windows" && (
             <>
-              <label>
-                Windows ARM64 ISO path
-                <input name="isoPath" required />
-              </label>
-              <label>
-                VirtIO driver ISO path
-                <input name="driversPath" required />
-              </label>
-              <label>
-                ARM64 UEFI code path
-                <input name="firmwarePath" required />
-              </label>
-              <label>
-                Blank raw UEFI variables template path
-                <input name="firmwareVarsPath" required />
-              </label>
+              <InstallationFile name="isoPath" label="Windows ARM64 ISO path" />
+              <InstallationFile name="driversPath" label="VirtIO driver ISO path" />
+              <InstallationFile name="firmwarePath" label="ARM64 UEFI code path" />
+              <InstallationFile
+                name="firmwareVarsPath"
+                label="Blank raw UEFI variables template path"
+              />
               <label>
                 Windows image name
                 <input name="imageName" defaultValue="Windows 11 Pro" required />
@@ -239,5 +230,27 @@ export function PrepareLinux() {
       </form>
       {message && <p role="status">{message}</p>}
     </section>
+  );
+}
+
+function InstallationFile({ name, label }: { name: string; label: string }) {
+  const [path, setPath] = useState("");
+  const { perform } = useStateApi();
+  return (
+    <label>
+      {label}
+      <input name={name} value={path} onChange={(event) => setPath(event.target.value)} required />
+      <button
+        type="button"
+        aria-label={`Choose ${label}`}
+        onClick={() =>
+          void perform("chooseFile").then((value) => {
+            if (typeof value === "string") setPath(value);
+          })
+        }
+      >
+        Choose file
+      </button>
+    </label>
   );
 }
