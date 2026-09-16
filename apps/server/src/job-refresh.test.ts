@@ -13,6 +13,7 @@ test("job refresh does not block machine control and retries reuse its durable o
       }),
   );
   const service = new Service(store, new VmRuntime({ home: "/unused-isolated-home" }), () => ({
+    scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
     setAutomatic: async () => {},
@@ -54,6 +55,7 @@ test("disabling automatic admission cancels a queued demand before guest startup
   const runtime = new VmRuntime({ home: "/unused-isolated-home" });
   const start = vi.spyOn(runtime, "start");
   const service = new Service(store, runtime, () => ({
+    scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
     setAutomatic: async () => {},
@@ -98,5 +100,33 @@ test("disabling automatic admission cancels a queued demand before guest startup
     await service.close();
     store.close();
     start.mockRestore();
+  }
+});
+
+test("incomplete repository scans require attention instead of claiming full recovery", async () => {
+  const store = new Store(":memory:");
+  const scanJobs = vi.fn(async () => ({ runs: 2, jobs: 50, complete: false }));
+  const service = new Service(store, new VmRuntime({ home: "/unused-isolated-home" }), () => ({
+    scanJobs,
+    refreshJob: async () => ({ jobId: 1, labels: [], status: "queued", conclusion: null }),
+    repositories: async () => [],
+    connectRepository: async () => "binding",
+    setAutomatic: async () => {},
+    findRunner: async () => null,
+    prepareRunner: async () => ({ state: "released", id: "unused" }),
+    releaseRunner: async () => {},
+  }));
+  try {
+    const operation = service.submit("scan", { type: "job.scan", bindingId: "binding" });
+    await service.drain();
+    await vi.waitFor(() =>
+      expect(store.snapshot().operations.find((item) => item.id === operation.id)?.status).toBe(
+        "action_required",
+      ),
+    );
+    expect(scanJobs).toHaveBeenCalledOnce();
+  } finally {
+    await service.close();
+    store.close();
   }
 });

@@ -26,6 +26,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     const broker = {
       connectRepository: vi.fn(async () => "binding"),
       setAutomatic: vi.fn(async () => {}),
+      scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
       refreshJob: vi.fn(async () => ({
         jobId: 1,
         labels: [],

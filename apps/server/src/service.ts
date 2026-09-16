@@ -1,6 +1,6 @@
 import { matchesRunnerLabels } from "../../../packages/github/src/runner-labels.js";
 import { setTimeout as delay } from "node:timers/promises";
-import type { JobRefresh } from "../../../packages/protocol/src/jobs.js";
+import type { JobRefresh, JobScan } from "../../../packages/protocol/src/jobs.js";
 import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
 import type {
   MachineRepositories,
@@ -31,6 +31,7 @@ export class Service {
       repositories(): Promise<MachineRepositories>;
       connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
       setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+      scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
       refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
     } = () => {
       throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
@@ -113,16 +114,23 @@ export class Service {
           result = { bindingId: command.bindingId, automatic: command.enabled };
           break;
         }
+        case "job.scan":
         case "job.refresh": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           const broker = this.runnerConnection();
           const abort = new AbortController();
-          const done = broker
-            .refreshJob(command.bindingId, command.jobId, abort.signal)
+          const request =
+            command.type === "job.scan"
+              ? broker.scanJobs(command.bindingId, abort.signal)
+              : broker.refreshJob(command.bindingId, command.jobId, abort.signal);
+          const done = request
             .then((result) => {
               this.store.update(operation, {
-                status: "succeeded",
-                message: "GitHub job state refreshed.",
+                status: "complete" in result && !result.complete ? "action_required" : "succeeded",
+                message:
+                  "complete" in result && !result.complete
+                    ? "GitHub scan reached its bounded API limit. Some jobs may still be missing."
+                    : "GitHub job state refreshed.",
                 result,
               });
             })
@@ -134,9 +142,10 @@ export class Service {
                   : "GitHub job state could not be refreshed.",
                 result: {
                   bindingId: command.bindingId,
-                  jobId: command.jobId,
+                  ...(command.type === "job.refresh" ? { jobId: command.jobId } : {}),
                   code: abort.signal.aborted ? "refresh_cancelled" : "job_refresh_failed",
-                  nextStep: "Check the repository binding and GitHub job ID, then retry the read.",
+                  nextStep:
+                    "Check repository access and retry the read; for large queues, refresh a known job ID directly.",
                 },
               });
             })

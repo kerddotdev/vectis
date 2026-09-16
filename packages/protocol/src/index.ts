@@ -83,6 +83,7 @@ export const RepositoryConnection = Schema.Struct({
 });
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("job.scan"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("repository.connect"), ...RepositoryConnection.fields }),
   Schema.Struct({
     type: Schema.Literal("repository.automatic"),
@@ -155,6 +156,11 @@ export const capabilities = [
   {
     name: "repository.automatic",
     description: "Enable or disable future automatic runner admission for a repository binding.",
+  },
+  {
+    name: "job.scan",
+    description:
+      "Discover missing queued and running jobs through the GitHub API, and refresh previously active runs.",
   },
   {
     name: "job.refresh",
