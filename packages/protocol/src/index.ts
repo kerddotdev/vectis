@@ -106,6 +106,8 @@ export const RepositoryConnection = Schema.Struct({
 });
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("environment.prepare-linux"), ...LinuxPreparation.fields }),
+  Schema.Struct({ type: Schema.Literal("environment.resume"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("migration.analyze"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("migration.publish"), previewId: Identifier }),
   Schema.Struct({ type: Schema.Literal("job.scan"), bindingId: Identifier }),
@@ -169,6 +171,16 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "environment.prepare-linux",
+    description:
+      "Download and verify Ubuntu 24.04 ARM64, prepare guest SSH and Docker, and register the environment. Requires an idle Apple Silicon host and configured helper.",
+  },
+  {
+    name: "environment.resume",
+    description:
+      "Resume an interrupted owned image preparation after verifying its prior guest stopped.",
+  },
   {
     name: "migration.analyze",
     description:
