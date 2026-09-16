@@ -16,6 +16,7 @@ export default defineConfig({
         { label: "Install macOS", slug: "guides/macos-setup" },
         { label: "Install Windows", slug: "guides/windows-setup" },
         { label: "Desktop", slug: "guides/desktop" },
+        { label: "Remote control", slug: "guides/remote-control" },
         { label: "GitHub connections", slug: "guides/github" },
         { label: "Run a runner", slug: "guides/runners" },
         { label: "Workflow migration", slug: "guides/migrations" },
