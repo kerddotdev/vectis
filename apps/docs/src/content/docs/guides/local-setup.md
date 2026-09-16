@@ -66,6 +66,8 @@ Mutating commands return an operation ID. `accepted` means the request was recor
 
 `pause` prevents new VM starts and leaves running work alone. `instance stop <id>` stops a VM owned by the service. After a service crash, an interrupted instance requires verified process-exit evidence before Vectis removes its working directory.
 
+VM startup runs as a cancellable operation. Use `operation cancel <operation-id>` to withdraw an unfinished start, then wait for that original operation to finish. Cancellation being requested does not prove cleanup has completed. While image access or cleanup is still pending, Vectis keeps the reservation and refuses another VM start. Pause and cancellation requests remain available. If macOS is waiting for file-access approval, the underlying file operation may need that prompt resolved before cleanup can finish; a cancelled start will not proceed to boot afterward.
+
 ## Connect your machine
 
 The development pairing flow requires the native Keychain helper. Set `VECTIS_KEYCHAIN_HELPER` to its absolute executable path before starting both the service and CLI. An installed login service captures this path at installation.
