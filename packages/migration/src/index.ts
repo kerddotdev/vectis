@@ -1,4 +1,4 @@
-import { isMap, isScalar, isSeq, parseDocument } from "yaml";
+import { isAlias, isMap, isScalar, isSeq, parseDocument } from "yaml";
 
 export interface MigrationTarget {
   readonly from: string;
@@ -27,6 +27,12 @@ export function previewMigration(
       findings: [{ job: "workflow", reason: "Invalid workflow YAML." }],
     };
   const trigger = document.get("on", true);
+  if (isAlias(trigger) || (isSeq(trigger) && trigger.items.some(isAlias)))
+    return {
+      changed: false,
+      source,
+      findings: [{ job: "workflow", reason: "Aliased workflow events require manual review." }],
+    };
   const unsafe = isScalar(trigger)
     ? ["pull_request_target", "workflow_run"].includes(String(trigger.value))
     : isSeq(trigger)

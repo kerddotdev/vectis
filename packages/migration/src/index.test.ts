@@ -30,3 +30,13 @@ test("migrates a simple static matrix but refuses include/exclude expansions", (
   expect(previewMigration(source, targets).source).toContain("vectis-linux-arm64");
   expect(previewMigration(source + "        include: []\n", targets).changed).toBe(false);
 });
+
+test("aliased privileged triggers cannot bypass migration review", () => {
+  for (const trigger of ["*event", "[*event, push]"]) {
+    const source = `event: &event pull_request_target\non: ${trigger}\njobs:\n  test:\n    runs-on: ubuntu-24.04-arm\n`;
+    const preview = previewMigration(source, targets);
+    expect(preview.changed).toBe(false);
+    expect(preview.source).toBe(source);
+    expect(preview.findings[0]?.reason).toContain("Aliased");
+  }
+});
