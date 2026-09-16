@@ -14,3 +14,10 @@ export const Jobs = Schema.Array(
   }),
 );
 export type Jobs = typeof Jobs.Type;
+
+export const JobRefresh = Schema.Struct({
+  jobId: Schema.Int,
+  status: Schema.Literals(["queued", "in_progress", "completed"]),
+  conclusion: Schema.NullOr(Schema.String),
+});
+export type JobRefresh = typeof JobRefresh.Type;
