@@ -20,6 +20,14 @@ export const phase = v.union(
   v.literal("cancelled"),
 );
 export default defineSchema({
+  migrationPreviews: defineTable({
+    owner: v.string(),
+    machineId: v.id("machines"),
+    bindingId: v.id("repositoryBindings"),
+    reportJson: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  }).index("by_machine", ["machineId"]),
   githubLinks: defineTable({
     owner: v.string(),
     digest: v.string(),

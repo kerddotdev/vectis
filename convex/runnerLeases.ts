@@ -3,7 +3,7 @@ import { internalMutation, internalQuery, query } from "./_generated/server.js";
 import type { QueryCtx } from "./_generated/server.js";
 import { machine } from "./auth.js";
 
-async function bindingAuthority(ctx: QueryCtx, bindingId: string, preparing: boolean) {
+export async function bindingAuthority(ctx: QueryCtx, bindingId: string, preparing: boolean) {
   const target = await machine(ctx);
   const id = ctx.db.normalizeId("repositoryBindings", bindingId);
   const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
