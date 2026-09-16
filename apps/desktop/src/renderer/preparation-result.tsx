@@ -31,6 +31,37 @@ export function PreparationResult({
       {result.directory && <p>Image directory: {result.directory}</p>}
       {result.restoreDirectory && <p>Restore download directory: {result.restoreDirectory}</p>}
       {result.nextStep && <p>{result.nextStep}</p>}
+      {macos && result.phase === "setup_running" && (
+        <button
+          onClick={() =>
+            void submit({
+              type: "environment.connect-macos-guest",
+              id: result.setupId,
+              openTerminal: true,
+            })
+          }
+        >
+          Connect guest SSH on host
+        </button>
+      )}
+      {macos && result.phase === "ssh_enrollment" && (
+        <button
+          onClick={() =>
+            void submit({ type: "environment.verify-macos-guest", id: result.setupId })
+          }
+        >
+          Verify guest SSH
+        </button>
+      )}
+      {macos && result.phase === "ssh_verified" && (
+        <button
+          onClick={() =>
+            void submit({ type: "environment.finish-macos-setup", id: result.setupId })
+          }
+        >
+          Finish macOS setup
+        </button>
+      )}
       {macos && result.phase === "setup_required" && (
         <button
           onClick={() => void submit({ type: "environment.open-macos-setup", id: result.setupId })}
