@@ -59,6 +59,7 @@ Usage: vectis <command> [options]
   service start                 Start the installed or independent background service
   service run                   Run the service in the foreground
   service stop                  Stop through an authenticated service request
+  job refresh <binding-id> <job-id>  Recover a job state directly from GitHub
   job list <binding-id>         Read recent GitHub job status for a connected repository
   repository list               List this machine's connected repositories (requires cloud pairing)
   storage                       Inspect image and VM disk usage
@@ -285,6 +286,8 @@ GitHub pairing require separately configured development services.
   let request: Command;
   if (command === "pause" || command === "resume")
     request = { type: "machine.pause", paused: command === "pause" };
+  else if (command === "job" && subcommand === "refresh" && id && positionals[3])
+    request = decodeCommand({ type: "job.refresh", bindingId: id, jobId: Number(positionals[3]) });
   else if (command === "runner" && subcommand === "reconcile" && id)
     request = decodeCommand({ type: "runner.reconcile", id });
   else if (command === "runner" && subcommand === "run" && id)

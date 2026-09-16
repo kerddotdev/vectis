@@ -145,7 +145,8 @@ export const capabilities = [
   },
   {
     name: "operation.cancel",
-    description: "Request cancellation of an active runner and wait for its cleanup status.",
+    description:
+      "Request cancellation of an active background operation; inspect its final cleanup status.",
   },
   {
     name: "repository.list",

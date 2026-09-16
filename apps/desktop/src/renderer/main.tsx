@@ -124,14 +124,15 @@ function Overview() {
                 Reconcile runner
               </button>
             )}
-            {operation.command === "runner.run" && operation.status === "running" && (
-              <button
-                className="secondary"
-                onClick={() => void submit({ type: "operation.cancel", id: operation.id })}
-              >
-                Cancel runner
-              </button>
-            )}
+            {(operation.command === "runner.run" || operation.command === "job.refresh") &&
+              operation.status === "running" && (
+                <button
+                  className="secondary"
+                  onClick={() => void submit({ type: "operation.cancel", id: operation.id })}
+                >
+                  Cancel operation
+                </button>
+              )}
           </div>
         ))}
       </section>
