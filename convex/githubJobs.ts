@@ -1,0 +1,44 @@
+"use node";
+import { ConvexError, v } from "convex/values";
+import { Schema } from "effect";
+import { action } from "./_generated/server.js";
+import { internal } from "./_generated/api.js";
+import { GitHubAppClient } from "../packages/github/src/app-client.js";
+import { GitHubJob } from "../packages/github/src/job.js";
+
+export const refresh = action({
+  args: { bindingId: v.string(), jobId: v.number() },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ jobId: number; status: string; conclusion: string | null }> => {
+    if (!Number.isSafeInteger(args.jobId) || args.jobId <= 0)
+      throw new ConvexError({ code: "invalid_job_id" });
+    const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
+      bindingId: args.bindingId,
+      preparing: false,
+    });
+    if (!authority.binding.enabled) throw new ConvexError({ code: "repository_access_denied" });
+    const client = new GitHubAppClient(authority.app);
+    const access = await client.repositoryToken({
+      owner: authority.account.login,
+      repo: authority.binding.repositoryName,
+      repositoryId: authority.binding.repositoryId,
+      githubUserId: authority.account.githubId,
+      purpose: "jobs",
+    });
+    if (access.installationId !== authority.binding.installationId)
+      throw new ConvexError({ code: "installation_changed" });
+    const job = Schema.decodeUnknownSync(GitHubJob)(
+      await client.request(access.token, `${access.path}/actions/jobs/${args.jobId}`),
+    );
+    if (job.id !== args.jobId) throw new ConvexError({ code: "job_identity_mismatch" });
+    await ctx.runMutation(internal.jobs.save, {
+      bindingId: args.bindingId,
+      installationId: access.installationId,
+      repositoryId: access.repositoryId,
+      job: { ...job, labels: [...job.labels] },
+    });
+    return { jobId: job.id, status: job.status, conclusion: job.conclusion };
+  },
+});
