@@ -34,3 +34,17 @@ Keep the package directory intact and add its `bin` directory to PATH. Do not sy
 The launchers configure the packaged Apple and Keychain helpers automatically. Explicit `VECTIS_APPLE_HELPER` and `VECTIS_KEYCHAIN_HELPER` overrides remain available for development. Service installation records absolute paths, so stop and uninstall its login registration before moving or removing an installed package. Uninstalling that registration preserves images, configuration, and credentials.
 
 The package does not grant GitHub access or connect a cloud account automatically. Follow the [local setup guide](/docs/guides/local-setup/) and [remote control guide](/docs/guides/remote-control/).
+
+## Desktop development app
+
+Build the renderer before creating a fresh portable payload, then wrap it with the pinned Electron version:
+
+```sh
+pnpm desktop:build
+pnpm package:cli --output /absolute/path/to/new-payload --helpers /absolute/path/to/native-binaries
+pnpm package:desktop --package /absolute/path/to/new-payload --output /absolute/path/to/new-desktop-output
+```
+
+The result is `Vectis Dev-darwin-arm64/Vectis Dev.app`. The app finds its Node runtime and native helpers inside its own Resources directory. Installing the service from the desktop registers that independent runtime with macOS; closing the desktop leaves it running.
+
+This build has not been Developer ID signed or notarized. It is for local development verification. Keep the app at its installed location while its login service is registered. The portable payload and app contain their own copies of the runtime, so the payload can be removed after packaging if no service uses it.
