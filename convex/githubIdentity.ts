@@ -1,6 +1,6 @@
 import { ConvexError, v } from "convex/values";
 import { internalMutation, mutation, query } from "./_generated/server.js";
-import { human } from "./auth.js";
+import { human, machine } from "./auth.js";
 
 import { verifiedUser } from "./githubValidators.js";
 
@@ -122,5 +122,21 @@ export const discard = mutation({
     const link = await ctx.db.get("githubLinks", id);
     if (!link || link.owner !== owner) throw new ConvexError({ code: "github_link_unavailable" });
     await ctx.db.delete("githubLinks", id);
+  },
+});
+
+export const forMachine = query({
+  args: {},
+  handler: async (ctx) => {
+    const target = await machine(ctx);
+    const accounts = await ctx.db
+      .query("githubAccounts")
+      .withIndex("by_owner", (q) => q.eq("owner", target.owner))
+      .take(100);
+    return accounts.map((account) => ({
+      id: account._id,
+      githubId: account.githubId,
+      login: account.login,
+    }));
   },
 });
