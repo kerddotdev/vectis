@@ -1,4 +1,8 @@
 export type DesktopAction =
+  | "controller.login"
+  | "controller.finish"
+  | "controller.logout"
+  | "machines.list"
   | "status"
   | "storage"
   | "doctor"
@@ -21,6 +25,8 @@ export type DesktopReply =
   | { ok: false; error: { code: string; message: string; nextStep: string } };
 declare global {
   interface Window {
-    vectis: { request(action: DesktopAction, input?: unknown): Promise<DesktopReply> };
+    vectis: {
+      request(action: DesktopAction, input?: unknown, machineId?: string): Promise<DesktopReply>;
+    };
   }
 }

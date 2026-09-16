@@ -8,6 +8,14 @@ import { localClient } from "../../../packages/client/src/local.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
+import { controllerClient } from "../../../packages/client/src/controller.js";
+import {
+  beginControllerLogin,
+  finishControllerLogin,
+  logoutController,
+} from "../../../packages/client/src/controller-login.js";
+import { RemoteClient } from "../../../packages/client/src/remote.js";
+import { desktopTarget } from "./target.js";
 import type { DesktopReply } from "./bridge.js";
 const home = process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
 const page = fileURLToPath(
@@ -28,7 +36,7 @@ else {
     session.defaultSession.setPermissionCheckHandler(() => false);
     ipcMain.handle(
       "vectis:request",
-      async (event, action: unknown, input: unknown): Promise<DesktopReply> => {
+      async (event, action: unknown, input: unknown, target: unknown): Promise<DesktopReply> => {
         if (
           !window ||
           event.sender !== window.webContents ||
@@ -44,33 +52,67 @@ else {
             },
           };
         try {
+          const machineId = desktopTarget(action, target);
+          function credentials() {
+            const helper = process.env.VECTIS_KEYCHAIN_HELPER;
+            if (!helper)
+              throw new VectisError("runtime_missing", "The Keychain helper is required.");
+            return new KeychainCredentials(helper);
+          }
+          async function client() {
+            return machineId
+              ? new RemoteClient(await controllerClient(home, credentials()), machineId)
+              : localClient(home);
+          }
           let data: unknown;
           switch (action) {
+            case "machines.list":
+              data = await (
+                await controllerClient(home, credentials())
+              ).request({ type: "machines.list" });
+              break;
+            case "controller.login": {
+              const login = await beginControllerLogin(
+                home,
+                "https://clear-hare-471.convex.cloud",
+                "Vectis desktop",
+                credentials(),
+              );
+              await shell.openExternal(login.url);
+              data = { state: login.state, verificationCode: login.verificationCode };
+              break;
+            }
+            case "controller.finish":
+              data = await finishControllerLogin(home, credentials());
+              break;
+            case "controller.logout":
+              data = await logoutController(home, credentials());
+              break;
             case "status":
-              data = await (await localClient(home)).status();
+              data = await (await client()).status();
               break;
             case "jobs": {
               const bindingId = Schema.decodeUnknownSync(Schema.NonEmptyString)(input);
-              data = await (await localClient(home)).jobs(bindingId);
+              data = await (await client()).jobs(bindingId);
               break;
             }
             case "github.accounts":
-              data = await (await localClient(home)).githubAccounts();
+              data = await (await client()).githubAccounts();
               break;
             case "repositories":
-              data = await (await localClient(home)).repositories();
+              data = await (await client()).repositories();
               break;
             case "doctor":
-              data = await (await localClient(home)).doctor();
+              data = await (await client()).doctor();
               break;
             case "storage":
-              data = await (await localClient(home)).storage();
+              data = await (await client()).storage();
               break;
             case "command": {
               const request = Schema.decodeUnknownSync(Request, { onExcessProperty: "error" })(
                 input,
               );
-              data = await (await localClient(home)).submit(request.command, request.key);
+              data = await (await client()).submit(request.command, request.key);
               break;
             }
             case "service.install": {
@@ -88,7 +130,7 @@ else {
               break;
             }
             case "service.stop":
-              data = await (await localClient(home)).shutdown();
+              data = await (await client()).shutdown();
               break;
             case "chooseFile": {
               const result = await dialog.showOpenDialog(window, { properties: ["openFile"] });
