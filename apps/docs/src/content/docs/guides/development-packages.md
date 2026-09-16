@@ -58,6 +58,8 @@ The result is `Vectis Dev-darwin-arm64/Vectis Dev.app`. The app finds its Node r
 
 The default desktop build is for local development verification. Add `--sign` to use an available Developer ID Application identity. Add `--keychain-profile <profile-name>` together with `--sign` to submit the signed app for notarization using an existing notarytool profile. Signing errors fail the build; signing alone does not mean Apple has notarized the app.
 
+For a team App Store Connect API key, use `--sign --notarize` with `APPLE_API_KEY` (an absolute `.p8` file path), `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER` in the process environment. A supplied Keychain profile takes precedence. Merely setting these variables does not enable notarization. Keep the key outside the source checkout and package payload; never commit it or pass its contents as a command argument.
+
 Keep the app at its installed location while its login service is registered. The portable payload and app contain their own copies of the runtime, so the payload can be removed after packaging if no service uses it.
 
 macOS file privacy permissions also apply to the signed background service. A successful CLI test from a terminal does not establish that the login service can access the same images or storage directory. Verify that access separately before relying on unattended VM startup.

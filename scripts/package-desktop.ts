@@ -1,7 +1,7 @@
 import { relocatePackageLinks, verifyPackageLinks } from "./release/package-links.js";
 import { packager } from "@electron/packager";
 import { access, mkdir, readFile, realpath } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Schema } from "effect";
 
@@ -10,6 +10,7 @@ const { values } = parseArgs({
     package: { type: "string" },
     output: { type: "string" },
     sign: { type: "boolean" },
+    notarize: { type: "boolean" },
     "keychain-profile": { type: "string" },
   },
 });
@@ -17,7 +18,25 @@ if (!values.package || !values.output)
   throw new Error(
     "Usage: pnpm package:desktop --package <portable-package> --output <new-directory>",
   );
-if (values["keychain-profile"] && !values.sign) throw new Error("Notarization requires --sign.");
+const notarize = values.notarize || Boolean(values["keychain-profile"]);
+if (notarize && !values.sign) throw new Error("Notarization requires --sign.");
+const notarization = (() => {
+  if (!notarize) return undefined;
+  if (values["keychain-profile"]) return { keychainProfile: values["keychain-profile"] };
+  const { APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER } = process.env;
+  if (!APPLE_API_KEY || !APPLE_API_KEY_ID || !APPLE_API_ISSUER)
+    throw new Error(
+      "Set APPLE_API_KEY, APPLE_API_KEY_ID and APPLE_API_ISSUER for a team API key, or provide --keychain-profile.",
+    );
+  if (!isAbsolute(APPLE_API_KEY))
+    throw new Error("APPLE_API_KEY must be an absolute .p8 file path.");
+  return {
+    appleApiKey: APPLE_API_KEY,
+    appleApiKeyId: APPLE_API_KEY_ID,
+    appleApiIssuer: APPLE_API_ISSUER,
+  };
+})();
+if (notarization && "appleApiKey" in notarization) await access(notarization.appleApiKey);
 const source = await realpath(values.package);
 const output = resolve(values.output);
 const manifest = Schema.decodeUnknownSync(
@@ -77,15 +96,13 @@ const paths = await packager({
         },
       }
     : {}),
-  ...(values["keychain-profile"]
-    ? { osxNotarize: { keychainProfile: values["keychain-profile"] } }
-    : {}),
+  ...(notarization ? { osxNotarize: notarization } : {}),
 });
 for (const path of paths) await verifyPackageLinks(path);
 console.log(
   JSON.stringify({
     paths,
     signing: values.sign ? "developer-id" : "development-only",
-    notarized: Boolean(values["keychain-profile"]),
+    notarized: Boolean(notarization),
   }),
 );
