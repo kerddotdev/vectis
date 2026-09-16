@@ -212,14 +212,20 @@ export class Service {
                 result: { bindingId },
               });
             })
-            .catch(() => {
+            .catch((error: unknown) => {
               this.store.update(operation, {
                 status: "action_required",
-                message: "Repository connection could not be confirmed.",
+                message:
+                  error instanceof VectisError
+                    ? error.message
+                    : "Repository connection could not be confirmed.",
                 result: {
-                  code: "repository_connection_unconfirmed",
+                  code:
+                    error instanceof VectisError ? error.code : "repository_connection_unconfirmed",
                   nextStep:
-                    "List repository connections before retrying; then check the account, environment and GitHub App access.",
+                    error instanceof VectisError
+                      ? error.nextStep
+                      : "List repository connections before retrying; then check the account, environment and GitHub App access.",
                 },
               });
             })

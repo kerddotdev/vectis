@@ -1,3 +1,4 @@
+import { ConvexError } from "convex/values";
 import { environmentRevision } from "./environment-revision.js";
 import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
 import type { RepositoryConnection } from "../../protocol/src/repositories.js";
@@ -16,7 +17,22 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
   return new Promise((resolve, reject) => {
     const abort = () => reject(signal.reason);
     signal.addEventListener("abort", abort, { once: true });
-    promise.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    promise
+      .then(resolve, (error: unknown) => {
+        if (
+          error instanceof ConvexError &&
+          Schema.is(
+            Schema.Struct({
+              code: Schema.Literal("public_runner_approval_required"),
+              message: Schema.String,
+              nextStep: Schema.String,
+            }),
+          )(error.data)
+        )
+          reject(new VectisError(error.data.code, error.data.message, error.data.nextStep));
+        else reject(error);
+      })
+      .finally(() => signal.removeEventListener("abort", abort));
     if (signal.aborted) abort();
   });
 }

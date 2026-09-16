@@ -54,6 +54,8 @@ async function fixture() {
     });
     return { machineId, accountId, foreignId };
   });
+  let repositoryPrivate = true;
+  let approvalPolicy = "first_time_contributors";
   let beforeRepository: (() => Promise<void>) | undefined;
   const fetch = vi.fn(async (url: string) => {
     if (url.endsWith("/installation"))
@@ -64,8 +66,10 @@ async function fixture() {
         suspended_at: null,
       });
     if (url.endsWith("/access_tokens")) return Response.json({ token: "test-token" });
+    if (url.endsWith("/fork-pr-contributor-approval"))
+      return Response.json({ approval_policy: approvalPolicy });
     await beforeRepository?.();
-    return Response.json({ id: 2, private: true, owner: { id: 7 } });
+    return Response.json({ id: 2, private: repositoryPrivate, owner: { id: 7 } });
   });
   vi.stubGlobal("fetch", fetch);
   return {
@@ -74,6 +78,10 @@ async function fixture() {
     accountId,
     foreignId,
     fetch,
+    setPublicPolicy: (policy: string) => {
+      repositoryPrivate = false;
+      approvalPolicy = policy;
+    },
     setBeforeRepository: (callback: () => Promise<void>) => {
       beforeRepository = callback;
     },
@@ -116,4 +124,18 @@ test("credential revocation during GitHub verification prevents repository bindi
     }),
   ).rejects.toThrow();
   expect(await t.run(async (ctx) => ctx.db.query("repositoryBindings").collect())).toHaveLength(0);
+});
+
+test("public connections return an actionable approval error and persist only after policy verification", async () => {
+  const { device, accountId, setPublicPolicy, t } = await fixture();
+  const input = { accountId, repositoryName: "sandbox", environmentId: "windows" };
+  setPublicPolicy("first_time_contributors");
+  await expect(device.action(api.githubRepositories.connectMachine, input)).rejects.toThrow(
+    "public_runner_approval_required",
+  );
+  expect(await t.run((ctx) => ctx.db.query("repositoryBindings").collect())).toEqual([]);
+  setPublicPolicy("all_external_contributors");
+  await expect(device.action(api.githubRepositories.connectMachine, input)).resolves.toEqual(
+    expect.any(String),
+  );
 });

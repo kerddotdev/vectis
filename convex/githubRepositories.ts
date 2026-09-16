@@ -1,4 +1,5 @@
 "use node";
+import { repositoryAccess } from "./githubAccess.js";
 import { v } from "convex/values";
 import { action } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
@@ -20,13 +21,14 @@ export const enable = action({
       accountId: args.accountId,
       machineId: args.machineId,
     });
-    const { installationId, repositoryId } = await new GitHubAppClient(
-      verified.app,
-    ).repositoryToken({
-      owner: verified.login,
-      repo: args.repositoryName,
-      githubUserId: verified.githubId,
-    });
+    const { installationId, repositoryId } = await repositoryAccess(
+      new GitHubAppClient(verified.app),
+      {
+        owner: verified.login,
+        repo: args.repositoryName,
+        githubUserId: verified.githubId,
+      },
+    );
     return ctx.runMutation(internal.repositoryBindings.save, {
       ...args,
       owner,
@@ -43,13 +45,14 @@ export const connectMachine = action({
       accountId: args.accountId,
       environmentId: args.environmentId,
     });
-    const { installationId, repositoryId } = await new GitHubAppClient(
-      verified.app,
-    ).repositoryToken({
-      owner: verified.login,
-      repo: args.repositoryName,
-      githubUserId: verified.githubId,
-    });
+    const { installationId, repositoryId } = await repositoryAccess(
+      new GitHubAppClient(verified.app),
+      {
+        owner: verified.login,
+        repo: args.repositoryName,
+        githubUserId: verified.githubId,
+      },
+    );
     return ctx.runMutation(internal.repositoryBindings.saveForMachine, {
       ...args,
       accountId: verified.accountId,

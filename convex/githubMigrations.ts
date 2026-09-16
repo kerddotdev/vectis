@@ -1,4 +1,5 @@
 "use node";
+import { repositoryAccess } from "./githubAccess.js";
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
 import { action } from "./_generated/server.js";
@@ -23,7 +24,7 @@ export const analyze = action({
     if (!authority.environment) throw new ConvexError({ code: "environment_unavailable" });
     const environment = authority.environment;
     const client = new GitHubAppClient(authority.app);
-    const access = await client.repositoryToken({
+    const access = await repositoryAccess(client, {
       owner: authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
@@ -87,7 +88,7 @@ export const publish = action({
       bindingId: preview.bindingId,
       preparing: true,
     });
-    const access = await new GitHubAppClient(authority.app).repositoryToken({
+    const access = await repositoryAccess(new GitHubAppClient(authority.app), {
       owner: authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,

@@ -1,4 +1,5 @@
 "use node";
+import { repositoryAccess } from "./githubAccess.js";
 import { runnerLabels } from "../packages/github/src/runner-labels.js";
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
@@ -21,7 +22,7 @@ export const prepare = action({
       preparing: true,
     });
     const client = new GitHubAppClient(authority.app);
-    const access = await client.repositoryToken({
+    const access = await repositoryAccess(client, {
       owner: authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
@@ -105,11 +106,12 @@ export const release = action({
       preparing: false,
     });
     const client = new GitHubAppClient(authority.app);
-    const access = await client.repositoryToken({
+    const access = await repositoryAccess(client, {
       owner: authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
       githubUserId: authority.account.githubId,
+      purpose: "cleanup",
     });
     const expectedName = `vectis-${lease._id}`;
     let runnerId = lease.runnerId;
