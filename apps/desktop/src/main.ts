@@ -17,7 +17,7 @@ import {
 } from "../../../packages/client/src/controller-login.js";
 import { RemoteClient } from "../../../packages/client/src/remote.js";
 import { desktopTarget } from "./target.js";
-import { trafficLightPosition, type WindowEvent } from "./chrome.js";
+import { trafficLightPosition, type Route, type WindowEvent } from "./chrome.js";
 import type { DesktopReply } from "./bridge.js";
 if (app.isPackaged) {
   const runtime = join(process.resourcesPath, "runtime");
@@ -33,6 +33,13 @@ if (app.isPackaged) {
     if (existsSync(binary)) process.env[variable] ??= binary;
   }
 }
+app.setName(app.isPackaged ? "Vectis" : "Vectis Dev");
+app.setAboutPanelOptions({
+  applicationName: "Vectis",
+  applicationVersion: app.isPackaged ? app.getVersion() : "Development",
+  copyright: "kerd.dev",
+  website: "https://vectis.kerd.dev",
+});
 const home = process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
 const page = fileURLToPath(
   new URL("../../../../apps/desktop/renderer/index.html", import.meta.url),
@@ -237,10 +244,40 @@ else {
     function send(event: WindowEvent) {
       window?.webContents.send("vectis:window", event);
     }
+    const destinations: ReadonlyArray<{ label: string; route: Route }> = [
+      { label: "Overview", route: "/" },
+      { label: "Environments", route: "/environments" },
+      { label: "Repositories", route: "/repositories" },
+      { label: "Connections", route: "/connections" },
+      { label: "Storage", route: "/storage" },
+      { label: "Diagnostics", route: "/diagnostics" },
+    ];
     Menu.setApplicationMenu(
       Menu.buildFromTemplate([
-        { role: "appMenu" },
-        { role: "editMenu" },
+        {
+          label: "Vectis",
+          submenu: [
+            { label: "About Vectis", role: "about" },
+            { type: "separator" },
+            { label: "Hide Vectis", role: "hide" },
+            { label: "Hide Others", role: "hideOthers" },
+            { label: "Show All", role: "unhide" },
+            { type: "separator" },
+            { label: "Quit Vectis", role: "quit" },
+          ],
+        },
+        {
+          label: "Edit",
+          submenu: [
+            { label: "Undo", role: "undo" },
+            { label: "Redo", role: "redo" },
+            { type: "separator" },
+            { label: "Cut", role: "cut" },
+            { label: "Copy", role: "copy" },
+            { label: "Paste", role: "paste" },
+            { label: "Select All", role: "selectAll" },
+          ],
+        },
         {
           label: "View",
           submenu: [
@@ -250,23 +287,43 @@ else {
               click: () => send("toggle-sidebar"),
             },
             { type: "separator" },
-            { role: "togglefullscreen" },
+            { label: "Toggle Full Screen", role: "togglefullscreen" },
             ...(app.isPackaged
               ? []
               : [
                   { type: "separator" as const },
-                  { role: "reload" as const },
-                  { role: "toggleDevTools" as const },
+                  { label: "Reload", role: "reload" as const },
+                  { label: "Toggle Developer Tools", role: "toggleDevTools" as const },
                 ]),
           ],
         },
-        { role: "windowMenu" },
         {
-          role: "help",
+          label: "Go",
+          submenu: destinations.map(({ label, route }, index) => ({
+            label,
+            accelerator: `CmdOrCtrl+${index + 1}`,
+            click: () => send(`navigate:${route}`),
+          })),
+        },
+        {
+          label: "Window",
+          submenu: [
+            { label: "Minimize", role: "minimize" },
+            { label: "Zoom", role: "zoom" },
+            { type: "separator" },
+            { label: "Bring All to Front", role: "front" },
+          ],
+        },
+        {
+          label: "Help",
           submenu: [
             {
               label: "Vectis Documentation",
               click: () => void shell.openExternal("https://vectis.kerd.dev/docs"),
+            },
+            {
+              label: "Report an Issue",
+              click: () => void shell.openExternal("https://github.com/kerddotdev/vectis/issues"),
             },
           ],
         },
@@ -274,8 +331,8 @@ else {
     );
     function open() {
       window = new BrowserWindow({
-        width: 1120,
-        height: 780,
+        width: 1280,
+        height: 820,
         minWidth: 800,
         minHeight: 580,
         show: false,
@@ -290,6 +347,7 @@ else {
           sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,
+          devTools: !app.isPackaged,
         },
       });
       window.once("ready-to-show", () => window?.show());
