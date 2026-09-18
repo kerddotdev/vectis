@@ -1,0 +1,18 @@
+{
+  "name": "@vectis/docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node ../../dist/scripts/generate-docs.js && astro dev",
+    "build": "node ../../dist/scripts/generate-docs.js && astro build && node ../../dist/scripts/stage-site.js",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "7.3.1",
+    "@astrojs/starlight": "0.42.1",
+    "astro": "7.3.2"
+  },
+  "devDependencies": {
+    "wrangler": "4.131.2"
+  }
+}

@@ -9,3 +9,10 @@ dist/
 *.tsbuildinfo
 coverage/
 .build/
+apps/docs/public/markdown/
+apps/docs/public/llms.txt
+apps/docs/src/content/docs/reference/cli.md
+.wrangler/
+.dev.vars
+.dev.vars.*
+apps/docs/site/

@@ -1,0 +1,14 @@
+:root {
+  --sl-color-black: #16191e;
+  --sl-color-white: #f1f3f6;
+  --sl-color-accent-low: #172d43;
+  --sl-color-accent: #438bd1;
+  --sl-color-accent-high: #b9d9f5;
+}
+:root[data-theme="light"] {
+  --sl-color-black: #faf9f6;
+  --sl-color-white: #20252d;
+  --sl-color-accent-low: #dcebf7;
+  --sl-color-accent: #21629e;
+  --sl-color-accent-high: #153d62;
+}

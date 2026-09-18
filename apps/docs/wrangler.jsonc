@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "vectis-docs",
+  "compatibility_date": "2026-09-15",
+  "env": {
+    "development": {
+      "name": "vectis-docs-dev",
+      "workers_dev": false,
+      "routes": [{ "pattern": "vectis.kerd.dev", "custom_domain": true }],
+      "assets": {
+        "directory": "./site",
+        "not_found_handling": "404-page",
+      },
+    },
+  },
+}
