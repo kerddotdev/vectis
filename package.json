@@ -1,6 +1,20 @@
 {
   "name": "vectis-workspace",
   "private": true,
+  "license": "MIT",
+  "files": [
+    "dist/apps/cli/src",
+    "dist/apps/server/src",
+    "dist/apps/mcp/src",
+    "dist/apps/desktop/src",
+    "dist/packages",
+    "dist/convex/_generated/api.js",
+    "apps/desktop/renderer",
+    "apps/desktop/preload.cjs",
+    "skills/vectis",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -18,7 +32,10 @@
     "docs:deploy:dev": "pnpm docs:build && pnpm --filter @vectis/docs exec wrangler deploy --env development",
     "web:dev": "pnpm --filter @vectis/web dev",
     "desktop:build": "pnpm build && pnpm --filter @vectis/desktop build",
-    "desktop:start": "pnpm --filter @vectis/desktop start"
+    "desktop:start": "pnpm --filter @vectis/desktop start",
+    "package:cli": "pnpm build && node dist/scripts/package-cli.js",
+    "package:verify": "pnpm build && node dist/scripts/verify-package.js",
+    "package:desktop": "pnpm build && node dist/scripts/package-desktop.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
@@ -28,6 +45,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "5.20260915.1",
+    "@electron/packager": "20.3.0",
     "@types/node": "24.13.4",
     "convex-test": "0.0.58",
     "oxfmt": "0.68.0",

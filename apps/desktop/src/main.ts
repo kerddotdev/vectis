@@ -17,6 +17,12 @@ import {
 import { RemoteClient } from "../../../packages/client/src/remote.js";
 import { desktopTarget } from "./target.js";
 import type { DesktopReply } from "./bridge.js";
+if (app.isPackaged) {
+  const runtime = join(process.resourcesPath, "runtime");
+  process.env.VECTIS_NODE_EXECUTABLE ??= join(runtime, "bin", "node");
+  process.env.VECTIS_APPLE_HELPER ??= join(runtime, "vectis-vm");
+  process.env.VECTIS_KEYCHAIN_HELPER ??= join(runtime, "vectis-keychain");
+}
 const home = process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
 const page = fileURLToPath(
   new URL("../../../../apps/desktop/renderer/index.html", import.meta.url),
