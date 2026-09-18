@@ -52,9 +52,20 @@ test("bindings deduplicate and disappear from machine admission when disabled", 
     credentialVersion: 0,
   });
   expect(await machine.query(api.repositoryBindings.forMachine, {})).toEqual([
-    { id, repositoryId: 42, repositoryName: "owner/sandbox", environmentId: "linux" },
+    {
+      id,
+      repositoryId: 42,
+      repositoryName: "owner/sandbox",
+      environmentId: "linux",
+      automatic: false,
+    },
   ]);
+  await machine.mutation(api.repositoryBindings.setAutomatic, { bindingId: id, enabled: true });
+  expect((await machine.query(api.repositoryBindings.forMachine, {}))[0]?.automatic).toBe(true);
   await owner.mutation(api.repositoryBindings.disable, { id });
+  await expect(
+    machine.mutation(api.repositoryBindings.setAutomatic, { bindingId: id, enabled: true }),
+  ).rejects.toThrow();
   expect(await machine.query(api.repositoryBindings.forMachine, {})).toEqual([]);
   await owner.mutation(api.machines.revoke, { id: machineId });
   await expect(t.mutation(internal.repositoryBindings.save, args)).rejects.toThrow();
@@ -94,4 +105,7 @@ test("foreign account and machine ownership are rechecked at persistence", async
     credentialVersion: 0,
   });
   expect(await device.query(api.repositoryBindings.forMachine, {})).toEqual([]);
+  await expect(
+    device.mutation(api.repositoryBindings.setAutomatic, { bindingId: id, enabled: true }),
+  ).rejects.toThrow();
 });

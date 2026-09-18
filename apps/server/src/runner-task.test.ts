@@ -116,3 +116,39 @@ test("cancellation during VM startup still waits for owned cleanup and never reg
   expect(controls.stop).toHaveBeenCalledOnce();
   expect(broker.prepareRunner).not.toHaveBeenCalled();
 });
+
+test("completed demand does not boot a VM or register another runner", async () => {
+  const { controls, broker } = fixture();
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      needed: async () => false,
+    },
+    AbortSignal.timeout(1000),
+  );
+  expect(result.status).toBe("cancelled");
+  expect(controls.start).not.toHaveBeenCalled();
+  expect(controls.stop).not.toHaveBeenCalled();
+  expect(broker.prepareRunner).not.toHaveBeenCalled();
+});
+test("demand that disappears during preparation cleans its VM without registration", async () => {
+  const { controls, broker } = fixture();
+  const needed = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      needed,
+    },
+    AbortSignal.timeout(1000),
+  );
+  expect(result.status).toBe("cancelled");
+  expect(controls.start).toHaveBeenCalledOnce();
+  expect(controls.stop).toHaveBeenCalledOnce();
+  expect(broker.prepareRunner).not.toHaveBeenCalled();
+});

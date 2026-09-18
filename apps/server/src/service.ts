@@ -1,3 +1,4 @@
+import { matchesRunnerLabels } from "../../../packages/github/src/runner-labels.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { JobRefresh } from "../../../packages/protocol/src/jobs.js";
 import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
@@ -25,6 +26,7 @@ export class Service {
     readonly runtime: VmRuntime,
     readonly runnerConnection: () => RunnerBroker & {
       repositories(): Promise<MachineRepositories>;
+      setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
       refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
     } = () => {
       throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
@@ -57,6 +59,11 @@ export class Service {
       let result: unknown;
       const snapshot = this.store.snapshot();
       switch (command.type) {
+        case "repository.automatic": {
+          await this.runnerConnection().setAutomatic(command.bindingId, command.enabled);
+          result = { bindingId: command.bindingId, automatic: command.enabled };
+          break;
+        }
         case "job.refresh": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           const broker = this.runnerConnection();
@@ -105,12 +112,38 @@ export class Service {
             throw new VectisError("setup_required", "Prepare this repository's environment first.");
           const abort = new AbortController();
           let startId: string | undefined;
+          const demandJobId = command.jobId;
           const done = runRunnerTask(
             command.bindingId,
             operation.id,
             environment,
             {
               broker,
+              ...(demandJobId === undefined
+                ? {}
+                : {
+                    needed: async () => {
+                      if (
+                        command.automatic &&
+                        !(await broker.repositories()).some(
+                          (item) => item.id === command.bindingId && item.automatic,
+                        )
+                      )
+                        return false;
+                      const job = await broker.refreshJob(
+                        command.bindingId,
+                        demandJobId,
+                        abort.signal,
+                      );
+                      if (job.status !== "queued") return false;
+                      if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
+                        throw new VectisError(
+                          "runner_labels_mismatch",
+                          "The GitHub job requires different runner capabilities.",
+                        );
+                      return true;
+                    },
+                  }),
               start: async () => {
                 const started = this.submit(`${operation.id}:start`, {
                   type: "environment.start",

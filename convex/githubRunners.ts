@@ -1,4 +1,5 @@
 "use node";
+import { runnerLabels } from "../packages/github/src/runner-labels.js";
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
 import type { RunnerGrant } from "../packages/protocol/src/runners.js";
@@ -59,12 +60,7 @@ export const prepare = action({
         await client.request(access.token, `${access.path}/actions/runners/generate-jitconfig`, {
           name: `vectis-${lease._id}`,
           runner_group_id: 1,
-          labels: [
-            "self-hosted",
-            { linux: "Linux", macos: "macOS", windows: "Windows" }[lease.os],
-            "ARM64",
-            `vectis-${lease.environmentId}`,
-          ],
+          labels: runnerLabels(lease.os, lease.environmentId),
           work_folder: "_work",
         }),
       );

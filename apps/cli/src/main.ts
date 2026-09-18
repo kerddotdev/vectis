@@ -35,6 +35,7 @@ async function main() {
       "non-interactive": { type: "boolean" },
       timeout: { type: "string" },
       cpu: { type: "string" },
+      "job-id": { type: "string" },
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
     },
@@ -61,6 +62,8 @@ Usage: vectis <command> [options]
   service stop                  Stop through an authenticated service request
   job refresh <binding-id> <job-id>  Recover a job state directly from GitHub
   job list <binding-id>         Read recent GitHub job status for a connected repository
+  repository enable-auto <id>   Enable automatic runners for matching queued jobs
+  repository disable-auto <id>  Disable future automatic runner admission
   repository list               List this machine's connected repositories (requires cloud pairing)
   storage                       Inspect image and VM disk usage
   status                        Inspect the machine and recent operations
@@ -83,6 +86,7 @@ Usage: vectis <command> [options]
 Options:
   --home <directory>             Isolated Vectis state directory
   --json                        Machine-readable JSON output
+  --job-id <number>             Require a matching queued GitHub job before runner admission
   --key <id>                    Idempotency key for a mutation
   --wait                        Wait for command completion
   --timeout <milliseconds>      Wait timeout (default 120000)
@@ -286,12 +290,26 @@ GitHub pairing require separately configured development services.
   let request: Command;
   if (command === "pause" || command === "resume")
     request = { type: "machine.pause", paused: command === "pause" };
+  else if (
+    command === "repository" &&
+    (subcommand === "enable-auto" || subcommand === "disable-auto") &&
+    id
+  )
+    request = decodeCommand({
+      type: "repository.automatic",
+      bindingId: id,
+      enabled: subcommand === "enable-auto",
+    });
   else if (command === "job" && subcommand === "refresh" && id && positionals[3])
     request = decodeCommand({ type: "job.refresh", bindingId: id, jobId: Number(positionals[3]) });
   else if (command === "runner" && subcommand === "reconcile" && id)
     request = decodeCommand({ type: "runner.reconcile", id });
   else if (command === "runner" && subcommand === "run" && id)
-    request = decodeCommand({ type: "runner.run", bindingId: id });
+    request = decodeCommand({
+      type: "runner.run",
+      bindingId: id,
+      ...(values["job-id"] === undefined ? {} : { jobId: Number(values["job-id"]) }),
+    });
   else if (command === "operation" && subcommand === "cancel" && id)
     request = decodeCommand({ type: "operation.cancel", id });
   else if (command === "environment" && subcommand === "register" && values.file)

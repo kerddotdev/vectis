@@ -313,6 +313,24 @@ function Connections() {
                 {starting === repository.id ? "Requesting runner" : "Start runner"}
               </button>
             </div>
+            <p>Automatic runners: {repository.automatic ? "enabled" : "disabled"}</p>
+            <button
+              className="secondary"
+              onClick={() =>
+                void submit({
+                  type: "repository.automatic",
+                  bindingId: repository.id,
+                  enabled: !repository.automatic,
+                }).then((value) => {
+                  if (value !== undefined)
+                    setMessage(
+                      "Automatic mode change requested. Follow the operation in Overview, then refresh repositories.",
+                    );
+                })
+              }
+            >
+              {repository.automatic ? "Disable automatic runners" : "Enable automatic runners"}
+            </button>
             <RepositoryJobs bindingId={repository.id} />
           </div>
         ))}

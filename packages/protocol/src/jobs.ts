@@ -17,6 +17,7 @@ export type Jobs = typeof Jobs.Type;
 
 export const JobRefresh = Schema.Struct({
   jobId: Schema.Int,
+  labels: Schema.Array(Schema.String),
   status: Schema.Literals(["queued", "in_progress", "completed"]),
   conclusion: Schema.NullOr(Schema.String),
 });

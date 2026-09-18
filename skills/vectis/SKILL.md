@@ -27,6 +27,14 @@ Pausing stops new admission and leaves existing work running. Stopping an instan
 
 After machine pairing and browser GitHub linking, use `vectis repository list --json` or MCP `vectis_repositories`. The response identifies repositories currently connected to this machine and their environment IDs. Cloud or account authorization failures are errors; do not interpret them as an empty repository list. A binding does not prove that an image is ready to run a job.
 
+## Run and observe jobs
+
+`runner run <binding-id> --key <stable-key> --json` starts one disposable runner. Add `--job-id <job-id>` when admission should require that specific job to remain queued with matching labels; GitHub still decides which compatible job reaches the runner. Runner lifecycle success confirms cleanup, not the GitHub job's conclusion. Read `job list <binding-id> --json` or MCP `vectis_jobs` for observed GitHub results. Recover a known missing or stale job with `job refresh <binding-id> <job-id> --wait --json`.
+
+`repository enable-auto <binding-id> --wait --json` authorizes future matching queued work on the machine. `repository disable-auto` disables that admission; it does not stop running work. The current scheduler admits one automatic runner per idle machine and does not blindly retry failed or interrupted attempts. Only enable it within the user's authorized repository and workload scope.
+
+Use `operation cancel <operation-id>` to request runner cleanup or cancel waiting for a job refresh. Inspect the original operation afterward. For an interrupted runner, verify its VM has stopped before `runner reconcile <operation-id>`; never hide uncertain cleanup by submitting fresh runner requests.
+
 ## Configure resources and storage
 
 Use `environment configure <id> --cpu <count> --memory-mib <MiB> --storage-path <absolute-directory> --wait --json`. Omit fields that should remain unchanged. Changes apply to future instances; running instances retain their original resource reservations and directory. The VM storage directory is independent of the service's `--home` state directory. Select an existing writable directory. Vectis does not recreate a missing selected directory, so reconnect an unavailable external drive before retrying.

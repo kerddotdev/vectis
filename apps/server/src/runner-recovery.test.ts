@@ -7,8 +7,10 @@ import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
 async function fixture() {
   const store = new Store(":memory:");
   const broker = {
+    setAutomatic: vi.fn(async () => {}),
     refreshJob: vi.fn(async () => ({
       jobId: 1,
+      labels: [],
       status: "completed" as const,
       conclusion: "success",
     })),

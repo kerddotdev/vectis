@@ -24,8 +24,10 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     const basePath = join(home, "base.img");
     await writeFile(basePath, "isolated test image");
     const broker = {
+      setAutomatic: vi.fn(async () => {}),
       refreshJob: vi.fn(async () => ({
         jobId: 1,
+        labels: [],
         status: "completed" as const,
         conclusion: "success",
       })),

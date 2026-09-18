@@ -72,6 +72,14 @@ export function startCloudRelay(
     if (Date.now() - lastHeartbeat >= 30000) {
       await interruptible(
         cloud.mutation(api.machines.heartbeat, {
+          paused: snapshot.machine.paused,
+          runnerIdle:
+            snapshot.instances.every((instance) => instance.status === "stopped") &&
+            !snapshot.operations.some(
+              (operation) =>
+                operation.command === "runner.run" &&
+                ["accepted", "running", "action_required"].includes(operation.status),
+            ),
           environments: snapshot.environments
             .slice(0, 100)
             .map(({ id, name, os, cpu, memoryMiB, state }) => ({
@@ -139,6 +147,13 @@ export function startCloudRelay(
       );
   }
   return {
+    async setAutomatic(bindingId: string, enabled: boolean) {
+      requireConnection();
+      await interruptible(
+        cloud.mutation(api.repositoryBindings.setAutomatic, { bindingId, enabled }),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
     async refreshJob(bindingId: string, jobId: number, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();

@@ -13,6 +13,7 @@ import {
 
 interface Controls {
   broker: RunnerBroker;
+  needed?: () => Promise<boolean>;
   start(): Promise<Instance>;
   stop(): Promise<void>;
   progress(value: RunnerProgress): void;
@@ -41,6 +42,12 @@ export async function runRunnerTask(
   update({});
   try {
     signal.throwIfAborted();
+    if (controls.needed && !(await controls.needed()))
+      throw new VectisError(
+        "job_not_queued",
+        "The GitHub job no longer needs queued runner capacity.",
+      );
+    signal.throwIfAborted();
     started = true;
     const instance = await controls.start();
     update({ instanceId: instance.id, stage: "preparing_guest" });
@@ -56,6 +63,11 @@ export async function runRunnerTask(
         "runner_install_failed",
         "The verified runner installation failed.",
         "Inspect the base image prerequisites before starting a fresh runner.",
+      );
+    if (controls.needed && !(await controls.needed()))
+      throw new VectisError(
+        "job_not_queued",
+        "The GitHub job no longer needs queued runner capacity.",
       );
     update({ stage: "registering" });
     registrationUncertain = true;
@@ -125,6 +137,8 @@ export async function runRunnerTask(
       code: "runner_registration_uncertain",
     };
   update({ stage: "finished" });
+  if (failure instanceof VectisError && failure.code === "job_not_queued")
+    return { status: "cancelled" as const, progress, message: failure.message };
   if (signal.aborted)
     return { status: "cancelled" as const, progress, message: "Runner cancelled and cleaned up." };
   if (failure)

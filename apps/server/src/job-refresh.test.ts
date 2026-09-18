@@ -14,6 +14,7 @@ test("job refresh does not block machine control and retries reuse its durable o
   );
   const service = new Service(store, new VmRuntime({ home: "/unused-isolated-home" }), () => ({
     refreshJob,
+    setAutomatic: async () => {},
     repositories: async () => [],
     findRunner: async () => null,
     prepareRunner: async () => ({ state: "released", id: "unused" }),
@@ -38,5 +39,62 @@ test("job refresh does not block machine control and retries reuse its durable o
   } finally {
     await service.close();
     store.close();
+  }
+});
+
+test("disabling automatic admission cancels a queued demand before guest startup or API access", async () => {
+  const store = new Store(":memory:");
+  const refreshJob = vi.fn(async () => ({
+    jobId: 4,
+    status: "queued" as const,
+    conclusion: null,
+    labels: ["vectis-mac"],
+  }));
+  const runtime = new VmRuntime({ home: "/unused-isolated-home" });
+  const start = vi.spyOn(runtime, "start");
+  const service = new Service(store, runtime, () => ({
+    refreshJob,
+    setAutomatic: async () => {},
+    repositories: async () => [
+      {
+        id: "binding",
+        repositoryId: 1,
+        repositoryName: "test/repo",
+        environmentId: "mac",
+        automatic: false,
+      },
+    ],
+    findRunner: async () => null,
+    prepareRunner: async () => ({ state: "released", id: "unused" }),
+    releaseRunner: async () => {},
+  }));
+  store.put("environment", "mac", {
+    id: "mac",
+    name: "Mac",
+    os: "macos",
+    state: "ready",
+    cpu: 2,
+    memoryMiB: 4096,
+    basePath: "/unused/base",
+  });
+  try {
+    const operation = service.submit("automatic", {
+      type: "runner.run",
+      bindingId: "binding",
+      jobId: 4,
+      automatic: true,
+    });
+    await service.drain();
+    await vi.waitFor(() =>
+      expect(store.snapshot().operations.find((item) => item.id === operation.id)?.status).toBe(
+        "cancelled",
+      ),
+    );
+    expect(refreshJob).not.toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    store.close();
+    start.mockRestore();
   }
 });

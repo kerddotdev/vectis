@@ -78,12 +78,22 @@ export const Snapshot = Schema.Struct({
 export type Snapshot = typeof Snapshot.Type;
 export const Command = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("repository.automatic"),
+    bindingId: Identifier,
+    enabled: Schema.Boolean,
+  }),
+  Schema.Struct({
     type: Schema.Literal("job.refresh"),
     bindingId: Identifier,
     jobId: Schema.Int.check(Schema.isGreaterThan(0)),
   }),
   Schema.Struct({ type: Schema.Literal("runner.reconcile"), id: Identifier }),
-  Schema.Struct({ type: Schema.Literal("runner.run"), bindingId: Identifier }),
+  Schema.Struct({
+    type: Schema.Literal("runner.run"),
+    bindingId: Identifier,
+    automatic: Schema.optional(Schema.Literal(true)),
+    jobId: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+  }),
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
@@ -126,6 +136,10 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "repository.automatic",
+    description: "Enable or disable future automatic runner admission for a repository binding.",
+  },
   {
     name: "job.refresh",
     description: "Refresh a known GitHub job through an authorized repository API request.",

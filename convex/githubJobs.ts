@@ -11,7 +11,7 @@ export const refresh = action({
   handler: async (
     ctx,
     args,
-  ): Promise<{ jobId: number; status: string; conclusion: string | null }> => {
+  ): Promise<{ jobId: number; status: string; conclusion: string | null; labels: string[] }> => {
     if (!Number.isSafeInteger(args.jobId) || args.jobId <= 0)
       throw new ConvexError({ code: "invalid_job_id" });
     const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
@@ -39,6 +39,11 @@ export const refresh = action({
       repositoryId: access.repositoryId,
       job: { ...job, labels: [...job.labels] },
     });
-    return { jobId: job.id, status: job.status, conclusion: job.conclusion };
+    return {
+      jobId: job.id,
+      status: job.status,
+      conclusion: job.conclusion,
+      labels: [...job.labels],
+    };
   },
 });

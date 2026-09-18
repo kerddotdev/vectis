@@ -53,6 +53,7 @@ export default defineSchema({
     installationId: v.number(),
     environmentId: v.string(),
     enabled: v.boolean(),
+    automatic: v.optional(v.boolean()),
     verifiedAt: v.number(),
   })
     .index("by_owner", ["owner"])
@@ -88,9 +89,21 @@ export default defineSchema({
     createdAt: v.number(),
     lastSeenAt: v.optional(v.number()),
     environments: v.optional(v.array(environmentSummary)),
+    paused: v.optional(v.boolean()),
+    runnerIdle: v.optional(v.boolean()),
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),
+  runnerDemands: defineTable({
+    installationId: v.number(),
+    repositoryId: v.number(),
+    jobId: v.number(),
+    owner: v.string(),
+    bindingId: v.id("repositoryBindings"),
+    operationId: v.id("operations"),
+    attempt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_job", ["installationId", "repositoryId", "jobId"]),
   githubJobs: defineTable({
     installationId: v.number(),
     repositoryId: v.number(),
@@ -105,7 +118,8 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_job", ["installationId", "repositoryId", "jobId"])
-    .index("by_repository", ["installationId", "repositoryId", "updatedAt"]),
+    .index("by_repository", ["installationId", "repositoryId", "updatedAt"])
+    .index("by_repository_status", ["installationId", "repositoryId", "status", "updatedAt"]),
   githubDeliveries: defineTable({
     deliveryId: v.string(),
     event: v.string(),
