@@ -1,33 +1,28 @@
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, type ReactNode } from "react";
 import { ClerkProvider, SignIn, UserButton, useAuth } from "@clerk/react";
-import { ConvexReactClient, useConvexAuth, useMutation } from "convex/react";
+import { ConvexReactClient, useConvexAuth } from "convex/react";
 import { ConvexProviderWithClerk } from "convex/react-clerk";
 import { ConvexError } from "convex/values";
-import { Schema } from "effect";
-import { api } from "../../../../convex/_generated/api.js";
-import { PairingDescriptor } from "../../../../packages/protocol/src/pairing.js";
-import { GitHubConnections } from "./github.js";
-import { RemoteAccess, readControllerRequest } from "./remote-access.js";
-import { Button, Card, Code, Heading, linkButton, Notice, Pending } from "./ui.js";
+import { CircleCheckIcon, LaptopIcon, MonitorSmartphoneIcon, FolderGit2Icon } from "lucide-react";
+import {
+  ControllerApproval,
+  PairingApproval,
+  readControllerRequest,
+  readPairingRequest,
+} from "./approvals.js";
+import { Dashboard } from "./dashboard.js";
+import { Pending, TipProvider } from "./ui.js";
 
 const deploymentUrl: string | undefined = import.meta.env.VITE_CONVEX_URL;
 const publishableKey: string | undefined = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
-function readPairing() {
-  try {
-    const encoded = new URLSearchParams(location.hash.slice(1)).get("request");
-    if (encoded) {
-      if (encoded.length > 2048) throw new Error("Invalid request.");
-      sessionStorage.setItem("vectis-pairing", encoded);
-      history.replaceState(null, "", "/connect");
-    }
-    const value = Schema.decodeUnknownSync(PairingDescriptor, { onExcessProperty: "error" })(
-      JSON.parse(sessionStorage.getItem("vectis-pairing") ?? "null"),
-    );
-    return value.deploymentUrl === deploymentUrl ? value : null;
-  } catch {
-    return null;
-  }
+export function errorCode(issue: unknown) {
+  return issue instanceof ConvexError &&
+    typeof issue.data === "object" &&
+    issue.data !== null &&
+    "code" in issue.data
+    ? String(issue.data.code)
+    : "";
 }
 
 function resolveColor(name: string) {
@@ -44,154 +39,181 @@ function resolveColor(name: string) {
   return `rgb(${red}, ${green}, ${blue})`;
 }
 
-export function SignInPanel({ redirect }: { redirect: string }) {
+function Shell({ children, signedIn }: { children: ReactNode; signedIn: boolean }) {
   return (
-    <div className="flex justify-center">
-      <SignIn routing="hash" fallbackRedirectUrl={redirect} signUpFallbackRedirectUrl={redirect} />
-    </div>
-  );
-}
-
-export function Account({ children }: { children: string }) {
-  return (
-    <div className="flex items-center gap-3 text-muted">
-      <UserButton />
-      <span>{children}</span>
-    </div>
-  );
-}
-
-function Pairing() {
-  const [request] = useState(readPairing);
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  const approve = useMutation(api.pairings.approve);
-  const [state, setState] = useState<"idle" | "working" | "approved">("idle");
-  const [error, setError] = useState("");
-  if (!request)
-    return (
-      <>
-        <Heading eyebrow="Connect" title="Start from your Mac.">
-          <p>
-            Run <Code>vectis cloud pair</Code> or choose Begin pairing in the Vectis app, then open
-            the link it provides to connect this account to your machine.
-          </p>
-        </Heading>
-        <div className="flex flex-wrap gap-3">
-          <a className={linkButton} href="/docs/guides/local-setup">
-            Read the setup guide
-          </a>
+    <div className="flex min-h-dvh flex-col">
+      <header className="sticky top-0 z-40 border-b border-hairline bg-background/85 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-[1180px] items-center gap-3 px-5">
           <a
-            className="inline-flex h-10 items-center rounded-full px-5 text-[15px] font-medium text-foreground ring-1 ring-hairline-strong transition hover:bg-hairline"
-            href="/connect?github=1"
+            href="/"
+            className="flex items-center gap-2 rounded-lg text-[16px] font-semibold tracking-[-0.01em] no-underline outline-none focus-visible:ring-2 focus-visible:ring-brand"
           >
-            Connect a GitHub account
+            <img src="/favicon.svg" alt="" width="20" height="20" />
+            Vectis
+          </a>
+          <span className="h-4 w-px bg-hairline-strong" aria-hidden />
+          <span className="text-[15px] text-muted">Account</span>
+          <nav className="ml-auto flex items-center gap-1" aria-label="Help">
+            <a
+              href="/docs/guides/local-setup"
+              className="rounded-full px-3 py-1.5 text-[14px] text-muted no-underline transition hover:bg-hairline hover:text-foreground"
+            >
+              Setup guide
+            </a>
+            {signedIn && (
+              <span className="ml-2 flex items-center">
+                <UserButton />
+              </span>
+            )}
+          </nav>
+        </div>
+      </header>
+      <main id="main" className="flex-1">
+        {children}
+      </main>
+      <footer className="border-t border-hairline">
+        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-x-5 gap-y-2 px-5 py-6 text-[13px] text-muted">
+          <span>Vectis by kerd.dev</span>
+          <a className="no-underline hover:text-foreground" href="/security">
+            Security
+          </a>
+          <a className="no-underline hover:text-foreground" href="/docs">
+            Documentation
           </a>
         </div>
-      </>
-    );
-  async function connect() {
-    if (!request) return;
-    setState("working");
-    setError("");
-    try {
-      if (request.expiresAt <= Date.now())
-        throw new Error("This request expired. Start a new pairing from your Mac.");
-      const { deploymentUrl: _url, ...approval } = request;
-      await approve(approval);
-      setState("approved");
-      sessionStorage.removeItem("vectis-pairing");
-    } catch (issue) {
-      const code =
-        issue instanceof ConvexError &&
-        typeof issue.data === "object" &&
-        issue.data !== null &&
-        "code" in issue.data
-          ? String(issue.data.code)
-          : "";
-      setError(
-        code === "machine_already_linked"
-          ? "This machine is already linked. Use its existing connection; pairing does not replace it."
-          : code
-            ? `Connection could not be approved (${code}). Return to your Mac and check the pairing request.`
-            : issue instanceof Error
-              ? issue.message
-              : "Connection could not be approved. Try again.",
-      );
-      setState("idle");
-    }
-  }
-  if (state === "approved")
-    return (
-      <Heading eyebrow="Approved" title="Your Mac can connect.">
-        <p>Return to Vectis and finish pairing. You can close this tab.</p>
-      </Heading>
-    );
+      </footer>
+    </div>
+  );
+}
+
+const promises = [
+  {
+    icon: LaptopIcon,
+    title: "Connect your Macs",
+    text: "Approve the Macs that run your jobs. Build files and VM disks never leave them.",
+  },
+  {
+    icon: FolderGit2Icon,
+    title: "Choose repositories",
+    text: "Link GitHub and pick which repositories use which prepared environment.",
+  },
+  {
+    icon: MonitorSmartphoneIcon,
+    title: "Control them from anywhere",
+    text: "Let the Vectis app or CLI on one Mac manage your others.",
+  },
+];
+
+function SignInScreen({ context }: { context: string | null }) {
   return (
-    <>
-      <Heading eyebrow="Connect" title="Connect your Mac.">
-        <p>
-          Give your Vectis account access to this machine. Jobs and virtual machine disks stay on
-          your Mac.
-        </p>
-      </Heading>
-      <Card label="Pairing request">
-        <dl className="grid grid-cols-[max-content_1fr] gap-x-8 gap-y-3 text-[15px]">
-          <dt className="text-muted">Machine</dt>
-          <dd className="font-medium">{request.name}</dd>
-          <dt className="text-muted">Verification code</dt>
-          <dd className="font-mono text-lg tracking-widest">
-            {request.requestDigest.slice(0, 12).toUpperCase()}
-          </dd>
-        </dl>
-        <Notice tone="attention">
-          Only continue if you started this request on your own machine and the code matches Vectis.
-          Do not approve a link someone sent you.
-        </Notice>
-        {isLoading ? (
-          <Pending>Checking your account</Pending>
-        ) : !isAuthenticated ? (
-          <SignInPanel redirect="/connect" />
-        ) : (
-          <div className="flex flex-wrap items-center justify-between gap-4">
-            <Account>Your signed-in account will own this connection.</Account>
-            <Button disabled={state === "working"} onClick={() => void connect()}>
-              {state === "working" ? "Connecting" : "Connect this Mac"}
-            </Button>
-          </div>
+    <div className="mx-auto grid max-w-[1180px] items-center gap-12 px-5 py-14 md:py-20 lg:grid-cols-[1fr_auto] lg:gap-20">
+      <div className="flex max-w-[46ch] flex-col gap-8">
+        <div className="flex flex-col gap-4">
+          <h1 className="text-title font-medium text-balance">
+            {context ?? "Your Vectis account."}
+          </h1>
+          <p className="text-lede text-muted">
+            {context
+              ? "Sign in to continue. You will see the request and its verification code before anything is approved."
+              : "Vectis runs on your Mac without an account. Sign in here when you want GitHub to start jobs on it."}
+          </p>
+        </div>
+        {!context && (
+          <ul className="flex flex-col gap-5">
+            {promises.map(({ icon: Icon, title, text }) => (
+              <li key={title} className="flex gap-4">
+                <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-surface ring-1 ring-hairline">
+                  <Icon className="size-[18px] text-brand" aria-hidden />
+                </span>
+                <span>
+                  <span className="block font-medium">{title}</span>
+                  <span className="block text-[15px] text-muted">{text}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
-      </Card>
-      {error && (
-        <Notice tone="danger" role="alert">
-          {error}
-        </Notice>
-      )}
-    </>
+      </div>
+      <div className="flex justify-center lg:justify-end">
+        <SignIn
+          routing="hash"
+          fallbackRedirectUrl={location.pathname + location.search}
+          signUpFallbackRedirectUrl={location.pathname + location.search}
+        />
+      </div>
+    </div>
+  );
+}
+
+export function Approved({
+  title,
+  children,
+  onContinue,
+}: {
+  title: string;
+  children: ReactNode;
+  onContinue: () => void;
+}) {
+  return (
+    <div className="mx-auto flex max-w-[520px] flex-col items-center gap-5 px-5 py-20 text-center">
+      <CircleCheckIcon className="size-10 text-success" aria-hidden />
+      <h1 className="text-title font-medium">{title}</h1>
+      <div className="text-lede text-muted">{children}</div>
+      <button
+        type="button"
+        onClick={onContinue}
+        className="mt-2 text-[15px] text-brand underline-offset-4 hover:underline"
+      >
+        Open your account overview
+      </button>
+    </div>
   );
 }
 
 function Route() {
-  const [query] = useState(() => new URLSearchParams(location.search));
-  const [controller] = useState(() =>
-    query.get("controller") === "1" ? readControllerRequest(deploymentUrl) : null,
+  const { isAuthenticated, isLoading } = useConvexAuth();
+  const [pairing, setPairing] = useState(() => readPairingRequest(deploymentUrl));
+  const [controller, setController] = useState(() => readControllerRequest(deploymentUrl));
+  const context = pairing
+    ? `Connect ${pairing.name} to your account.`
+    : controller
+      ? `Approve remote control for ${controller.name}.`
+      : null;
+  return (
+    <Shell signedIn={isAuthenticated}>
+      {isLoading ? (
+        <Pending>Checking your account</Pending>
+      ) : !isAuthenticated ? (
+        <SignInScreen context={context} />
+      ) : pairing ? (
+        <PairingApproval request={pairing} onDone={() => setPairing(null)} />
+      ) : controller ? (
+        <ControllerApproval request={controller} onDone={() => setController(null)} />
+      ) : (
+        <Dashboard />
+      )}
+    </Shell>
   );
-  if (query.get("controller") === "1") return <RemoteAccess request={controller} />;
-  if (query.get("github") === "1") return <GitHubConnections />;
-  return <Pairing />;
 }
 
 export default function Connect() {
   const [convex] = useState(() => (deploymentUrl ? new ConvexReactClient(deploymentUrl) : null));
   if (!convex || !publishableKey)
     return (
-      <Heading eyebrow="Connect" title="Connection setup is unavailable.">
-        <p>Public authentication configuration is missing from this build.</p>
-      </Heading>
+      <Shell signedIn={false}>
+        <div className="mx-auto max-w-[560px] px-5 py-24">
+          <h1 className="text-title font-medium">Account setup is unavailable.</h1>
+          <p className="mt-3 text-lede text-muted">
+            Public authentication configuration is missing from this build.
+          </p>
+        </div>
+      </Shell>
     );
   return (
     <StrictMode>
       <ClerkProvider
         publishableKey={publishableKey}
-        afterSignOutUrl="/"
+        afterSignOutUrl="/connect"
         appearance={{
           variables: {
             colorBackground: resolveColor("--vectis-raised"),
@@ -208,9 +230,9 @@ export default function Connect() {
         }}
       >
         <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
-          <div className="flex flex-col gap-8">
+          <TipProvider>
             <Route />
-          </div>
+          </TipProvider>
         </ConvexProviderWithClerk>
       </ClerkProvider>
     </StrictMode>

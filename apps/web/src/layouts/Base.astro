@@ -11,8 +11,16 @@ interface Props {
   current?: string;
   image?: string;
   noindex?: boolean;
+  bare?: boolean;
 }
-const { title, description, current, image = "/og/home.png", noindex = false } = Astro.props;
+const {
+  title,
+  description,
+  current,
+  image = "/og/home.png",
+  noindex = false,
+  bare = false,
+} = Astro.props;
 const canonical = new URL(Astro.url.pathname.replace(/\/$/, "") || "/", Astro.site);
 const fullTitle = title === "Vectis" ? title : `${title} - Vectis`;
 const revealScript = `(() => {
@@ -66,11 +74,19 @@ const themeScript = `(() => {
     <script is:inline set:html={themeScript} />
   </head>
   <body>
-    <SiteHeader current={current} />
-    <main id="main" class="flex-1">
-      <slot />
-    </main>
-    <SiteFooter />
+    {
+      bare ? (
+        <slot />
+      ) : (
+        <>
+          <SiteHeader current={current} />
+          <main id="main" class="flex-1">
+            <slot />
+          </main>
+          <SiteFooter />
+        </>
+      )
+    }
     <script is:inline set:html={revealScript} />
   </body>
 </html>

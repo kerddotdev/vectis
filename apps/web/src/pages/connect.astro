@@ -4,11 +4,10 @@ import Base from "../layouts/Base.astro";
 ---
 
 <Base
-  title="Connect"
-  description="Approve a Vectis machine, a remote controller, or a GitHub account."
+  title="Account"
+  description="Connect your Macs, link GitHub and choose which repositories run on Vectis."
   noindex
+  bare
 >
-  <section class="shell max-w-[760px] py-20 md:py-28">
-    <Connect client:only="react" />
-  </section>
+  <Connect client:only="react" />
 </Base>
