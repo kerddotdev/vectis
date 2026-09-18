@@ -147,6 +147,9 @@ else {
             case "service.stop":
               data = await (await client()).shutdown();
               break;
+            case "service.stop-idle":
+              data = await (await client()).shutdown({ ifIdle: true });
+              break;
             case "chooseFile": {
               const result = await dialog.showOpenDialog(window, { properties: ["openFile"] });
               data = result.canceled ? null : (result.filePaths[0] ?? null);

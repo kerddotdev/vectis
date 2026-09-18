@@ -410,7 +410,21 @@ export class Service {
                   id: environment.id,
                 });
                 startId = started.id;
-                await this.waitForOperation(started.id);
+                const cancelStart = () => {
+                  if (this.closing) this.tasks.get(started.id)?.abort.abort();
+                  else
+                    this.submit(`${operation.id}:cancel-start`, {
+                      type: "operation.cancel",
+                      id: started.id,
+                    });
+                };
+                abort.signal.addEventListener("abort", cancelStart, { once: true });
+                if (abort.signal.aborted) cancelStart();
+                try {
+                  await this.waitForOperation(started.id);
+                } finally {
+                  abort.signal.removeEventListener("abort", cancelStart);
+                }
                 const instance = this.store
                   .snapshot()
                   .instances.find((item) => item.id === started.id);
@@ -420,6 +434,8 @@ export class Service {
               },
               stop: async () => {
                 if (!startId) return;
+                const current = this.store.snapshot().instances.find((item) => item.id === startId);
+                if (!current || current.status === "stopped") return;
                 const stopped = this.submit(`${operation.id}:stop`, {
                   type: "instance.stop",
                   id: startId,
@@ -596,6 +612,7 @@ export class Service {
           this.store.remove("environment", command.id);
           break;
         case "environment.start": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           if (
             this.store
               .list("preparation")
@@ -621,7 +638,7 @@ export class Service {
             ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
           };
-          await this.runtime.validate(environment);
+          this.runtime.validateResources(environment);
           const active = snapshot.instances.filter((instance) => instance.status === "running");
           const memory = active.reduce(
             (sum, instance) =>
@@ -668,34 +685,68 @@ export class Service {
             createdAt: operation.createdAt,
           };
           this.store.put("instance", id, record);
-          try {
-            const instance = await this.runtime.start(id, environment, (cleaned) => {
+          const abort = new AbortController();
+          const done = (async () => {
+            try {
+              const instance = await this.runtime.start(
+                id,
+                environment,
+                (cleaned) => {
+                  this.store.put("instance", id, {
+                    ...record,
+                    status: cleaned ? "stopped" : "interrupted",
+                    pid: 0,
+                  });
+                },
+                abort.signal,
+              );
               this.store.put("instance", id, {
                 ...record,
-                status: cleaned ? "stopped" : "interrupted",
-                pid: 0,
+                status: "running",
+                pid: instance.process.pid ?? 0,
+                ...(instance.macAddress ? { macAddress: instance.macAddress } : {}),
+                ...(instance.sshHost ? { sshHost: instance.sshHost } : {}),
+                ...(instance.sshPort ? { sshPort: instance.sshPort } : {}),
               });
-            });
-            this.store.put("instance", id, {
-              ...record,
-              status: "running",
-              pid: instance.process.pid ?? 0,
-              ...(instance.macAddress ? { macAddress: instance.macAddress } : {}),
-              ...(instance.sshHost ? { sshHost: instance.sshHost } : {}),
-              ...(instance.sshPort ? { sshPort: instance.sshPort } : {}),
-            });
-          } catch (error) {
-            const remaining = await this.runtime.hasWorkDirectory(id, record.directory);
-            this.store.put("instance", id, {
-              ...record,
-              status: remaining ? "interrupted" : "stopped",
-            });
-            throw error;
-          }
-          result = { instanceId: id };
-          break;
+              this.store.update(operation, {
+                status: "succeeded",
+                message: "Completed.",
+                result: { instanceId: id },
+              });
+            } catch (error) {
+              const remaining = await this.runtime
+                .hasWorkDirectory(id, record.directory)
+                .catch(() => true);
+              this.store.put("instance", id, {
+                ...record,
+                status: remaining ? "interrupted" : "stopped",
+              });
+              if (abort.signal.aborted)
+                this.store.update(operation, {
+                  status: remaining ? "action_required" : "cancelled",
+                  message: remaining
+                    ? "VM startup stopped; its work directory still needs inspection."
+                    : "VM startup cancelled and cleaned up.",
+                  result: {
+                    code: remaining ? "reconciliation_required" : "startup_cancelled",
+                    instanceId: id,
+                  },
+                });
+              else this.failOperation(operation, error);
+            }
+          })().finally(() => {
+            this.tasks.delete(operation.id);
+          });
+          this.tasks.set(operation.id, { abort, done });
+          return;
         }
         case "instance.reconcile": {
+          if (this.tasks.has(command.id))
+            throw new VectisError(
+              "instance_starting",
+              "The instance startup task has not finished.",
+              "Cancel the startup operation and wait for cleanup before reconciling.",
+            );
           const instance = snapshot.instances.find((item) => item.id === command.id);
           if (!instance) throw new VectisError("instance_missing", "Instance not found.");
           if (
@@ -723,24 +774,27 @@ export class Service {
         ...(result !== undefined ? { result } : {}),
       });
     } catch (error) {
-      const issue =
-        error instanceof VectisError
-          ? error
-          : new VectisError("operation_failed", "The operation could not be completed.");
-      this.store.update(operation, {
-        status: [
-          "setup_required",
-          "runtime_missing",
-          "runtime_incompatible",
-          "storage_unavailable",
-          "reconciliation_required",
-        ].includes(issue.code)
-          ? "action_required"
-          : "failed",
-        message: issue.message,
-        result: { code: issue.code, nextStep: issue.nextStep },
-      });
+      this.failOperation(operation, error);
     }
+  }
+  private failOperation(operation: Operation, error: unknown) {
+    const issue =
+      error instanceof VectisError
+        ? error
+        : new VectisError("operation_failed", "The operation could not be completed.");
+    this.store.update(operation, {
+      status: [
+        "setup_required",
+        "runtime_missing",
+        "runtime_incompatible",
+        "storage_unavailable",
+        "reconciliation_required",
+      ].includes(issue.code)
+        ? "action_required"
+        : "failed",
+      message: issue.message,
+      result: { code: issue.code, nextStep: issue.nextStep },
+    });
   }
   private async waitForOperation(id: string) {
     const deadline = Date.now() + 600000;
@@ -757,6 +811,24 @@ export class Service {
   }
   async drain() {
     await this.queue;
+  }
+  beginShutdown(ifIdle: boolean) {
+    const snapshot = this.store.snapshot();
+    if (
+      ifIdle &&
+      (snapshot.preparationBusy ||
+        snapshot.instances.some((instance) => instance.status !== "stopped") ||
+        snapshot.operations.some((operation) =>
+          ["accepted", "running"].includes(operation.status),
+        ) ||
+        this.tasks.size > 0)
+    )
+      throw new VectisError(
+        "service_busy",
+        "The service still has active work or an instance requiring reconciliation.",
+        "Pause new jobs, let active work finish, reconcile interrupted instances, then retry.",
+      );
+    this.closing = true;
   }
   async close() {
     this.closing = true;

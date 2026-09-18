@@ -49,4 +49,6 @@ No QEMU or firmware binaries are committed here. QEMU is GPL v2 software with co
 
 The QEMU launcher supplies an explicit data directory. Windows boots from the configured NVMe disk; the network device's unused PXE ROM is disabled, so startup does not silently load firmware from Homebrew. ARM64 UEFI code and guest images remain explicit environment inputs.
 
-`BUILD.json` records source hashes and unresolved release requirements. This staging output is not approved for redistribution: corresponding sources and license notices for every bundled dependency must be assembled before publishing. The QEMU license and Vectis patch alone do not cover the dependency bundle.
+For Homebrew libraries, staging also copies the installed license texts, supporting authors/readme files, and available SPDX metadata into `licenses/homebrew`. Multiple libraries from the same formula share one notice directory. Installation receipts are excluded, and a formula with no installed license text fails staging.
+
+`BUILD.json` records source hashes, collected notice paths, and unresolved release requirements. This staging output is not approved for redistribution: corresponding sources, patches, build recipes, and a review of all applicable license materials are still required before publishing. Collecting installed notices alone does not establish that the dependency bundle is ready for release.

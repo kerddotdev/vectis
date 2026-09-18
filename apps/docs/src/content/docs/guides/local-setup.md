@@ -47,6 +47,8 @@ pnpm vectis service uninstall --home /absolute/path/to/vectis-state --json
 
 Stopping the service stops its owned VMs. Uninstalling the registration preserves state, images, and chosen VM storage. `service status` reports registration and launchd loading; use `status` for the live machine and operations. The MCP `vectis_service` tool exposes the same login-service controls and can discover registration without a running local API.
 
+Before replacing a runtime or app, use `service stop --if-idle`. This refuses to stop while a job, preparation, pending command, or unreconciled VM remains. Pause new work and retry after active work finishes. The desktop's **Stop service if idle** button and MCP `vectis_service` with `action: "stop", ifIdle: true` use the same check. Older services that lack this operation reject it; the client does not fall back to interrupting their work.
+
 ## Prepared Linux images
 
 For development, the Apple helper can start a prepared, bootable ARM64 Linux raw disk with EFI. A raw filesystem partition alone is not a bootable VM disk. Build the helper with Xcode's Swift tools, then sign the development binary with its virtualization entitlement:
@@ -65,6 +67,8 @@ Registering an environment does not install its operating system or toolchains. 
 Mutating commands return an operation ID. `accepted` means the request was recorded. Use `--wait` or `operation wait <id>` to observe completion. Exit code `1` indicates failure; `3` indicates `action_required`.
 
 `pause` prevents new VM starts and leaves running work alone. `instance stop <id>` stops a VM owned by the service. After a service crash, an interrupted instance requires verified process-exit evidence before Vectis removes its working directory.
+
+VM startup runs as a cancellable operation. Use `operation cancel <operation-id>` to withdraw an unfinished start, then wait for that original operation to finish. Cancellation being requested does not prove cleanup has completed. While image access or cleanup is still pending, Vectis keeps the reservation and refuses another VM start. Pause and cancellation requests remain available. If macOS is waiting for file-access approval, the underlying file operation may need that prompt resolved before cleanup can finish; a cancelled start will not proceed to boot afterward.
 
 ## Connect your machine
 

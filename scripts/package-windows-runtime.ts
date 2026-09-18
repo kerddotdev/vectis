@@ -3,6 +3,7 @@ import { chmod, copyFile, mkdir, readFile, realpath, writeFile } from "node:fs/p
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { parseArgs, promisify } from "node:util";
 import { inspectLocalArtifact } from "../packages/runner/src/artifact.js";
+import { stageRuntimeNotices } from "./release/runtime-notices.js";
 
 const { values } = parseArgs({
   options: {
@@ -116,6 +117,7 @@ await writeFile(
   await readFile("native/qemu/patches/0001-align-arm-tpm-ppi-to-host-page.patch"),
 );
 const versions: Record<string, string> = {};
+const notices = await stageRuntimeNotices([...files.keys()], output);
 for (const [name] of entries)
   versions[name] = (
     await run(join(output, "bin", name), ["--version"], { env: { PATH: "/usr/bin:/bin" } })
@@ -129,8 +131,9 @@ await writeFile(
       signing: "ad-hoc",
       versions,
       files: provenance,
+      notices,
       remainingReleaseRequirements: [
-        "Corresponding sources and notices for every bundled dependency",
+        "Corresponding sources, patches, build recipes and license review for every bundled dependency",
         "Developer ID signing and notarization",
         "Isolated real Windows VM verification",
       ],
