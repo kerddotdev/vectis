@@ -155,6 +155,7 @@ export async function startService(
           await body(request),
         );
         service.beginShutdown(request.url === "/v1/shutdown-if-idle" || (shutdown.ifIdle ?? false));
+        closing = true;
         reply(response, 202, { stopping: true });
         options.onShutdown?.();
         return;
@@ -188,8 +189,15 @@ export async function startService(
         return reply(response, 200, runtimeDiagnostics(options, "service"));
       if (request.method === "GET" && request.url === "/v1/storage")
         return reply(response, 200, await inspectStorage());
-      if (request.method === "GET" && request.url === "/v1/status")
+      if (request.method === "GET" && request.url === "/v1/status") {
+        if (closing)
+          return reply(response, 503, {
+            code: "service_closing",
+            message: "The service is shutting down.",
+            nextStep: "Wait for shutdown to finish, then start the service again.",
+          });
         return reply(response, 200, { ...store.snapshot(), cloud });
+      }
       if (request.method === "GET" && request.url === "/v1/capabilities")
         return reply(response, 200, { protocolVersion: 1, capabilities });
       if (request.method === "POST" && request.url === "/v1/commands") {

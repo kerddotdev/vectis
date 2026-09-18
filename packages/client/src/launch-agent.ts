@@ -197,12 +197,23 @@ export class LaunchAgent {
         "Check background item permissions in System Settings and service.log, then retry service start.",
       );
     }
+    let retriedAfterExit = false;
     const deadline = Date.now() + 15000;
     while (Date.now() < deadline) {
       try {
         await (await localClient(this.home)).status(AbortSignal.timeout(1000));
         return { installed: true, running: true, home: this.home, path: this.path };
       } catch {
+        if (!retriedAfterExit) {
+          const state = await this.execute("/bin/launchctl", [
+            "print",
+            `${this.domain}/${this.label}`,
+          ]);
+          if (!/^\s*pid = [1-9]\d*\s*$/m.test(state)) {
+            await this.execute("/bin/launchctl", ["kickstart", `${this.domain}/${this.label}`]);
+            retriedAfterExit = true;
+          }
+        }
         await delay(100);
       }
     }

@@ -197,3 +197,13 @@ test("repository discovery reports missing cloud configuration instead of an emp
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test("an accepted shutdown stops advertising readiness before the listener closes", async () => {
+  const { client, server } = await fixture();
+  await client.shutdown({ ifIdle: true });
+  await expect(client.status()).rejects.toMatchObject({ code: "service_closing" });
+  const response = await fetch(server.connection.url + "/v1/status", {
+    headers: { Authorization: `Bearer ${server.connection.token}` },
+  });
+  expect(response.status).toBe(503);
+});
