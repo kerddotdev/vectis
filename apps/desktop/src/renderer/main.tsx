@@ -128,6 +128,9 @@ function Overview() {
                 "environment.install-macos",
                 "environment.resume-macos",
                 "environment.open-macos-setup",
+                "environment.connect-macos-guest",
+                "environment.verify-macos-guest",
+                "environment.finish-macos-setup",
                 "environment.install-windows",
                 "environment.resume-windows",
               ].includes(operation.command) && (
@@ -154,6 +157,8 @@ function Overview() {
             {(operation.command === "environment.install-macos" ||
               operation.command === "environment.resume-macos" ||
               operation.command === "environment.open-macos-setup" ||
+              operation.command === "environment.connect-macos-guest" ||
+              operation.command === "environment.verify-macos-guest" ||
               operation.command === "environment.install-windows" ||
               operation.command === "environment.resume-windows" ||
               operation.command === "environment.prepare-linux" ||

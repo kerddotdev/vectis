@@ -1,3 +1,4 @@
+import { startMacGuestAccess, completedMacEnvironment } from "./macos-access-task.js";
 import { discardMacInstallation } from "./macos-discard.js";
 import {
   startWindowsInstallation,
@@ -132,6 +133,29 @@ export class Service {
           });
           this.tasks.set(operation.id, { abort: active.abort, done });
           return;
+        }
+        case "environment.connect-macos-guest":
+        case "environment.verify-macos-guest": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          const active = await startMacGuestAccess(this.store, operation, command);
+          const done = active.done.finally(() => this.tasks.delete(operation.id));
+          this.tasks.set(operation.id, { abort: active.abort, done });
+          return;
+        }
+        case "environment.finish-macos-setup": {
+          if (this.preparing || snapshot.preparationBusy)
+            throw new VectisError(
+              "preparation_active",
+              "Shut down the guest setup before registering it.",
+            );
+          const environment = await completedMacEnvironment(this.store, command.id);
+          if (snapshot.environments.some((item) => item.id === environment.id))
+            throw new VectisError("environment_exists", "This environment is already registered.");
+          await this.runtime.validate(environment);
+          this.store.put("environment", environment.id, environment);
+          completeMacRegistration(this.store, environment);
+          result = { environment };
+          break;
         }
         case "environment.discard-macos": {
           if (this.preparing)

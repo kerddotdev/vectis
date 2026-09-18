@@ -23,7 +23,7 @@ export function PrepareLinux() {
           ? "Download verified Ubuntu 24.04 ARM64 and prepare SSH, Git, Docker and runner dependencies."
           : os === "windows"
             ? "Install Windows 11 ARM64 from your official ISO with separate driver media, UEFI and TPM state. Activation and required licenses remain your responsibility."
-            : "Install a local Apple macOS 26 IPSW. Setup Assistant and guest SSH configuration are separate steps; this does not register a ready runner."}
+            : "Download the verified macOS 26 image from Apple, or select an existing IPSW. Setup Assistant and guest SSH configuration are separate steps; this does not register a ready runner."}
         Other VMs must be stopped while preparing an image.
       </p>
       <form
@@ -61,7 +61,10 @@ export function PrepareLinux() {
                     }
                   : {
                       type: "environment.install-macos" as const,
-                      ...Schema.decodeUnknownSync(MacInstallation)({ ...fields, restorePath }),
+                      ...Schema.decodeUnknownSync(MacInstallation)({
+                        ...fields,
+                        ...(restorePath ? { restorePath } : {}),
+                      }),
                     };
             setPending(true);
             setMessage("");
@@ -88,11 +91,11 @@ export function PrepareLinux() {
         </label>
         {os === "macos" && (
           <label>
-            Apple restore image (.ipsw)
+            Apple restore image (.ipsw, optional)
             <input
               value={restorePath}
               onChange={(event) => setRestorePath(event.target.value)}
-              required
+              placeholder="Leave empty to download the verified macOS 26 image"
             />
             <button
               type="button"

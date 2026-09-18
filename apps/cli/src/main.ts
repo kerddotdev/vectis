@@ -50,6 +50,7 @@ async function main() {
       "disk-gib": { type: "string" },
       "image-directory": { type: "string" },
       "restore-path": { type: "string" },
+      "open-terminal": { type: "boolean" },
       "iso-path": { type: "string" },
       "drivers-path": { type: "string" },
       "firmware-path": { type: "string" },
@@ -114,11 +115,14 @@ Usage: vectis <command> [options]
   capabilities                  Discover supported commands and schemas
   doctor                        Inspect host and runtime prerequisites
   pause | resume                Control new instance admission
-  environment install-macos <id>  Install --restore-path <IPSW> with --image-directory and --storage-path
+  environment install-macos <id>  Install with --image-directory and --storage-path; optional --restore-path <IPSW>
   environment install-windows <id>  Install ARM64 Windows with --iso-path, --drivers-path, --firmware-path, --firmware-vars-path, --image-directory, --storage-path and --accept-license
   environment resume-windows <setup-id>  Continue an interrupted Windows installation
   environment discard-macos <setup-id> --environment <id>  Permanently discard a stopped unregistered setup
   environment open-macos-setup <setup-id>  Open the local guest setup console
+  environment connect-macos-guest <setup-id>  Prepare guest SSH enrollment; optional --open-terminal
+  environment verify-macos-guest <setup-id>   Verify guest SSH and unattended startup prerequisites
+  environment finish-macos-setup <setup-id>   Register the verified, stopped macOS setup
   environment resume-macos <setup-id>  Inspect or retry an interrupted macOS installation
   environment prepare-linux <id>  Prepare Ubuntu with --image-directory and --storage-path
   environment resume <setup-id>   Continue an interrupted image preparation
@@ -476,6 +480,16 @@ GitHub pairing require separately configured development services.
     });
   else if (command === "environment" && subcommand === "open-macos-setup" && id)
     request = decodeCommand({ type: "environment.open-macos-setup", id });
+  else if (command === "environment" && subcommand === "connect-macos-guest" && id)
+    request = decodeCommand({
+      type: "environment.connect-macos-guest",
+      id,
+      openTerminal: values["open-terminal"] ?? false,
+    });
+  else if (command === "environment" && subcommand === "verify-macos-guest" && id)
+    request = decodeCommand({ type: "environment.verify-macos-guest", id });
+  else if (command === "environment" && subcommand === "finish-macos-setup" && id)
+    request = decodeCommand({ type: "environment.finish-macos-setup", id });
   else if (command === "environment" && subcommand === "resume-macos" && id)
     request = decodeCommand({ type: "environment.resume-macos", id });
   else if (command === "environment" && subcommand === "prepare-linux" && id)

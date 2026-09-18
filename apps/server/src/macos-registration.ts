@@ -30,6 +30,8 @@ export function completeMacRegistration(store: Store, environment: Environment) 
           "environment.install-macos",
           "environment.resume-macos",
           "environment.open-macos-setup",
+          "environment.connect-macos-guest",
+          "environment.verify-macos-guest",
         ].includes(operation.command)
       )
         continue;

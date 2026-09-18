@@ -12,6 +12,16 @@ export interface GuestConnection {
   readonly hostKeyAlias: string;
 }
 
+export function sshPathOption(name: "IdentityFile" | "UserKnownHostsFile", path: string) {
+  if (!isAbsolute(path) || /[\r\n\0]/.test(path) || path.includes("${"))
+    throw new VectisError(
+      "invalid_guest_connection",
+      "SSH identity paths must be absolute and cannot contain control characters or environment substitutions.",
+    );
+  const escaped = path.replaceAll("%", "%%").replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+  return `${name}="${escaped}"`;
+}
+
 export function guestArguments(connection: GuestConnection) {
   if (
     !isIP(connection.host) ||
@@ -47,13 +57,13 @@ export function guestArguments(connection: GuestConnection) {
     "-o",
     "ServerAliveCountMax=2",
     "-o",
-    `UserKnownHostsFile=${connection.knownHostsFile}`,
+    sshPathOption("UserKnownHostsFile", connection.knownHostsFile),
     "-o",
     "GlobalKnownHostsFile=/dev/null",
     "-o",
     `HostKeyAlias=${connection.hostKeyAlias}`,
-    "-i",
-    connection.identityFile,
+    "-o",
+    sshPathOption("IdentityFile", connection.identityFile),
     "-p",
     String(connection.port),
     "-l",
