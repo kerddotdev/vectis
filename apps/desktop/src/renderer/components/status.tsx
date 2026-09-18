@@ -79,7 +79,12 @@ export function InstanceStatus({
 export function StatusText({ tone, label }: { tone: Tone; label: string }) {
   const { icon: Icon, className } = tones[tone];
   return (
-    <span className={cn("inline-flex items-center gap-1 bg-transparent font-medium", className)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 font-medium",
+        className.split(" ").filter((name) => name.startsWith("text-")),
+      )}
+    >
       <Icon className="size-3" aria-hidden />
       {label}
     </span>
