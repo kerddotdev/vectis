@@ -1,13 +1,14 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, rm } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Schema } from "effect";
 import { Diagnostics } from "../packages/protocol/src/diagnostics.js";
 import { Snapshot } from "../packages/protocol/src/index.js";
+import { StorageReport } from "../packages/protocol/src/storage.js";
 
 const path = process.argv[2];
 if (!path) throw new Error("Usage: pnpm package:verify <portable-package-directory>");
@@ -60,6 +61,32 @@ try {
     (!doctor.configured.qemu || !doctor.configured.qemuImg || !doctor.configured.swtpm)
   )
     throw new Error("Packaged Windows runtime was not configured automatically.");
+  const disk = join(home, "inspection-fixture.img");
+  const definition = join(home, "inspection-fixture.json");
+  await writeFile(disk, "isolated storage fixture");
+  await writeFile(
+    definition,
+    JSON.stringify({
+      id: "inspection-fixture",
+      name: "Package inspection fixture",
+      os: "linux",
+      basePath: disk,
+      cpu: 1,
+      memoryMiB: 512,
+      state: "ready",
+    }),
+  );
+  await command(["environment", "register", "--file", definition, "--wait"]);
+  const storage = Schema.decodeUnknownSync(StorageReport)(await command(["storage"]));
+  const usage = storage.environments.find(
+    (environment) => environment.environmentId === "inspection-fixture",
+  )?.base;
+  if (
+    usage?.status !== "available" ||
+    usage.fileBytes !== Buffer.byteLength("isolated storage fixture")
+  )
+    throw new Error("Packaged storage worker did not inspect the isolated fixture.");
+  await command(["environment", "remove", "inspection-fixture", "--wait"]);
   await command(["pause", "--wait"]);
   if (!(await snapshot()).machine.paused) throw new Error("Packaged service did not pause.");
   await command(["service", "stop", "--if-idle"]);
