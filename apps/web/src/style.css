@@ -164,3 +164,35 @@ button.secondary {
   color: #b9d7fe;
   margin-left: 12px;
 }
+fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 18px;
+}
+label {
+  display: grid;
+  gap: 8px;
+}
+input,
+select {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #48515b;
+  border-radius: 7px;
+  background: #1d2228;
+  color: #e9edf2;
+  font: inherit;
+}
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid #aacbfa;
+  outline-offset: 3px;
+}
+.repository {
+  margin-top: 24px;
+  padding-top: 16px;
+  border-top: 1px solid #3a414a;
+}

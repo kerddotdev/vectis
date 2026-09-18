@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 import { readFile, mkdir, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { homedir, platform, arch, cpus, totalmem } from "node:os";
+import { homedir, platform } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -14,6 +14,7 @@ import {
   decodeCommand,
   type Command,
 } from "../../../packages/protocol/src/index.js";
+import { runtimeDiagnostics } from "../../../packages/runner/src/diagnostics.js";
 import { githubConnection } from "../../../packages/client/src/github.js";
 import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
@@ -58,6 +59,7 @@ Usage: vectis <command> [options]
   service start                 Start the installed or independent background service
   service run                   Run the service in the foreground
   service stop                  Stop through an authenticated service request
+  repository list               List this machine's connected repositories (requires cloud pairing)
   storage                       Inspect image and VM disk usage
   status                        Inspect the machine and recent operations
   capabilities                  Discover supported commands and schemas
@@ -124,24 +126,30 @@ GitHub pairing require separately configured development services.
     return;
   }
   if (command === "doctor") {
-    output({
-      host: {
-        platform: platform(),
-        arch: arch(),
-        cpus: cpus().length,
-        memoryMiB: Math.floor(totalmem() / 1048576),
-      },
-      supportedHost: platform() === "darwin" && arch() === "arm64",
-      configured: {
-        appleHelper: Boolean(process.env.VECTIS_APPLE_HELPER),
-        qemu: Boolean(process.env.VECTIS_QEMU),
-        qemuImg: Boolean(process.env.VECTIS_QEMU_IMG),
-        swtpm: Boolean(process.env.VECTIS_SWTPM),
-      },
-      home,
-    });
+    try {
+      output(await (await localClient(home)).doctor());
+    } catch {
+      output(
+        runtimeDiagnostics(
+          {
+            home,
+            ...(process.env.VECTIS_APPLE_HELPER
+              ? { appleHelper: process.env.VECTIS_APPLE_HELPER }
+              : {}),
+            ...(process.env.VECTIS_QEMU ? { qemu: process.env.VECTIS_QEMU } : {}),
+            ...(process.env.VECTIS_QEMU_IMG ? { qemuImg: process.env.VECTIS_QEMU_IMG } : {}),
+            ...(process.env.VECTIS_SWTPM ? { swtpm: process.env.VECTIS_SWTPM } : {}),
+            ...(process.env.VECTIS_KEYCHAIN_HELPER
+              ? { keychainHelper: process.env.VECTIS_KEYCHAIN_HELPER }
+              : {}),
+          },
+          "shell",
+        ),
+      );
+    }
     return;
   }
+
   if (
     command === "service" &&
     (subcommand === "install" || subcommand === "uninstall" || subcommand === "status")
@@ -232,6 +240,10 @@ GitHub pairing require separately configured development services.
   if (command === "service" && subcommand === "stop") {
     await api.shutdown();
     output({ stopping: true });
+    return;
+  }
+  if (command === "repository" && subcommand === "list") {
+    output(await api.repositories());
     return;
   }
   if (command === "storage") {

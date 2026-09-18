@@ -1,3 +1,4 @@
+import { RepositoryConnections } from "./repositories.js";
 import { useState } from "react";
 import { SignIn, UserButton } from "@clerk/react";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
@@ -84,6 +85,7 @@ export function GitHubConnections() {
                   </p>
                 </section>
               ))}
+              <RepositoryConnections accounts={data.accounts} />
               {data.pending.map((link) => (
                 <section key={link.id} aria-label="Pending GitHub connection">
                   {link.phase === "review" && link.user ? (

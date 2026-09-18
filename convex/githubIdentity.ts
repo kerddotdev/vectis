@@ -70,7 +70,8 @@ export const list = query({
       .withIndex("by_owner", (q) => q.eq("owner", owner))
       .collect();
     return {
-      accounts: accounts.map(({ githubId, login, installations, verifiedAt }) => ({
+      accounts: accounts.map(({ _id, githubId, login, installations, verifiedAt }) => ({
+        id: _id,
         githubId,
         login,
         installations,

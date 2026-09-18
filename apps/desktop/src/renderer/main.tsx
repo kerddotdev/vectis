@@ -10,6 +10,8 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { Schema } from "effect";
+import { MachineRepositories } from "../../../../packages/protocol/src/repositories.js";
+import { Diagnostics } from "../../../../packages/protocol/src/diagnostics.js";
 import { StorageReport } from "../../../../packages/protocol/src/storage.js";
 import { StateProvider, useStateApi } from "./state.js";
 import { Environments } from "./environments.js";
@@ -29,6 +31,7 @@ function Layout() {
           <Link to="/environments">Environments</Link>
           <Link to="/storage">Storage</Link>
           <Link to="/connections">Connections</Link>
+          <Link to="/diagnostics">Diagnostics</Link>
         </nav>
         <button className="secondary" onClick={() => void perform("open.docs")}>
           Documentation
@@ -118,6 +121,54 @@ function Overview() {
     </>
   );
 }
+function Doctor() {
+  const { perform } = useStateApi();
+  const [report, setReport] = useState<Diagnostics | null>(null);
+  const [error, setError] = useState("");
+  const [pending, setPending] = useState(false);
+  async function inspect() {
+    setPending(true);
+    setError("");
+    try {
+      const value = await perform("doctor");
+      if (value !== undefined) setReport(Schema.decodeUnknownSync(Diagnostics)(value));
+    } catch {
+      setError("The service returned an invalid diagnostic report.");
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <h1>Diagnostics</h1>
+      <p>Inspect the running service's host and configured helpers.</p>
+      <button disabled={pending} onClick={() => void inspect()}>
+        {pending ? "Inspecting" : "Inspect service"}
+      </button>
+      {error && <p role="alert">{error}</p>}
+      {report && (
+        <section className="section" aria-live="polite">
+          <h2>Host</h2>
+          <p>
+            {report.host.platform} / {report.host.arch} / {report.host.cpus} cores /{" "}
+            {report.host.memoryMiB} MiB
+          </p>
+          <p>{report.supportedHost ? "Supported host" : "Unsupported host"}</p>
+          <h2>Runtime configuration</h2>
+          <p>Configured paths still require a successful runtime check before starting a VM.</p>
+          {Object.entries(report.configured).map(([name, configured]) => (
+            <div className="record" key={name}>
+              <strong>{name}</strong>
+              <span>{configured ? "Configured" : "Not configured"}</span>
+            </div>
+          ))}
+          <h2>Service state directory</h2>
+          <code>{report.home}</code>
+        </section>
+      )}
+    </>
+  );
+}
 function Storage() {
   const { perform } = useStateApi();
   const [report, setReport] = useState<StorageReport | null>(null);
@@ -183,6 +234,21 @@ function Storage() {
 }
 function Connections() {
   const { perform } = useStateApi();
+  const [repositories, setRepositories] = useState<MachineRepositories | null>(null);
+  const [loading, setLoading] = useState(false);
+  async function discover() {
+    setLoading(true);
+    setRepositories(null);
+    try {
+      const result = await perform("repositories");
+      if (result !== undefined)
+        setRepositories(Schema.decodeUnknownSync(MachineRepositories)(result));
+    } catch {
+      setMessage("The service returned an invalid repository report.");
+    } finally {
+      setLoading(false);
+    }
+  }
   const [message, setMessage] = useState("");
   async function pair() {
     const value = await perform("cloud.pair");
@@ -202,6 +268,19 @@ function Connections() {
       <p>Connect this Mac and your GitHub accounts. Build files stay on your machine.</p>
       <button onClick={() => void perform("open.github")}>Connect GitHub</button>
       <section className="section">
+        <h2>Connected repositories</h2>
+        <button disabled={loading} onClick={() => void discover()}>
+          {loading ? "Checking access" : "Refresh repositories"}
+        </button>
+        {repositories?.length === 0 && <p>No repositories are connected to this Mac.</p>}
+        {repositories?.map((repository) => (
+          <div className="record" key={repository.id}>
+            <strong>{repository.repositoryName}</strong>
+            <span>{repository.environmentId}</span>
+          </div>
+        ))}
+      </section>
+      <section className="section">
         <h2>Connect this Mac</h2>
         <button onClick={() => void pair()}>Begin pairing</button>
         <button className="secondary" onClick={() => void finish()}>
@@ -217,6 +296,7 @@ const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/", component: Overview }),
   createRoute({ getParentRoute: () => rootRoute, path: "/environments", component: Environments }),
   createRoute({ getParentRoute: () => rootRoute, path: "/storage", component: Storage }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/diagnostics", component: Doctor }),
   createRoute({ getParentRoute: () => rootRoute, path: "/connections", component: Connections }),
 ]);
 const router = createRouter({ routeTree, history: createHashHistory() });

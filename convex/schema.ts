@@ -2,6 +2,14 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { installation, verifiedUser } from "./githubValidators.js";
 
+export const environmentSummary = v.object({
+  id: v.string(),
+  name: v.string(),
+  os: v.union(v.literal("linux"), v.literal("macos"), v.literal("windows")),
+  cpu: v.number(),
+  memoryMiB: v.number(),
+  state: v.union(v.literal("ready"), v.literal("action_required")),
+});
 export const phase = v.union(
   v.literal("accepted"),
   v.literal("claimed"),
@@ -36,6 +44,20 @@ export default defineSchema({
   })
     .index("by_owner", ["owner"])
     .index("by_github", ["githubId"]),
+  repositoryBindings: defineTable({
+    owner: v.string(),
+    accountId: v.id("githubAccounts"),
+    machineId: v.id("machines"),
+    repositoryId: v.number(),
+    repositoryName: v.string(),
+    installationId: v.number(),
+    environmentId: v.string(),
+    enabled: v.boolean(),
+    verifiedAt: v.number(),
+  })
+    .index("by_owner", ["owner"])
+    .index("by_machine", ["machineId"])
+    .index("by_target", ["machineId", "repositoryId", "environmentId"]),
   machines: defineTable({
     owner: v.string(),
     localId: v.string(),
@@ -44,6 +66,7 @@ export default defineSchema({
     credentialVersion: v.optional(v.number()),
     createdAt: v.number(),
     lastSeenAt: v.optional(v.number()),
+    environments: v.optional(v.array(environmentSummary)),
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),

@@ -23,6 +23,10 @@ All CLI commands are non-interactive. Use `--json` for parsing. `action_required
 
 Pausing stops new admission and leaves existing work running. Stopping an instance is a separate mutation. After a crash, use `instance reconcile <id>` only for interrupted instances; Vectis requires process-exit evidence before cleanup.
 
+## Discover repository connections
+
+After machine pairing and browser GitHub linking, use `vectis repository list --json` or MCP `vectis_repositories`. The response identifies repositories currently connected to this machine and their environment IDs. Cloud or account authorization failures are errors; do not interpret them as an empty repository list. A binding does not prove that an image is ready to run a job.
+
 ## Configure resources and storage
 
 Use `environment configure <id> --cpu <count> --memory-mib <MiB> --storage-path <absolute-directory> --wait --json`. Omit fields that should remain unchanged. Changes apply to future instances; running instances retain their original resource reservations and directory. The VM storage directory is independent of the service's `--home` state directory. Select an existing writable directory. Vectis does not recreate a missing selected directory, so reconnect an unavailable external drive before retrying.

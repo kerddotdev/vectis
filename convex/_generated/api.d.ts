@@ -15,6 +15,7 @@ import type * as githubDeliveries from "../githubDeliveries.js";
 import type * as githubHttp from "../githubHttp.js";
 import type * as githubIdentity from "../githubIdentity.js";
 import type * as githubOAuth from "../githubOAuth.js";
+import type * as githubRepositories from "../githubRepositories.js";
 import type * as githubRunnerProbe from "../githubRunnerProbe.js";
 import type * as githubValidators from "../githubValidators.js";
 import type * as githubWebhook from "../githubWebhook.js";
@@ -24,6 +25,7 @@ import type * as machineTokens from "../machineTokens.js";
 import type * as machines from "../machines.js";
 import type * as operations from "../operations.js";
 import type * as pairings from "../pairings.js";
+import type * as repositoryBindings from "../repositoryBindings.js";
 
 import type {
   ApiFromModules,
@@ -39,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   githubHttp: typeof githubHttp;
   githubIdentity: typeof githubIdentity;
   githubOAuth: typeof githubOAuth;
+  githubRepositories: typeof githubRepositories;
   githubRunnerProbe: typeof githubRunnerProbe;
   githubValidators: typeof githubValidators;
   githubWebhook: typeof githubWebhook;
@@ -48,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   machines: typeof machines;
   operations: typeof operations;
   pairings: typeof pairings;
+  repositoryBindings: typeof repositoryBindings;
 }>;
 
 /**

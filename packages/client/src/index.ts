@@ -1,4 +1,6 @@
 import { Schema } from "effect";
+import { MachineRepositories } from "../../protocol/src/repositories.js";
+import { Diagnostics } from "../../protocol/src/diagnostics.js";
 import { StorageReport } from "../../protocol/src/storage.js";
 import {
   ApiError,
@@ -43,6 +45,12 @@ export class VectisClient {
   }
   async shutdown() {
     return this.request("/v1/shutdown", {});
+  }
+  async repositories() {
+    return Schema.decodeUnknownSync(MachineRepositories)(await this.request("/v1/repositories"));
+  }
+  async doctor() {
+    return Schema.decodeUnknownSync(Diagnostics)(await this.request("/v1/doctor"));
   }
   async storage() {
     return Schema.decodeUnknownSync(StorageReport)(await this.request("/v1/storage"));

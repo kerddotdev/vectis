@@ -1,5 +1,6 @@
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server.js";
+import { environmentSummary } from "./schema.js";
 import { human, machine } from "./auth.js";
 
 export const enroll = mutation({
@@ -41,10 +42,32 @@ export const revoke = mutation({
   },
 });
 export const heartbeat = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { environments: v.optional(v.array(environmentSummary)) },
+  handler: async (ctx, args) => {
     const record = await machine(ctx);
-    await ctx.db.patch("machines", record._id, { lastSeenAt: Date.now() });
+    const environments = args.environments;
+    if (
+      environments &&
+      (environments.length > 100 ||
+        new Set(environments.map((item) => item.id)).size !== environments.length ||
+        environments.some(
+          (item) =>
+            !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$/.test(item.id) ||
+            !item.name.trim() ||
+            item.name.length > 100 ||
+            !Number.isSafeInteger(item.cpu) ||
+            item.cpu < 1 ||
+            item.cpu > 1024 ||
+            !Number.isSafeInteger(item.memoryMiB) ||
+            item.memoryMiB < 1 ||
+            item.memoryMiB > 16777216,
+        ))
+    )
+      throw new ConvexError({ code: "invalid_environment_inventory" });
+    await ctx.db.patch("machines", record._id, {
+      lastSeenAt: Date.now(),
+      ...(environments ? { environments } : {}),
+    });
   },
 });
 export const self = query({
