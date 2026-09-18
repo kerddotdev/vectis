@@ -15,3 +15,7 @@ Import `web/colors.css` for `--vectis-sand`, `--vectis-copper`, `--vectis-brand-
 The P3 values are converted from sRGB through linear-light RGB, not copied channel values. The matching native values live in `fill.linear-gradient` in `vectis.icon/icon.json`. Both web and native assets use the same color endpoints; native glass rendering may change their perceived appearance.
 
 Keep a readable text label beside the mark. Test clear icons against their actual backdrop; a static gradient does not guarantee contrast under system tinting or transparency.
+
+## Contrast references
+
+Against the current light surface `#faf9f6`, the deep copper mark `#85412a` measures 7.16:1. Against the dark surface `#16191e`, the sand and copper gradient endpoints measure 11.59:1 and 4.40:1 respectively. These are sRGB relative-luminance calculations for opaque flat colors, not measurements of the translucent native icon. The copper endpoint does not meet the 4.5:1 threshold for normal-size text on that dark surface.
