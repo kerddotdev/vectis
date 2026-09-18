@@ -22,7 +22,8 @@ export function WindowChromeProvider({ children }: { children: ReactNode }) {
     () =>
       window.vectis?.onWindowEvent((event) => {
         if (event === "toggle-sidebar") toggleSidebar();
-        else setFullscreen(event === "fullscreen-enter");
+        if (event === "fullscreen-enter" || event === "fullscreen-leave")
+          setFullscreen(event === "fullscreen-enter");
       }),
     [],
   );

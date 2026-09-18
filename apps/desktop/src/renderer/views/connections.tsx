@@ -1,148 +1,335 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Schema } from "effect";
-import { ExternalLinkIcon } from "lucide-react";
-import { Notice, Page, Section } from "@/components/layout";
+import { ExternalLinkIcon, LaptopIcon, MonitorSmartphoneIcon } from "lucide-react";
+import { GitHubIcon } from "@/components/github-icon";
+import { Notice, Page } from "@/components/layout";
+import { Hint, Reason } from "@/components/hint";
+import { StatusBadge, type Tone } from "@/components/status";
 import { Button } from "@/components/ui/button";
-import { request, useStateApi } from "@/state";
+import { Machines } from "@/shell/machine-switcher";
+import { request, RequestError, useStateApi } from "@/state";
 
 const Verification = Schema.Struct({ verificationCode: Schema.String });
+const codes = { pair: "", login: "" };
 
-function Code({ value, children }: { value: string; children: ReactNode }) {
+function Card({
+  icon,
+  title,
+  hint,
+  status,
+  description,
+  children,
+}: {
+  icon: ReactNode;
+  title: string;
+  hint?: ReactNode;
+  status?: { tone: Tone; label: string } | undefined;
+  description: ReactNode;
+  children?: ReactNode;
+}) {
   return (
-    <Notice>
-      <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="rounded-lg bg-background px-2 py-1 font-mono text-[15px] tracking-widest text-foreground ring-1 ring-border">
-          {value}
+    <section className="rise-in flex flex-col gap-4 rounded-2xl bg-card p-5 ring-1 ring-border">
+      <div className="flex items-start gap-3.5">
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted text-foreground/80">
+          {icon}
         </span>
-        {children}
-      </span>
-    </Notice>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="font-heading text-[15px] font-medium">{title}</h2>
+            {hint}
+            {status && (
+              <span className="ml-auto">
+                <StatusBadge tone={status.tone} label={status.label} />
+              </span>
+            )}
+          </div>
+          <div className="mt-1 max-w-[62ch] text-muted-foreground">{description}</div>
+        </div>
+      </div>
+      {children && (
+        <div className="flex flex-col gap-3 pl-[50px] not-has-[>:not(:empty)]:hidden">
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 
-function Card({ children }: { children: ReactNode }) {
+function VerificationCode({ value, children }: { value: string; children: ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 rounded-2xl bg-card p-4 ring-1 ring-border">{children}</div>
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl bg-muted px-4 py-3">
+      <span className="font-mono text-[15px] tracking-[0.2em] text-foreground" data-selectable>
+        {value}
+      </span>
+      <span className="text-muted-foreground">{children}</span>
+    </div>
   );
 }
 
 export function Connections() {
-  const { perform, machineId, selectMachine } = useStateApi();
-  const [pairCode, setPairCode] = useState("");
-  const [pairMessage, setPairMessage] = useState("");
-  const [loginCode, setLoginCode] = useState("");
-  const [loginMessage, setLoginMessage] = useState("");
-  const [pending, setPending] = useState(false);
-  async function pair() {
-    const value = await perform("cloud.pair");
-    if (value === undefined) return;
-    setPairMessage("");
-    setPairCode(Schema.decodeUnknownSync(Verification)(value).verificationCode);
-  }
-  async function finish() {
-    if ((await perform("cloud.finish")) !== undefined) {
-      setPairCode("");
-      setPairMessage("This Mac is connected.");
-    }
-  }
-  async function remote(action: "controller.login" | "controller.finish" | "controller.logout") {
-    setPending(true);
-    setLoginMessage("");
+  const { perform, machineId, selectMachine, snapshot } = useStateApi();
+  const [pairCode, setPairCode] = useState(codes.pair);
+  const [loginCode, setLoginCode] = useState(codes.login);
+  const [account, setAccount] = useState<
+    { state: "checking" } | { state: "signed-out" } | { state: "signed-in"; machines: number }
+  >({ state: "checking" });
+  const [keychainMissing, setKeychainMissing] = useState(false);
+  const [pending, setPending] = useState<string | null>(null);
+  const [message, setMessage] = useState<{ tone: "success" | "info" | "danger"; text: string }>();
+  useEffect(() => {
+    codes.pair = pairCode;
+    codes.login = loginCode;
+  }, [pairCode, loginCode]);
+  async function checkAccount() {
     try {
-      const value = await request(action);
-      if (action === "controller.login")
-        setLoginCode(Schema.decodeUnknownSync(Verification)(value).verificationCode);
-      if (action === "controller.finish") {
-        const result = Schema.decodeUnknownSync(Schema.Struct({ state: Schema.String }))(value);
-        if (result.state === "linked") setLoginCode("");
-        setLoginMessage(
-          result.state === "linked"
-            ? "Signed in. Choose a machine from the sidebar."
-            : "Browser approval is still pending.",
-        );
-      }
-      if (action === "controller.logout") {
-        selectMachine(undefined);
-        setLoginCode("");
-        setLoginMessage("Remote access revoked. This Mac is selected.");
-      }
+      const machines = Schema.decodeUnknownSync(Machines)(await request("machines.list"));
+      setAccount({ state: "signed-in", machines: machines.filter((item) => !item.revoked).length });
     } catch (issue) {
-      setLoginMessage(issue instanceof Error ? issue.message : "Connection failed.");
-    } finally {
-      setPending(false);
+      setKeychainMissing(issue instanceof RequestError && issue.code === "runtime_missing");
+      setAccount({ state: "signed-out" });
     }
   }
+  useEffect(() => {
+    void checkAccount();
+  }, []);
+  async function run(name: string, work: () => Promise<void>) {
+    setPending(name);
+    setMessage(undefined);
+    try {
+      await work();
+    } catch (issue) {
+      setMessage({
+        tone: "danger",
+        text: issue instanceof Error ? issue.message : "The request failed.",
+      });
+    } finally {
+      setPending(null);
+    }
+  }
+  const cloud = snapshot?.cloud?.state ?? "unconfigured";
+  const paired = cloud !== "unconfigured";
+  const keychainReason = keychainMissing && "Requires the Keychain Helper. See Diagnostics.";
+  const pairReason = (!snapshot && "Start the Vectis service first.") || keychainReason;
   return (
     <Page
       title="Connections"
-      description="Link GitHub, connect this Mac to your Vectis account, and control other machines."
+      description="Vectis works locally without an account. Connect it to your Vectis account when you want GitHub to start jobs here, or to control your other Macs."
     >
-      <Section
-        title="GitHub"
-        description="Install the Vectis GitHub App on the accounts and organizations whose repositories should use your runners."
-      >
-        <div>
-          <Button variant="secondary" onClick={() => void perform("open.github")}>
-            <ExternalLinkIcon />
-            Connect GitHub in browser
-          </Button>
-        </div>
-      </Section>
-      <Section
-        title="This Mac"
-        description="Pair this Mac so GitHub jobs and remote commands can reach it. Build files never leave it."
-      >
-        <Card>
+      {message && (
+        <Notice tone={message.tone} role={message.tone === "danger" ? "alert" : "status"}>
+          {message.text}
+        </Notice>
+      )}
+      <div className="flex flex-col gap-4">
+        <Card
+          icon={<LaptopIcon className="size-[18px]" />}
+          title="This Mac"
+          hint={
+            <Hint>
+              Pairing gives your Vectis account a secure link to this Mac. The Mac connects out to
+              the cloud, so no port is opened, and build files stay here.
+            </Hint>
+          }
+          status={
+            machineId
+              ? undefined
+              : cloud === "connected"
+                ? { tone: "success", label: "Connected" }
+                : cloud === "connecting"
+                  ? { tone: "running", label: "Connecting" }
+                  : cloud === "unavailable"
+                    ? { tone: "attention", label: "Unavailable" }
+                    : { tone: "idle", label: "Not connected" }
+          }
+          description={
+            machineId
+              ? "You are controlling another machine. Switch to This Mac in the sidebar to manage its connection."
+              : paired
+                ? "GitHub jobs and remote commands can reach this Mac."
+                : "Connect this Mac to your Vectis account so GitHub jobs can start on it."
+          }
+        >
+          {!machineId && cloud === "unavailable" && snapshot?.cloud?.message && (
+            <Notice tone="attention">{snapshot.cloud.message}</Notice>
+          )}
+          {!paired && pairCode && !machineId && (
+            <VerificationCode value={pairCode}>
+              Check that your browser shows the same code, approve, then finish here.
+            </VerificationCode>
+          )}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={!!machineId} onClick={() => void pair()}>
-              Begin pairing
-            </Button>
-            <Button variant="secondary" disabled={!!machineId} onClick={() => void finish()}>
-              Finish approved pairing
-            </Button>
+            {!paired && !pairCode && !machineId && (
+              <Reason reason={pairReason}>
+                <Button
+                  disabled={!!pairReason || pending !== null}
+                  onClick={() =>
+                    void run("pair", async () => {
+                      const value = await request("cloud.pair");
+                      setPairCode(Schema.decodeUnknownSync(Verification)(value).verificationCode);
+                    })
+                  }
+                >
+                  <ExternalLinkIcon />
+                  Connect in browser
+                </Button>
+              </Reason>
+            )}
+            {!paired && pairCode && !machineId && (
+              <>
+                <Button
+                  disabled={pending !== null}
+                  onClick={() =>
+                    void run("finish", async () => {
+                      await request("cloud.finish");
+                      setPairCode("");
+                      setMessage({ tone: "success", text: "This Mac is connected." });
+                    })
+                  }
+                >
+                  {pending === "finish" ? "Finishing" : "Finish connecting"}
+                </Button>
+                <Button variant="ghost" disabled={pending !== null} onClick={() => setPairCode("")}>
+                  Start over
+                </Button>
+              </>
+            )}
+            {paired && !machineId && cloud !== "connected" && (
+              <Button
+                variant="secondary"
+                disabled={pending !== null}
+                onClick={() =>
+                  void run("check", async () => {
+                    await request("cloud.finish");
+                    setMessage({ tone: "success", text: "The connection was verified." });
+                  })
+                }
+              >
+                {pending === "check" ? "Checking" : "Check connection"}
+              </Button>
+            )}
           </div>
-          {pairCode && (
-            <Code value={pairCode}>Compare this code in your browser, then approve this Mac.</Code>
-          )}
-          {pairMessage && <Notice tone="success">{pairMessage}</Notice>}
-          {machineId && (
-            <p className="text-muted-foreground">Switch to This Mac in the sidebar to pair it.</p>
-          )}
         </Card>
-      </Section>
-      <Section
-        title="Remote control"
-        description="Sign in to control Vectis on your other machines. File paths then refer to the selected machine."
-      >
-        <Card>
+
+        <Card
+          icon={<GitHubIcon className="size-[18px]" />}
+          title="GitHub"
+          description="Link your GitHub accounts and choose which repositories run on your Macs. This happens on the Vectis website, where you sign in with the same account."
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <Button variant="secondary" onClick={() => void perform("open.github")}>
+              <ExternalLinkIcon />
+              Open GitHub connections
+            </Button>
+            {!paired && !machineId && (
+              <span className="text-xs text-muted-foreground">
+                Connect this Mac first so repositories can use it.
+              </span>
+            )}
+          </div>
+        </Card>
+
+        <Card
+          icon={<MonitorSmartphoneIcon className="size-[18px]" />}
+          title="Other Macs"
+          hint={
+            <Hint>
+              After signing in, choose a machine from the switcher at the bottom of the sidebar.
+              File paths then refer to that machine. Sign-in lasts 90 days.
+            </Hint>
+          }
+          status={
+            account.state === "signed-in"
+              ? { tone: "success", label: "Signed in" }
+              : account.state === "signed-out"
+                ? { tone: "idle", label: "Not signed in" }
+                : undefined
+          }
+          description={
+            account.state === "signed-in"
+              ? `You can control ${account.machines} ${account.machines === 1 ? "machine" : "machines"} on your account from the sidebar.`
+              : "Sign in to control Vectis on your other Macs from this window."
+          }
+        >
+          {account.state === "signed-out" && loginCode && (
+            <VerificationCode value={loginCode}>
+              Check that your browser shows the same code, approve, then finish here.
+            </VerificationCode>
+          )}
           <div className="flex flex-wrap gap-2">
-            <Button disabled={pending} onClick={() => void remote("controller.login")}>
-              Sign in
-            </Button>
-            <Button
-              variant="secondary"
-              disabled={pending}
-              onClick={() => void remote("controller.finish")}
-            >
-              Finish sign-in
-            </Button>
-            <Button
-              variant="ghost"
-              className="ml-auto"
-              disabled={pending}
-              onClick={() => void remote("controller.logout")}
-            >
-              Sign out
-            </Button>
+            {account.state === "signed-out" && !loginCode && (
+              <Reason reason={keychainReason}>
+                <Button
+                  disabled={!!keychainReason || pending !== null}
+                  onClick={() =>
+                    void run("login", async () => {
+                      const value = await request("controller.login");
+                      setLoginCode(Schema.decodeUnknownSync(Verification)(value).verificationCode);
+                    })
+                  }
+                >
+                  <ExternalLinkIcon />
+                  Sign in with browser
+                </Button>
+              </Reason>
+            )}
+            {account.state === "signed-out" && loginCode && (
+              <>
+                <Button
+                  disabled={pending !== null}
+                  onClick={() =>
+                    void run("login-finish", async () => {
+                      const result = Schema.decodeUnknownSync(
+                        Schema.Struct({ state: Schema.String }),
+                      )(await request("controller.finish"));
+                      if (result.state !== "linked") {
+                        setMessage({
+                          tone: "info",
+                          text: "The browser has not approved this sign-in yet.",
+                        });
+                        return;
+                      }
+                      setLoginCode("");
+                      await checkAccount();
+                      setMessage({
+                        tone: "success",
+                        text: "Signed in. Choose a machine from the sidebar.",
+                      });
+                    })
+                  }
+                >
+                  {pending === "login-finish" ? "Finishing" : "Finish sign-in"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  disabled={pending !== null}
+                  onClick={() => setLoginCode("")}
+                >
+                  Start over
+                </Button>
+              </>
+            )}
+            {account.state === "signed-in" && (
+              <Button
+                variant="secondary"
+                disabled={pending !== null}
+                onClick={() =>
+                  void run("logout", async () => {
+                    await request("controller.logout");
+                    selectMachine(undefined);
+                    setAccount({ state: "signed-out" });
+                    setMessage({
+                      tone: "success",
+                      text: "Signed out. This window controls this Mac again.",
+                    });
+                  })
+                }
+              >
+                {pending === "logout" ? "Signing out" : "Sign out"}
+              </Button>
+            )}
           </div>
-          {loginCode && (
-            <Code value={loginCode}>
-              Compare this code in the browser, approve, then finish sign-in.
-            </Code>
-          )}
-          {loginMessage && <Notice>{loginMessage}</Notice>}
         </Card>
-      </Section>
+      </div>
     </Page>
   );
 }

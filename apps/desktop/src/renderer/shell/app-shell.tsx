@@ -1,18 +1,35 @@
 import { useEffect } from "react";
-import { Outlet, useRouterState } from "@tanstack/react-router";
+import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { SidebarToggle } from "@/components/layout";
 import { cn } from "@/lib/utils";
 import { useStateApi } from "@/state";
 import { Sidebar, useSidebarWidth } from "./sidebar";
 import { useWindowChrome } from "./window-chrome";
 
 export function AppShell() {
-  const { collapsed } = useWindowChrome();
+  const { collapsed, fullscreen } = useWindowChrome();
   const { machineId, dismissError } = useStateApi();
+  const navigate = useNavigate();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   useEffect(() => dismissError(), [pathname]);
+  useEffect(
+    () =>
+      window.vectis?.onWindowEvent((event) => {
+        if (event.startsWith("navigate:")) void navigate({ to: event.slice("navigate:".length) });
+      }),
+    [],
+  );
   const { width, resizing, handle } = useSidebarWidth();
   return (
-    <div className="flex h-full">
+    <div className="relative flex h-full">
+      <div
+        className={cn(
+          "absolute top-[9px] z-20 [-webkit-app-region:no-drag]",
+          fullscreen ? "left-3" : "left-[84px]",
+        )}
+      >
+        <SidebarToggle />
+      </div>
       <div
         className={cn(
           "relative shrink-0 overflow-hidden",

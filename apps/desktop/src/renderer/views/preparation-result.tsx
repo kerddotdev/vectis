@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { useState } from "react";
-import { Mono } from "@/components/layout";
+import { Details, Mono } from "@/components/layout";
+import { formatBytes } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -31,33 +32,31 @@ export function PreparationResult({
   if (!Schema.is(Progress)(result)) return null;
   const discardable =
     macos && resumable && ["setup_required", "interrupted"].includes(result.phase ?? "");
+  const actions = [
+    macos && result.phase === "setup_running",
+    macos && result.phase === "ssh_enrollment",
+    macos && result.phase === "ssh_verified",
+    macos && result.phase === "setup_required",
+    resumable && (!macos || result.phase === "interrupted"),
+  ].some(Boolean);
+  const details = (
+    <Details
+      items={[
+        ["Downloaded", result.receivedBytes !== undefined && formatBytes(result.receivedBytes)],
+        ["Image directory", result.directory && <Mono>{result.directory}</Mono>],
+        ["Restore download", result.restoreDirectory && <Mono>{result.restoreDirectory}</Mono>],
+      ]}
+    />
+  );
+  if (!result.nextStep && !actions && !discardable) return details;
   return (
-    <div className="flex flex-col gap-3 rounded-xl bg-muted px-3.5 py-3">
-      <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
-        {result.receivedBytes !== undefined && (
-          <>
-            <dt className="text-muted-foreground">Downloaded</dt>
-            <dd>{Math.floor(result.receivedBytes / 1024 ** 2)} MiB</dd>
-          </>
-        )}
-        {result.directory && (
-          <>
-            <dt className="text-muted-foreground">Image directory</dt>
-            <dd>
-              <Mono>{result.directory}</Mono>
-            </dd>
-          </>
-        )}
-        {result.restoreDirectory && (
-          <>
-            <dt className="text-muted-foreground">Restore download</dt>
-            <dd>
-              <Mono>{result.restoreDirectory}</Mono>
-            </dd>
-          </>
-        )}
-      </dl>
-      {result.nextStep && <p data-selectable>{result.nextStep}</p>}
+    <div className="flex flex-col gap-3 rounded-2xl bg-muted/60 px-4 py-3.5">
+      {result.nextStep && (
+        <p className="font-medium" data-selectable>
+          {result.nextStep}
+        </p>
+      )}
+      {details}
       <div className="flex flex-wrap gap-2 empty:hidden">
         {macos && result.phase === "setup_running" && (
           <Button

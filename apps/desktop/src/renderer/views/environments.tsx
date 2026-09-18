@@ -1,7 +1,20 @@
 import { useState } from "react";
 import { EllipsisIcon, PlayIcon, PlusIcon } from "lucide-react";
 import type { Environment } from "../../../../../packages/protocol/src/index.js";
-import { EmptyState, List, Mono, Notice, Page, Row, Section } from "@/components/layout";
+import { osNames } from "@vectis/design/os-icons";
+import {
+  Details,
+  EmptyState,
+  ExpandableRow,
+  List,
+  Mono,
+  Notice,
+  Page,
+  Section,
+} from "@/components/layout";
+import { Reason, Resources } from "@/components/hint";
+import { OsTile } from "@/components/os-icon";
+import { formatMemory } from "@/lib/format";
 import { PathField } from "@/components/path-field";
 import { StatusBadge } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -23,8 +36,6 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStateApi } from "@/state";
 import { PrepareEnvironment, RegisterEnvironment } from "./prepare-environment";
-
-const osLabels = { linux: "lnx", macos: "mac", windows: "win" } as const;
 
 export function Environments() {
   const { snapshot, machineId } = useStateApi();
@@ -93,37 +104,43 @@ export function Environments() {
 }
 
 function EnvironmentRow({ environment }: { environment: Environment }) {
-  const { submit } = useStateApi();
+  const { submit, snapshot } = useStateApi();
   const [configuring, setConfiguring] = useState(false);
+  const running = snapshot?.instances.filter(
+    (instance) => instance.environmentId === environment.id && instance.status === "running",
+  ).length;
   return (
-    <Row
-      leading={
-        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted font-mono text-[11px] text-muted-foreground">
-          {osLabels[environment.os]}
+    <ExpandableRow
+      leading={<OsTile os={environment.os} />}
+      title={environment.name}
+      summary={
+        <span className="inline-flex items-center gap-3">
+          <Resources cpu={environment.cpu} memoryMiB={environment.memoryMiB} />
+          {!!running && <span>{running} running</span>}
         </span>
       }
-      title={environment.name}
-      detail={
-        <>
-          {environment.cpu} cores · {environment.memoryMiB} MiB ·{" "}
-          <Mono>{environment.basePath}</Mono>
-        </>
-      }
-      trailing={
+      actions={
         <>
           <StatusBadge
             tone={environment.state === "ready" ? "success" : "attention"}
             label={environment.state === "ready" ? "Ready" : "Action required"}
           />
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={environment.state !== "ready"}
-            onClick={() => void submit({ type: "environment.start", id: environment.id })}
+          <Reason
+            reason={
+              environment.state !== "ready" &&
+              "Finish preparing this environment first. Its next step is in Overview."
+            }
           >
-            <PlayIcon />
-            Start clean VM
-          </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={environment.state !== "ready"}
+              onClick={() => void submit({ type: "environment.start", id: environment.id })}
+            >
+              <PlayIcon />
+              Start clean VM
+            </Button>
+          </Reason>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -145,7 +162,30 @@ function EnvironmentRow({ environment }: { environment: Environment }) {
           />
         </>
       }
-    />
+    >
+      <Details
+        items={[
+          ["Guest", osNames[environment.os]],
+          ["CPU cores", environment.cpu],
+          ["Memory", `${formatMemory(environment.memoryMiB)} (${environment.memoryMiB} MiB)`],
+          ["Environment ID", <Mono key="id">{environment.id}</Mono>],
+          ["Base image", <Mono key="base">{environment.basePath}</Mono>],
+          [
+            "VM directory",
+            environment.storagePath ? <Mono>{environment.storagePath}</Mono> : "Service default",
+          ],
+          [
+            "SSH",
+            environment.sshHost && (
+              <Mono>{`${environment.sshUser ? `${environment.sshUser}@` : ""}${environment.sshHost}:${environment.sshPort ?? 22}`}</Mono>
+            ),
+          ],
+          ["SSH key", environment.sshKeyPath && <Mono>{environment.sshKeyPath}</Mono>],
+          ["Firmware", environment.firmwarePath && <Mono>{environment.firmwarePath}</Mono>],
+          ["TPM state", environment.tpmStatePath && <Mono>{environment.tpmStatePath}</Mono>],
+        ]}
+      />
+    </ExpandableRow>
   );
 }
 

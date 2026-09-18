@@ -10,7 +10,8 @@
     "./tailwind.css": "./src/tailwind.css",
     "./fonts/*": "./fonts/*",
     "./components/*": "./src/components/*",
-    "./site": "./src/site.ts"
+    "./site": "./src/site.ts",
+    "./os-icons": "./src/os-icons.ts"
   },
   "scripts": {
     "fonts": "node fetch-fonts.mjs"
