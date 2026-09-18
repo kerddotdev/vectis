@@ -88,19 +88,23 @@ jobs:
   title="Vectis"
   description="GitHub Actions runners in disposable macOS, Ubuntu and Windows virtual machines on your own Apple Silicon Mac."
 >
-  <section class="shell flex flex-col gap-10 pt-24 md:gap-12 md:pt-40">
-    <h1 class="enter max-w-[13ch] text-display font-medium text-balance">
-      GitHub Actions, on the Mac you already own.
-    </h1>
-    <div class="enter flex flex-col gap-10 [animation-delay:140ms] md:flex-row md:items-end md:justify-between">
-      <p class="max-w-[44ch] text-lede text-muted">
-        Vectis gives every job a fresh macOS, Ubuntu or Windows virtual machine on your Apple
-        Silicon Mac, then deletes it when the job is done. VM disks and build files never leave
-        the machine.
-      </p>
-      <div class="flex shrink-0 flex-wrap items-center gap-3">
-        <a class="button button-primary" href={site.download}>Download for macOS</a>
-        <a class="button button-secondary" href="/docs">Read the docs</a>
+  <section class="shell pt-24 md:pt-40">
+    <div class="grid grid-cols-1 items-end gap-12 lg:grid-cols-[1.35fr_1fr] lg:gap-20">
+      <h1 class="enter max-w-[13ch] text-display font-medium text-balance">
+        GitHub Actions, on the Mac you already own.
+      </h1>
+      <div class="enter flex flex-col gap-8 pb-2 [animation-delay:140ms]">
+        <p class="max-w-[34ch] text-lede text-muted">
+          Every job gets a fresh macOS, Ubuntu or Windows VM on your Mac, deleted the moment the
+          job ends.
+        </p>
+        <div class="flex flex-col gap-5">
+          <div class="flex flex-wrap items-center gap-3">
+            <a class="button button-primary" href={site.download}>Download for macOS</a>
+            <a class="button button-secondary" href="/docs">Read the docs</a>
+          </div>
+          <p class="eyebrow">Requires an Apple Silicon Mac. Open source, MIT.</p>
+        </div>
       </div>
     </div>
   </section>
