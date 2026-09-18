@@ -55,6 +55,8 @@ The package does not grant GitHub access or connect a cloud account automaticall
 
 ## Desktop development app
 
+Building desktop or headless app bundles requires Xcode 26 or later for the Icon Composer source in `assets/brand/vectis.icon`. Packaging compiles both the modern asset catalog and a macOS 15 `.icns` fallback. The web mark and reusable palette live beside it under `assets/brand/web`.
+
 Build the renderer before creating a fresh portable payload, then wrap it with the pinned Electron version:
 
 ```sh
