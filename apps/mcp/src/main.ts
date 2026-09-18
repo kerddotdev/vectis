@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { localClient } from "../../../packages/client/src/local.js";
 import { createMcpServer } from "./server.js";
@@ -21,6 +22,9 @@ async function main() {
   const server = createMcpServer(
     () => localClient(home),
     () => LaunchAgent.forHome(home),
+    process.env.VECTIS_KEYCHAIN_HELPER
+      ? { home, credentials: new KeychainCredentials(process.env.VECTIS_KEYCHAIN_HELPER) }
+      : undefined,
   );
   await server.connect(new StdioServerTransport());
 }

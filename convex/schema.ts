@@ -22,6 +22,16 @@ export default defineSchema({
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),
+  pairings: defineTable({
+    owner: v.string(),
+    requestDigest: v.string(),
+    machineId: v.id("machines"),
+    credentialVersion: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_request", ["requestDigest"])
+    .index("by_owner", ["owner"])
+    .index("by_expiry", ["expiresAt"]),
   machineCredentials: defineTable({
     machineId: v.id("machines"),
     digest: v.string(),
