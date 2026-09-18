@@ -2,7 +2,7 @@
 
 GitHub Actions runners on your own machines, with a shared control interface for the desktop, CLI, and agents. VM execution stays local; the central service coordinates identity and commands.
 
-This is a development build, not an installable runner product yet. Start with the [local setup guide](apps/docs/src/content/docs/guides/local-setup.md). It distinguishes working controls from guest setup and GitHub integration that remain under development.
+This is a development build. Signed desktop and standalone CLI packages can be built using the [packaging guide](apps/docs/src/content/docs/guides/development-packages.md); no public release is published yet. Start with the [local setup guide](apps/docs/src/content/docs/guides/local-setup.md) for source development, or the platform setup guides for guest preparation.
 
 The public site uses `https://vectis.kerd.dev`, with [documentation under `/docs`](https://vectis.kerd.dev/docs/) and the [agent index at `/llms.txt`](https://vectis.kerd.dev/llms.txt).
 
