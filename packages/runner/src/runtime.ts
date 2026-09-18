@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { waitForQemu } from "./qmp.js";
 import { availableHostMemory } from "./memory.js";
 import { runProcess } from "./process.js";
+import { probeStorage } from "./storage-probe.js";
 import { waitForAppleVm } from "./apple.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
 
@@ -114,7 +115,12 @@ export class VmRuntime {
       throw new VectisError("runtime_missing", "The configured VM runtime is not executable.");
     });
     const root = environment.storagePath ?? join(this.options.home, "instances");
-    if (!environment.storagePath) await mkdir(root, { recursive: true, mode: 0o700 });
+    await probeStorage(
+      environment.os === "macos" ? join(environment.basePath, "disk.img") : environment.basePath,
+      root,
+      signal,
+      { createDirectory: !environment.storagePath },
+    );
     const directory = this.directoryFor(id, environment);
     await mkdir(directory, { mode: 0o700 });
     try {
