@@ -98,6 +98,8 @@ Usage: vectis <command> [options]
   cloud finish                  Complete an approved pairing from Keychain
   service install               Install and start a macOS login service
   service uninstall             Remove login registration, preserving all data
+  service update                Adopt this runtime when idle; restore the previous one on failure
+  service recover-update        Restore the previous runtime after an interrupted update
   service status                Inspect login registration for this home
   service start                 Start the installed or independent background service
   service run                   Run the service in the foreground
@@ -268,10 +270,14 @@ GitHub pairing require separately configured development services.
 
   if (
     command === "service" &&
-    (subcommand === "install" || subcommand === "uninstall" || subcommand === "status")
+    (subcommand === "install" ||
+      subcommand === "uninstall" ||
+      subcommand === "status" ||
+      subcommand === "update" ||
+      subcommand === "recover-update")
   ) {
     const agent = await LaunchAgent.forHome(home);
-    output(await agent[subcommand]());
+    output(await agent[subcommand === "recover-update" ? "recoverUpdate" : subcommand]());
     return;
   }
   if (command === "service" && subcommand === "run") {

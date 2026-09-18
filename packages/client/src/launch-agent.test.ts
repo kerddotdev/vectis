@@ -47,3 +47,28 @@ macTest("failed bootout preserves registration and all user data", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+macTest("unreachable service with an outstanding lock is not unloaded", async () => {
+  const root = await mkdtemp(join(tmpdir(), "vectis-agent-test-"));
+  const calls: ReadonlyArray<string>[] = [];
+  try {
+    const agent = await LaunchAgent.forHome(join(root, "state"), {
+      directory: root,
+      execute: async (_executable, args) => {
+        calls.push(args);
+        return "";
+      },
+    });
+    await mkdir(agent.home);
+    await writeFile(join(agent.home, "service.lock"), "owned service still shutting down");
+    await writeFile(
+      agent.path,
+      `<key>Label</key><string>${agent.label}</string><key>VECTIS_HOME</key><string>${agent.home}</string>`,
+    );
+    await expect(agent.uninstall()).rejects.toMatchObject({ code: "service_shutdown_pending" });
+    expect(calls).toEqual([]);
+    expect(await agent.installed()).toBe(true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
