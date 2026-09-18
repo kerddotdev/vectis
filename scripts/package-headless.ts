@@ -3,6 +3,7 @@ import { chmod, copyFile, cp, mkdir, open, readdir, realpath, writeFile } from "
 import { basename, join, resolve, sep } from "node:path";
 import { parseArgs, promisify } from "node:util";
 import { verifyPackageLinks } from "./release/package-links.js";
+import { notarizationArguments, notarizeBundle } from "./release/notarization.js";
 
 const { values } = parseArgs({
   options: {
@@ -10,6 +11,8 @@ const { values } = parseArgs({
     launcher: { type: "string" },
     output: { type: "string" },
     identity: { type: "string" },
+    notarize: { type: "boolean" },
+    "keychain-profile": { type: "string" },
   },
 });
 if (!values.package || !values.launcher || !values.output)
@@ -18,6 +21,11 @@ if (!values.package || !values.launcher || !values.output)
   );
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("The headless runtime bundle requires Apple Silicon macOS.");
+const notarize = values.notarize || Boolean(values["keychain-profile"]);
+if (notarize && !values.identity) throw new Error("Notarization requires --identity.");
+const authentication = notarize
+  ? await notarizationArguments(values["keychain-profile"])
+  : undefined;
 const source = await realpath(values.package);
 await verifyPackageLinks(source);
 await mkdir(resolve(values.output), { mode: 0o700 });
@@ -117,6 +125,7 @@ exec "$VECTIS_PACKAGE_ROOT/Vectis Runtime.app/Contents/MacOS/vectis-launcher"${a
 `,
     { mode: 0o755 },
   );
+const notarization = authentication ? await notarizeBundle(app, authentication) : undefined;
 await writeFile(
   join(output, "BUILD.json"),
   JSON.stringify(
@@ -125,7 +134,8 @@ await writeFile(
       application: "Vectis Runtime.app",
       electron: false,
       signing: values.identity ? "developer-id" : "ad-hoc-development",
-      notarized: false,
+      notarized: Boolean(notarization),
+      ...(notarization ? { notarization } : {}),
       payload: "Vectis Runtime.app/Contents/Resources/PAYLOAD.json",
     },
     null,
@@ -133,4 +143,4 @@ await writeFile(
   ) + "\n",
 );
 await run(join(output, "bin/vectis"), ["--help"], { env: { PATH: "/usr/bin:/bin" } });
-console.log(JSON.stringify({ output, app, electron: false, notarized: false }));
+console.log(JSON.stringify({ output, app, electron: false, notarized: Boolean(notarization) }));

@@ -74,7 +74,7 @@ pnpm package:headless --package /absolute/path/to/payload --launcher /absolute/p
 pnpm package:verify /absolute/path/to/new-runtime
 ```
 
-The output contains `Vectis Runtime.app` and `bin/vectis` and `bin/vectis-mcp`. Keep them together. Without `--identity`, this is an ad-hoc development build. Signing does not notarize the bundle; submit it with Apple's notarytool and staple the accepted ticket before distribution. Third-party redistribution requirements still apply to any included Windows runtime.
+The output contains `Vectis Runtime.app` and `bin/vectis` and `bin/vectis-mcp`. Keep them together. Without `--identity`, this is an ad-hoc development build. Signing alone does not notarize the bundle. Add `--notarize` with the same API key environment variables described above, or `--keychain-profile <profile>` with `--identity`. The packager submits to Apple, requires acceptance, staples and validates the ticket, and checks Gatekeeper before recording notarization success. Third-party redistribution requirements still apply to any included Windows runtime.
 
 ## Replace an installed runtime
 
