@@ -14,6 +14,7 @@ import {
   decodeCommand,
   type Command,
 } from "../../../packages/protocol/src/index.js";
+import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { localClient } from "../../../packages/client/src/local.js";
 
 async function main() {
@@ -44,7 +45,10 @@ async function main() {
 
 Usage: vectis <command> [options]
 
-  service start                 Start an independent background service
+  service install               Install and start a macOS login service
+  service uninstall             Remove login registration, preserving all data
+  service status                Inspect login registration for this home
+  service start                 Start the installed or independent background service
   service run                   Run the service in the foreground
   service stop                  Stop through an authenticated service request
   storage                       Inspect image and VM disk usage
@@ -109,12 +113,27 @@ GitHub pairing require separately configured development services.
     });
     return;
   }
+  if (
+    command === "service" &&
+    (subcommand === "install" || subcommand === "uninstall" || subcommand === "status")
+  ) {
+    const agent = await LaunchAgent.forHome(home);
+    output(await agent[subcommand]());
+    return;
+  }
   if (command === "service" && subcommand === "run") {
     process.env.VECTIS_HOME = home;
     await import("../../server/src/main.js");
     return;
   }
   if (command === "service" && subcommand === "start") {
+    if (platform() === "darwin") {
+      const agent = await LaunchAgent.forHome(home);
+      if (await agent.installed()) {
+        output(await agent.start());
+        return;
+      }
+    }
     try {
       const existing = await client();
       await existing.status();
@@ -182,13 +201,7 @@ GitHub pairing require separately configured development services.
     throw new VectisError("unknown_command", "Use operation get or operation wait.");
   const api = await client();
   if (command === "service" && subcommand === "stop") {
-    const response = await fetch(new URL("/v1/shutdown", api.connection.url), {
-      method: "POST",
-      headers: { Authorization: `Bearer ${api.connection.token}` },
-      signal: AbortSignal.timeout(15000),
-    });
-    if (!response.ok)
-      throw new VectisError("shutdown_failed", "The service did not accept shutdown.");
+    await api.shutdown();
     output({ stopping: true });
     return;
   }

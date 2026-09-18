@@ -11,6 +11,7 @@ import {
   capabilities,
   VectisError,
 } from "../../../packages/protocol/src/index.js";
+import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import type { VectisClient } from "../../../packages/client/src/index.js";
 
 const commandSchema = Schema.toJsonSchemaDocument(Request);
@@ -55,7 +56,27 @@ const tools = [
   },
 ].map((tool) => ToolSchema.parse(tool));
 
-export function createMcpServer(connect: () => Promise<VectisClient>) {
+const serviceInput = Schema.Struct({
+  action: Schema.Literals(["install", "start", "stop", "status", "uninstall"]),
+});
+const serviceSchema = Schema.toJsonSchemaDocument(serviceInput);
+
+export function createMcpServer(
+  connect: () => Promise<VectisClient>,
+  loginService?: () => Promise<LaunchAgent>,
+) {
+  const availableTools = loginService
+    ? [
+        ...tools,
+        ToolSchema.parse({
+          name: "vectis_service",
+          description:
+            "Manage the local macOS login service: install, start an installed service, stop owned VMs and the service, inspect registration, or uninstall after stopping. Preserves data. Install requires a built checkout and uses the MCP process runtime paths. This tool works without an API connection except for stop.",
+          inputSchema: { ...serviceSchema.schema, $defs: serviceSchema.definitions },
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        }),
+      ]
+    : tools;
   const server = new Server(
     { name: "vectis", version: "0.1.0" },
     {
@@ -64,11 +85,26 @@ export function createMcpServer(connect: () => Promise<VectisClient>) {
         "Start with vectis_capabilities and vectis_status. Only advertised commands are supported. Reuse an idempotency key only for the same command. Inspect failed and action_required outcomes; never report an accepted operation as completed.",
     },
   );
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: availableTools }));
   server.setRequestHandler(CallToolRequestSchema, async (request, context) => {
     try {
       let result: unknown;
       switch (request.params.name) {
+        case "vectis_service": {
+          if (!loginService)
+            throw new VectisError(
+              "unsupported_tool",
+              "Login service management is unavailable in this MCP session.",
+            );
+          const input = Schema.decodeUnknownSync(serviceInput, { onExcessProperty: "error" })(
+            request.params.arguments,
+          );
+          result =
+            input.action === "stop"
+              ? await (await connect()).shutdown()
+              : await (await loginService())[input.action]();
+          break;
+        }
         case "vectis_storage":
           result = await (await connect()).storage();
           break;

@@ -65,3 +65,36 @@ test("discovery remains available without a running service and errors explain r
     await server.close();
   }
 });
+
+test.skipIf(process.platform !== "darwin")(
+  "MCP login registration discovery works without a running service",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "vectis-mcp-login-"));
+    const { LaunchAgent } = await import("../../../packages/client/src/launch-agent.js");
+    const server = createMcpServer(
+      async () => {
+        throw new Error("The service must not be contacted.");
+      },
+      () => LaunchAgent.forHome(join(root, "state"), { directory: root }),
+    );
+    const client = new Client({ name: "isolated-test", version: "1" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("vectis_service");
+      expect(
+        await client.callTool({ name: "vectis_service", arguments: { action: "status" } }),
+      ).toMatchObject({
+        structuredContent: { result: { installed: false, loaded: false } },
+      });
+      expect(
+        await client.callTool({ name: "vectis_service", arguments: { action: "erase" } }),
+      ).toMatchObject({ isError: true });
+    } finally {
+      await client.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

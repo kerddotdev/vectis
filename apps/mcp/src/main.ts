@@ -3,6 +3,7 @@ import { parseArgs } from "node:util";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { localClient } from "../../../packages/client/src/local.js";
 import { createMcpServer } from "./server.js";
 
@@ -17,7 +18,10 @@ async function main() {
     return;
   }
   const home = values.home ?? process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
-  const server = createMcpServer(() => localClient(home));
+  const server = createMcpServer(
+    () => localClient(home),
+    () => LaunchAgent.forHome(home),
+  );
   await server.connect(new StdioServerTransport());
 }
 main().catch(() => {
