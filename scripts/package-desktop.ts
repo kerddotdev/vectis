@@ -1,6 +1,7 @@
+import { compileBrandIcons } from "./release/brand-icons.js";
 import { relocatePackageLinks, verifyPackageLinks } from "./release/package-links.js";
 import { packager } from "@electron/packager";
-import { access, mkdir, readFile, realpath } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Schema } from "effect";
@@ -51,7 +52,10 @@ for (const entry of [
 ])
   await access(join(source, entry));
 await mkdir(output, { mode: 0o700 });
+const brandDirectory = join(output, ".brand");
+const brand = await compileBrandIcons(brandDirectory);
 const paths = await packager({
+  icon: brand.icon,
   dir: join(source, "application"),
   out: output,
   name: "Vectis Dev",
@@ -66,9 +70,9 @@ const paths = await packager({
   derefSymlinks: false,
   afterCopy: [({ buildPath }) => relocatePackageLinks(join(source, "application"), buildPath)],
   overwrite: false,
-  extraResource: join(source, "runtime"),
+  extraResource: [join(source, "runtime"), brand.catalog],
   appCategoryType: "public.app-category.developer-tools",
-  extendInfo: { LSMinimumSystemVersion: "15.0" },
+  extendInfo: { LSMinimumSystemVersion: "15.0", CFBundleIconName: "vectis" },
   ...(values.sign
     ? {
         osxSign: {
@@ -97,7 +101,7 @@ const paths = await packager({
       }
     : {}),
   ...(notarization ? { osxNotarize: notarization } : {}),
-});
+}).finally(() => rm(brandDirectory, { recursive: true }));
 for (const path of paths) await verifyPackageLinks(path);
 console.log(
   JSON.stringify({
