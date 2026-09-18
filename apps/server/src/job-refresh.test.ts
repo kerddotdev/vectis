@@ -22,6 +22,7 @@ test("job refresh does not block machine control and retries reuse its durable o
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
+    disconnectRepository: async () => {},
     setAutomatic: async () => {},
     repositories: async () => [],
     findRunner: async () => null,
@@ -70,6 +71,7 @@ test("disabling automatic admission cancels a queued demand before guest startup
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
+    disconnectRepository: async () => {},
     setAutomatic: async () => {},
     repositories: async () => [
       {
@@ -129,6 +131,7 @@ test("incomplete repository scans require attention instead of claiming full rec
     refreshJob: async () => ({ jobId: 1, labels: [], status: "queued", conclusion: null }),
     repositories: async () => [],
     connectRepository: async () => "binding",
+    disconnectRepository: async () => {},
     setAutomatic: async () => {},
     findRunner: async () => null,
     prepareRunner: async () => ({ state: "released", id: "unused" }),

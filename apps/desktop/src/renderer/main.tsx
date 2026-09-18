@@ -347,6 +347,21 @@ function Connections() {
             <button
               className="secondary"
               onClick={() =>
+                void submit({ type: "repository.disconnect", bindingId: repository.id }).then(
+                  (value) => {
+                    if (value !== undefined)
+                      setMessage(
+                        "Disconnection requested. Follow the operation in Overview, then refresh repositories. Running jobs can finish.",
+                      );
+                  },
+                )
+              }
+            >
+              Disconnect repository
+            </button>
+            <button
+              className="secondary"
+              onClick={() =>
                 void submit({
                   type: "repository.automatic",
                   bindingId: repository.id,

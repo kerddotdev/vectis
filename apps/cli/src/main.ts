@@ -74,6 +74,7 @@ Usage: vectis <command> [options]
   job refresh <binding-id> <job-id>  Recover a job state directly from GitHub
   job list <binding-id>         Read recent GitHub job status for a connected repository
   repository enable-auto <id>   Enable automatic runners for matching queued jobs
+  repository disconnect <id>   Stop future runner admission without interrupting running jobs
   repository disable-auto <id>  Disable future automatic runner admission
   repository list               List this machine's connected repositories (requires cloud pairing)
   storage                       Inspect image and VM disk usage
@@ -354,6 +355,8 @@ GitHub pairing require separately configured development services.
       repositoryName: id,
       environmentId: values.environment,
     });
+  else if (command === "repository" && subcommand === "disconnect" && id)
+    request = decodeCommand({ type: "repository.disconnect", bindingId: id });
   else if (command === "environment" && subcommand === "install-macos" && id)
     request = decodeCommand({
       type: "environment.install-macos",

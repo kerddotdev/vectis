@@ -109,3 +109,52 @@ test("foreign account and machine ownership are rechecked at persistence", async
     device.mutation(api.repositoryBindings.setAutomatic, { bindingId: id, enabled: true }),
   ).rejects.toThrow();
 });
+
+test("machine disconnection is scoped, repeatable, and does not remove another host's capacity", async () => {
+  const { t, owner, machineId, accountId } = await setup();
+  const otherMachine = await owner.mutation(api.machines.enroll, {
+    localId: "other",
+    name: "Other Mac",
+  });
+  const args = {
+    owner: identity.tokenIdentifier,
+    machineId,
+    accountId,
+    repositoryId: 42,
+    repositoryName: "sandbox",
+    installationId: 81,
+    environmentId: "linux",
+  };
+  const id = await t.mutation(internal.repositoryBindings.save, args);
+  const otherId = await t.mutation(internal.repositoryBindings.save, {
+    ...args,
+    machineId: otherMachine,
+  });
+  const device = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: machineId,
+    credentialVersion: 0,
+  });
+  await device.mutation(api.repositoryBindings.setAutomatic, { bindingId: id, enabled: true });
+  await expect(
+    device.mutation(api.repositoryBindings.disconnectForMachine, { bindingId: otherId }),
+  ).rejects.toThrow();
+  await device.mutation(api.repositoryBindings.disconnectForMachine, { bindingId: id });
+  await device.mutation(api.repositoryBindings.disconnectForMachine, { bindingId: id });
+  expect(await device.query(api.repositoryBindings.forMachine, {})).toEqual([]);
+  expect(await t.run((ctx) => ctx.db.get("repositoryBindings", id))).toMatchObject({
+    enabled: false,
+    automatic: false,
+  });
+  expect(await t.run((ctx) => ctx.db.get("repositoryBindings", otherId))).toMatchObject({
+    enabled: true,
+  });
+  expect(await t.mutation(internal.repositoryBindings.save, args)).toBe(id);
+  expect(await device.query(api.repositoryBindings.forMachine, {})).toMatchObject([
+    { id, automatic: false },
+  ]);
+  await owner.mutation(api.machines.revoke, { id: machineId });
+  await expect(
+    device.mutation(api.repositoryBindings.disconnectForMachine, { bindingId: id }),
+  ).rejects.toThrow();
+});

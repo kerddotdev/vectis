@@ -8,6 +8,7 @@ async function fixture() {
   const store = new Store(":memory:");
   const broker = {
     connectRepository: vi.fn(async () => "binding"),
+    disconnectRepository: async () => {},
     setAutomatic: vi.fn(async () => {}),
     analyzeMigration: vi.fn(async () => {
       throw new Error("unused");

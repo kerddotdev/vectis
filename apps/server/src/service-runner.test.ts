@@ -25,6 +25,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     await writeFile(basePath, "isolated test image");
     const broker = {
       connectRepository: vi.fn(async () => "binding"),
+      disconnectRepository: async () => {},
       setAutomatic: vi.fn(async () => {}),
       analyzeMigration: vi.fn(async () => {
         throw new Error("unused");

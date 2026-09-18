@@ -187,3 +187,15 @@ export const saveForMachine = internalMutation({
     return saveBinding(ctx, { ...args, owner: target.owner, machineId: target._id });
   },
 });
+
+export const disconnectForMachine = mutation({
+  args: { bindingId: v.string() },
+  handler: async (ctx, args) => {
+    const target = await machine(ctx);
+    const id = ctx.db.normalizeId("repositoryBindings", args.bindingId);
+    const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
+    if (!binding || binding.machineId !== target._id || binding.owner !== target.owner)
+      throw new ConvexError({ code: "repository_access_denied" });
+    await ctx.db.patch("repositoryBindings", binding._id, { enabled: false, automatic: false });
+  },
+});
