@@ -130,7 +130,8 @@ else {
               data = await (await client()).submit(request.command, request.key);
               break;
             }
-            case "service.install": {
+            case "service.install":
+            case "service.update": {
               const node = process.env.VECTIS_NODE_EXECUTABLE;
               if (!node)
                 throw new VectisError(
@@ -141,7 +142,14 @@ else {
               const directory = process.env.VECTIS_LAUNCH_AGENTS_DIR;
               data = await (
                 await LaunchAgent.forHome(home, directory ? { directory } : {})
-              ).install(process.env, node);
+              )[action === "service.update" ? "update" : "install"](process.env, node);
+              break;
+            }
+            case "service.recover-update":
+            case "service.uninstall": {
+              const directory = process.env.VECTIS_LAUNCH_AGENTS_DIR;
+              const agent = await LaunchAgent.forHome(home, directory ? { directory } : {});
+              data = await agent[action === "service.uninstall" ? "uninstall" : "recoverUpdate"]();
               break;
             }
             case "service.stop":

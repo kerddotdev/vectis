@@ -81,9 +81,18 @@ function Overview() {
         </button>
         <span className="muted">Running work continues when paused.</span>
         {!machineId && (
-          <button disabled={!snapshot} onClick={() => void perform("service.stop-idle")}>
-            Stop service if idle
-          </button>
+          <>
+            <button disabled={!snapshot} onClick={() => void perform("service.stop-idle")}>
+              Stop service if idle
+            </button>
+            <button onClick={() => void perform("service.update")}>Use this app's runtime</button>
+            <button onClick={() => void perform("service.recover-update")}>
+              Recover runtime update
+            </button>
+            <button disabled={!!snapshot} onClick={() => void perform("service.uninstall")}>
+              Remove login service
+            </button>
+          </>
         )}
       </div>
       <section className="section">

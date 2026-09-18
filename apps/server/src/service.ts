@@ -714,9 +714,10 @@ export class Service {
                 result: { instanceId: id },
               });
             } catch (error) {
-              const remaining = await this.runtime
-                .hasWorkDirectory(id, record.directory)
-                .catch(() => true);
+              const remaining =
+                error instanceof VectisError && error.code === "storage_access_required"
+                  ? false
+                  : await this.runtime.hasWorkDirectory(id, record.directory).catch(() => true);
               this.store.put("instance", id, {
                 ...record,
                 status: remaining ? "interrupted" : "stopped",
@@ -788,6 +789,7 @@ export class Service {
         "runtime_missing",
         "runtime_incompatible",
         "storage_unavailable",
+        "storage_access_required",
         "reconciliation_required",
       ].includes(issue.code)
         ? "action_required"

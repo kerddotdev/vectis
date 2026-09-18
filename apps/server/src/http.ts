@@ -96,6 +96,19 @@ export async function startService(
   let relay: Awaited<ReturnType<typeof configuredRelay>>;
   let connection: Connection | undefined;
   let closing = false;
+  const storageAbort = new AbortController();
+  let storageInspection: ReturnType<typeof storageReport> | undefined;
+  const inspectStorage = () => {
+    if (closing) throw new VectisError("service_closing", "The service is shutting down.");
+    storageInspection ??= storageReport(
+      store.snapshot(),
+      options.home,
+      storageAbort.signal,
+    ).finally(() => {
+      storageInspection = undefined;
+    });
+    return storageInspection;
+  };
   let relayUpdate = Promise.resolve();
   const reload = () => {
     const current = relayUpdate.then(async () => {
@@ -174,7 +187,7 @@ export async function startService(
       if (request.method === "GET" && request.url === "/v1/doctor")
         return reply(response, 200, runtimeDiagnostics(options, "service"));
       if (request.method === "GET" && request.url === "/v1/storage")
-        return reply(response, 200, await storageReport(store.snapshot(), options.home));
+        return reply(response, 200, await inspectStorage());
       if (request.method === "GET" && request.url === "/v1/status")
         return reply(response, 200, { ...store.snapshot(), cloud });
       if (request.method === "GET" && request.url === "/v1/capabilities")
@@ -237,6 +250,8 @@ export async function startService(
       service,
       close: async () => {
         closing = true;
+        storageAbort.abort();
+        await storageInspection;
         await relayUpdate;
         await service.close();
         await relay?.close();
@@ -247,6 +262,8 @@ export async function startService(
       },
     };
   } catch (error) {
+    storageAbort.abort();
+    await storageInspection;
     await relay?.close();
     server.close();
     await service.close();

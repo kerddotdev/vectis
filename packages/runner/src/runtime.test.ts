@@ -144,3 +144,21 @@ hostTest("native cloning preserves sparse disks and isolates guest writes", asyn
   }
   await runtime.stop(instance.id);
 });
+
+hostTest(
+  "default instance storage permissions are checked before creating a VM directory",
+  async () => {
+    const { chmod } = await import("node:fs/promises");
+    const { home, runtime, environment } = await fixture("process.exit(0);");
+    const instances = join(home, "instances");
+    await mkdir(instances, { mode: 0o000 });
+    try {
+      await expect(runtime.start("denied", environment, () => {})).rejects.toMatchObject({
+        code: "storage_access_required",
+      });
+    } finally {
+      await chmod(instances, 0o700);
+    }
+    expect(await runtime.hasWorkDirectory("denied")).toBe(false);
+  },
+);

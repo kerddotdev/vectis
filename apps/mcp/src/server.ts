@@ -97,7 +97,15 @@ const tools = [
 ].map((tool) => ToolSchema.parse(tool));
 
 const serviceInput = Schema.Struct({
-  action: Schema.Literals(["install", "start", "stop", "status", "uninstall"]),
+  action: Schema.Literals([
+    "install",
+    "start",
+    "stop",
+    "status",
+    "uninstall",
+    "update",
+    "recoverUpdate",
+  ]),
   ifIdle: Schema.optional(Schema.Boolean),
 });
 const cloudInput = Schema.Struct({
@@ -133,7 +141,7 @@ export function createMcpServer(
         ToolSchema.parse({
           name: "vectis_service",
           description:
-            "Manage the local macOS login service: install, start an installed service, stop owned VMs and the service, inspect registration, or uninstall after stopping. Preserves data. Install requires a built checkout and uses the MCP process runtime paths. This tool works without an API connection except for stop.",
+            "Manage the local macOS login service: install, start an installed service, stop owned VMs and the service, inspect registration, or uninstall after stopping. Preserves data. Install and update use the MCP process runtime paths. Update refuses active work and restores the previous registration if startup fails. Use recoverUpdate after an interrupted update. This tool works without an API connection except for stop.",
           inputSchema: { ...serviceSchema.schema, $defs: serviceSchema.definitions },
           annotations: { readOnlyHint: false, destructiveHint: true },
         }),

@@ -52,3 +52,11 @@ The QEMU launcher supplies an explicit data directory. Windows boots from the co
 For Homebrew libraries, staging also copies the installed license texts, supporting authors/readme files, and available SPDX metadata into `licenses/homebrew`. Multiple libraries from the same formula share one notice directory. Installation receipts are excluded, and a formula with no installed license text fails staging.
 
 `BUILD.json` records source hashes, collected notice paths, and unresolved release requirements. This staging output is not approved for redistribution: corresponding sources, patches, build recipes, and a review of all applicable license materials are still required before publishing. Collecting installed notices alone does not establish that the dependency bundle is ready for release.
+
+Collect the exact installed Homebrew source archives, upstream patches and formula recipes separately from the executable bundle:
+
+```sh
+pnpm package:runtime-sources --runtime /absolute/path/to/staged-runtime --output /absolute/path/to/source-materials
+```
+
+The collector reads each included formula's installed SPDX metadata, excludes binary bottles, and verifies every archive and patch against its recorded SHA-256. Downloads use HTTPS with bounded size and duration. Repeating collection verifies completed files and retries incomplete downloads. It also includes the Vectis patch and this custom QEMU build recipe. `SOURCES.json` records completion; a completed collection is not an automatic redistribution approval. Review the resulting materials against the actual custom build and all bundled libraries before publishing.

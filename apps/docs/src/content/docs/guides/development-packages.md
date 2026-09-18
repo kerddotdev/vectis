@@ -28,6 +28,15 @@ pnpm package:cli --output /absolute/path/to/new-package --helpers /absolute/path
 
 Staging copies the ARM64 binaries and non-system libraries, rewrites library references within the bundle, and records source hashes. It does not modify the original installations. This development bundle still requires complete corresponding sources and third-party license materials before redistribution; `BUILD.json` records that limitation.
 
+Collect the pinned sources and verify them against the runtime you intend to package:
+
+```sh
+pnpm package:runtime-sources --runtime /absolute/path/to/windows-runtime --output /absolute/path/to/source-materials
+pnpm package:verify-runtime-sources --runtime /absolute/path/to/windows-runtime --sources /absolute/path/to/source-materials
+```
+
+Verification checks component versions, source and upstream patch coverage against the runtime's bundled SPDX records, archive checksums and sizes, notice and recipe files, and the custom QEMU patch. Missing or mismatched materials fail verification. The DMG packager performs the same verification on its staged copies before creating the image. This checks technical completeness and integrity; it does not grant a license or certify legal compliance.
+
 `package:verify` runs isolated service start, pause, stop, restart, resume, MCP stdio, and cleanup checks using the packaged runtime with no Node on PATH. It preserves failed-test state if service shutdown cannot be verified. Run it after moving the package outside the checkout to check relocation too.
 
 ## Use
@@ -63,3 +72,41 @@ For a team App Store Connect API key, use `--sign --notarize` with `APPLE_API_KE
 Keep the app at its installed location while its login service is registered. The portable payload and app contain their own copies of the runtime, so the payload can be removed after packaging if no service uses it.
 
 macOS file privacy permissions also apply to the signed background service. A successful CLI test from a terminal does not establish that the login service can access the same images or storage directory. Verify that access separately before relying on unattended VM startup.
+
+## Electron-free signed runtime
+
+The standalone runtime can also be packaged as a native macOS application bundle without Electron. Build the small launcher, then wrap a portable payload:
+
+```sh
+swift build --package-path native/apple --configuration release --product vectis-launcher
+pnpm package:headless --package /absolute/path/to/payload --launcher /absolute/path/to/vectis-launcher --output /absolute/path/to/new-runtime --identity YOUR_DEVELOPER_ID_IDENTITY
+pnpm package:verify /absolute/path/to/new-runtime
+```
+
+The output contains `Vectis Runtime.app` and `bin/vectis` and `bin/vectis-mcp`. Keep them together. Without `--identity`, this is an ad-hoc development build. Signing alone does not notarize the bundle. Add `--notarize` with the same API key environment variables described above, or `--keychain-profile <profile>` with `--identity`. The packager submits to Apple, requires acceptance, staples and validates the ticket, and checks Gatekeeper before recording notarization success. Third-party redistribution requirements still apply to any included Windows runtime.
+
+## Replace an installed runtime
+
+Keep the previous package at its original location. Run the new package's CLI against the existing state directory:
+
+```sh
+/absolute/path/to/new-package/bin/vectis service update --home /absolute/path/to/state --json
+```
+
+This validates the new runtime paths, refuses active work, waits for the old service to stop, and replaces its login registration. The new service must respond before the update succeeds. If startup fails, Vectis attempts to restore and start the previous registration. VM images, credentials, and configuration stay in the same locations.
+
+After an interrupted update, use `service recover-update` with the same home. The saved previous registration remains available until recovery succeeds. Other registration changes are blocked while recovery is pending, and concurrent clients cannot replace the registration simultaneously. Keep both packages until the operation completes.
+
+The desktop's **Use this app's runtime** and **Recover runtime update** buttons use the same operations. MCP exposes `vectis_service` with `action: "update"` or `action: "recoverUpdate"`. Updates adopt the runtime running that client; they do not download a release. This recovery restores the runtime registration, not a backup of application data or a general database downgrade.
+
+## Desktop disk image
+
+Create a signed, notarized development DMG from an already notarized desktop app. Include the matching collected runtime sources when Windows binaries are bundled:
+
+```sh
+pnpm package:disk-image --app /absolute/path/to/Vectis\ Dev.app --output /absolute/path/to/new.dmg --identity YOUR_DEVELOPER_ID_IDENTITY --sources /absolute/path/to/source-materials
+```
+
+Use the API key environment variables above or `--keychain-profile`. The command verifies the app signature and stapled ticket, includes an Applications shortcut and installation instructions, signs and notarizes the disk image, then writes a SHA-256 manifest alongside it. It does not publish the artifact.
+
+For a first installation, drag the app to Applications before opening it and installing the service. For an upgrade, place the new app in a separate permanent folder and use **Use this app's runtime**. Keep the old app at its original path until the switch succeeds. Do not overwrite a runtime used by a running service, and do not install the background service directly from a mounted DMG.
