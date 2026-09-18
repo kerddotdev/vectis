@@ -114,6 +114,11 @@ export const RepositoryConnection = Schema.Struct({
 });
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("environment.discard-macos"),
+    id: Identifier,
+    environmentId: Identifier,
+  }),
   Schema.Struct({ type: Schema.Literal("repository.disconnect"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.install-macos"), ...MacInstallation.fields }),
   Schema.Struct({ type: Schema.Literal("environment.prepare-linux"), ...LinuxPreparation.fields }),
@@ -183,6 +188,11 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "environment.discard-macos",
+    description:
+      "Permanently delete the current stopped, unregistered macOS setup attempt. Requires its setup ID and exact environment ID confirmation. Registered images and original IPSW files are preserved.",
+  },
   {
     name: "repository.disconnect",
     description:

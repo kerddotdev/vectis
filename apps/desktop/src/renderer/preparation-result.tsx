@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { useState } from "react";
 import { useStateApi } from "./state.js";
 const Progress = Schema.Struct({
   setupId: Schema.String,
@@ -17,6 +18,7 @@ export function PreparationResult({
   macos?: boolean;
 }) {
   const { submit } = useStateApi();
+  const [confirmation, setConfirmation] = useState("");
   if (!Schema.is(Progress)(result)) return null;
   return (
     <div>
@@ -43,6 +45,30 @@ export function PreparationResult({
         >
           Resume preparation
         </button>
+      )}
+      {macos && resumable && ["setup_required", "interrupted"].includes(result.phase ?? "") && (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit({
+              type: "environment.discard-macos",
+              id: result.setupId,
+              environmentId: confirmation.trim(),
+            });
+          }}
+        >
+          <label>
+            Environment ID to permanently discard this unregistered setup
+            <input
+              required
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+            />
+          </label>
+          <button type="submit" disabled={!confirmation.trim()}>
+            Discard setup files
+          </button>
+        </form>
       )}
     </div>
   );

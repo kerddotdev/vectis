@@ -1,3 +1,4 @@
+import { discardMacInstallation } from "./macos-discard.js";
 import { completeMacRegistration } from "./macos-registration.js";
 import {
   startMacInstallation,
@@ -104,6 +105,15 @@ export class Service {
           "Finish or cancel the active image preparation before changing environments or starting VMs.",
         );
       switch (command.type) {
+        case "environment.discard-macos": {
+          if (this.preparing)
+            throw new VectisError(
+              "preparation_active",
+              "Stop the active setup before discarding it.",
+            );
+          result = await discardMacInstallation(this.store, command.id, command.environmentId);
+          break;
+        }
         case "environment.install-macos":
         case "environment.resume-macos":
         case "environment.open-macos-setup": {
