@@ -211,7 +211,7 @@ else {
               data = null;
               break;
             case "open.docs":
-              await shell.openExternal("https://vectis.kerd.dev/docs/");
+              await shell.openExternal("https://vectis.kerd.dev/docs");
               data = null;
               break;
             case "open.github":
@@ -266,7 +266,7 @@ else {
           submenu: [
             {
               label: "Vectis Documentation",
-              click: () => void shell.openExternal("https://vectis.kerd.dev/docs/"),
+              click: () => void shell.openExternal("https://vectis.kerd.dev/docs"),
             },
           ],
         },
