@@ -16,3 +16,5 @@ apps/docs/src/content/docs/reference/cli.md
 .dev.vars
 .dev.vars.*
 apps/docs/site/
+
+apps/desktop/renderer/

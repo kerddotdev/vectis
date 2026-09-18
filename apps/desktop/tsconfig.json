@@ -1,0 +1,4 @@
+{
+  "extends": "../web/tsconfig.json",
+  "include": ["src/renderer", "src/bridge.ts", "vite.config.ts"]
+}
