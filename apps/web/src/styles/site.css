@@ -25,6 +25,11 @@
     text-rendering: optimizeLegibility;
     scroll-padding-top: 88px;
   }
+  @media (prefers-reduced-motion: no-preference) {
+    html {
+      scroll-behavior: smooth;
+    }
+  }
   body {
     min-height: 100dvh;
     display: flex;
