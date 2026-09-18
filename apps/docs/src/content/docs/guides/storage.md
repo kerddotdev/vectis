@@ -64,3 +64,9 @@ The report separates base images from active and interrupted instances and inclu
 | `guestBreakdown`       | Availability of guest filesystem inspection                               |
 
 Sparse files can have a large capacity and use fewer host blocks. Copy-on-write clones can share blocks, so summing `allocatedBytes` does not measure exclusive physical consumption. Guest filesystem breakdown is currently unavailable: the report cannot yet tell you how much space is used by guest packages, caches, or build files inside a disk image.
+
+## Background access to external storage
+
+A path that works from Terminal may still be inaccessible to the installed background runtime. Keep the volume mounted and check the runtime's access under **System Settings > Privacy & Security > Files and Folders**. Selecting a folder in the desktop does not by itself prove that the independent service has permission to read it. Vectis does not grant Full Disk Access or change system privacy settings automatically.
+
+Storage measurements run in a separate owned process with a deadline. A blocked or unavailable volume returns an unavailable result with next steps instead of leaving the measurement pending indefinitely. Concurrent requests share the current measurement, and stopping the service cancels it. This protects inspection; it does not bypass permission requirements for VM startup or image preparation.
