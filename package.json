@@ -37,7 +37,8 @@
     "package:verify": "pnpm build && node dist/scripts/verify-package.js",
     "package:desktop": "pnpm build && node dist/scripts/package-desktop.js",
     "package:headless": "pnpm build && node dist/scripts/package-headless.js",
-    "package:windows-runtime": "pnpm build && node dist/scripts/package-windows-runtime.js"
+    "package:windows-runtime": "pnpm build && node dist/scripts/package-windows-runtime.js",
+    "package:runtime-sources": "pnpm build && node dist/scripts/collect-runtime-sources.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0",
