@@ -12,6 +12,27 @@ const toggleScript = `document.addEventListener("click", (event) => {
   const next = root.dataset.theme === "dark" ? "light" : "dark";
   root.dataset.theme = next;
   localStorage.setItem(${JSON.stringify(themeStorageKey)}, next);
+});
+const closeMenu = (menu) => {
+  if (!menu.open || menu.classList.contains("closing")) return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return void (menu.open = false);
+  menu.classList.add("closing");
+  menu.querySelector("nav").addEventListener("animationend", () => {
+    menu.classList.remove("closing");
+    menu.open = false;
+  }, { once: true });
+};
+document.addEventListener("click", (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  for (const menu of document.querySelectorAll("details.menu[open]")) {
+    if (target && menu.querySelector("summary").contains(target)) {
+      event.preventDefault();
+      closeMenu(menu);
+    } else if (!target || !menu.contains(target)) closeMenu(menu);
+  }
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") document.querySelectorAll("details.menu[open]").forEach(closeMenu);
 });`;
 ---
 
@@ -250,6 +271,25 @@ const toggleScript = `document.addEventListener("click", (event) => {
     box-shadow:
       inset 0 0 0 1px var(--vectis-hairline-strong),
       var(--vectis-shadow-lg);
+  }
+  .menu[open] nav {
+    transform-origin: top right;
+    animation: menu-in 160ms var(--vectis-ease-out, ease-out);
+  }
+  .menu.closing nav {
+    animation: menu-out 120ms ease-in forwards;
+  }
+  @keyframes menu-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
+  }
+  @keyframes menu-out {
+    to {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.97);
+    }
   }
   .menu nav a {
     padding: 8px 10px;

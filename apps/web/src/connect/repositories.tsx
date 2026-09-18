@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useAction, useMutation } from "convex/react";
-import { EllipsisIcon, PlusIcon, SearchIcon } from "lucide-react";
+import { Collapsible } from "@base-ui/react/collapsible";
+import { ChevronRightIcon, EllipsisIcon, PlusIcon, SearchIcon } from "lucide-react";
 import { api } from "../../../../convex/_generated/api.js";
 import { errorCode } from "./Connect.js";
 import { Header, online, type Bindings, type Identity, type Machines } from "./dashboard.js";
@@ -48,6 +49,10 @@ export function RepositoriesTab({
       filter === "all" ? true : filter === "enabled" ? binding.enabled : !binding.enabled,
     )
     .filter((binding) => name(binding).toLowerCase().includes(search.trim().toLowerCase()));
+  const grouped = new Map<string, Bindings>();
+  for (const binding of visible)
+    grouped.set(name(binding), [...(grouped.get(name(binding)) ?? []), binding]);
+  const groups = [...grouped].sort(([left], [right]) => left.localeCompare(right));
   const canConnect = accounts.length > 0 && (machines?.length ?? 0) > 0;
   return (
     <>
@@ -110,59 +115,101 @@ export function RepositoriesTab({
               </p>
             ) : (
               <ul className="flex flex-col divide-y divide-hairline">
-                {visible.map((binding) => {
-                  const machine = machines?.find((item) => item._id === binding.machineId);
-                  const environment = machine?.environments?.find(
-                    (item) => item.id === binding.environmentId,
-                  );
-                  const status = binding.enabled ? (
-                    <Status tone="success">Connected</Status>
+                {groups.map(([repository, items]) => {
+                  const connected = items.filter((binding) => binding.enabled).length;
+                  const hosts = new Set(items.map((binding) => binding.machineId)).size;
+                  const status = connected ? (
+                    <Status tone="success">{connected} connected</Status>
                   ) : (
                     <Status tone="neutral">Disabled</Status>
                   );
                   return (
-                    <li key={binding._id} className="flex items-center gap-4 py-3.5 pr-3 pl-5">
-                      <div className="min-w-0 flex-1">
-                        <p className="font-medium break-words sm:truncate">{name(binding)}</p>
-                        <p className="flex min-w-0 items-center gap-1.5 text-[14px] text-muted">
-                          {environment && <OsIcon os={environment.os} className="size-3.5" />}
-                          <span className="truncate">
-                            {environment?.name ?? binding.environmentId} on{" "}
-                            {machine?.name ?? "a removed Mac"}
-                            {machine && !online(machine) && " (offline)"}
+                    <li key={repository}>
+                      <Collapsible.Root>
+                        <Collapsible.Trigger className="group flex w-full items-center gap-4 py-4 pr-5 pl-5 text-left outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-inset">
+                          <ChevronRightIcon
+                            className="size-4 shrink-0 text-muted transition-transform duration-200 group-data-panel-open:rotate-90"
+                            aria-hidden
+                          />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-medium break-words sm:truncate">
+                              {repository}
+                            </span>
+                            <span className="block text-[14px] text-muted">
+                              {items.length} {items.length === 1 ? "environment" : "environments"}{" "}
+                              on {hosts} {hosts === 1 ? "Mac" : "Macs"}
+                            </span>
+                            <span className="mt-2 block sm:hidden">{status}</span>
                           </span>
-                        </p>
-                        <div className="mt-2 sm:hidden">{status}</div>
-                      </div>
-                      <div className="hidden sm:block">{status}</div>
-                      {binding.enabled ? (
-                        <ActionMenu
-                          label={`Actions for ${name(binding)}`}
-                          trigger={<EllipsisIcon className="size-4" />}
-                          items={[
-                            {
-                              label: "Disable connection",
-                              danger: true,
-                              onSelect: () =>
-                                void disable({ id: binding._id })
-                                  .then(() =>
-                                    setMessage({
-                                      tone: "success",
-                                      text: `${name(binding)} no longer starts jobs on your Macs.`,
-                                    }),
-                                  )
-                                  .catch(() =>
-                                    setMessage({
-                                      tone: "danger",
-                                      text: "The connection could not be disabled. Try again.",
-                                    }),
-                                  ),
-                            },
-                          ]}
-                        />
-                      ) : (
-                        <span className="size-9 shrink-0" aria-hidden />
-                      )}
+                          <span className="hidden sm:block">{status}</span>
+                        </Collapsible.Trigger>
+                        <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
+                          <ul className="mx-5 mb-4 flex flex-col divide-y divide-hairline rounded-2xl ring-1 ring-hairline sm:ml-13">
+                            {items.map((binding) => {
+                              const machine = machines?.find(
+                                (item) => item._id === binding.machineId,
+                              );
+                              const environment = machine?.environments?.find(
+                                (item) => item.id === binding.environmentId,
+                              );
+                              return (
+                                <li
+                                  key={binding._id}
+                                  className="flex items-center gap-3 py-2 pr-2 pl-4"
+                                >
+                                  {environment ? (
+                                    <OsIcon os={environment.os} className="size-4 text-muted" />
+                                  ) : (
+                                    <span className="size-4" aria-hidden />
+                                  )}
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-[15px]">
+                                      {environment?.name ?? binding.environmentId}
+                                    </span>
+                                    <span className="block truncate text-[13px] text-muted">
+                                      {machine?.name ?? "A removed Mac"}
+                                      {machine && !online(machine) && ", offline"}
+                                    </span>
+                                  </span>
+                                  {binding.enabled ? (
+                                    <Status tone="success">Connected</Status>
+                                  ) : (
+                                    <Status tone="neutral">Disabled</Status>
+                                  )}
+                                  {binding.enabled ? (
+                                    <ActionMenu
+                                      label={`Actions for ${repository} in ${environment?.name ?? binding.environmentId}`}
+                                      trigger={<EllipsisIcon className="size-4" />}
+                                      items={[
+                                        {
+                                          label: "Disable connection",
+                                          danger: true,
+                                          onSelect: () =>
+                                            void disable({ id: binding._id })
+                                              .then(() =>
+                                                setMessage({
+                                                  tone: "success",
+                                                  text: `${repository} no longer starts jobs in ${environment?.name ?? binding.environmentId}.`,
+                                                }),
+                                              )
+                                              .catch(() =>
+                                                setMessage({
+                                                  tone: "danger",
+                                                  text: "The connection could not be disabled. Try again.",
+                                                }),
+                                              ),
+                                        },
+                                      ]}
+                                    />
+                                  ) : (
+                                    <span className="size-9 shrink-0" aria-hidden />
+                                  )}
+                                </li>
+                              );
+                            })}
+                          </ul>
+                        </Collapsible.Panel>
+                      </Collapsible.Root>
                     </li>
                   );
                 })}
