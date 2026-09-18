@@ -33,6 +33,8 @@ After `pnpm build`, configure a stdio MCP client with:
 
 Discover tools, then call `vectis_capabilities`. `vectis_status`, `vectis_storage`, and `vectis_doctor` inspect local state and service configuration. `vectis_repositories` lists currently authorized repository connections for the paired machine. `vectis_command` accepts the shared command schema and an idempotency key. `vectis_wait` observes completion. State-changing tools require the same running local service as the CLI.
 
+For a remote host, sign in with the CLI and pass `--machine <id>` and the same `--home` to MCP. Set `VECTIS_KEYCHAIN_HELPER` in its environment. Remote capability discovery identifies the target; local service management tools are omitted. See [remote control](/docs/guides/remote-control/).
+
 ## Skill
 
 The repository's `skills/vectis/SKILL.md` is a portable skill for agents. Install it using your agent application's skill installer. It contains discovery, mutation, storage, and recovery guidance, without credentials or machine-specific configuration.

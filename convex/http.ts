@@ -7,7 +7,11 @@ import { setup, manifestCallback } from "./githubHttp.js";
 import { callback as githubOAuthCallback } from "./githubOAuth.js";
 import { smallJson } from "./httpBody.js";
 
+import { pairing as controllerPairing, execute as controllerExecute } from "./controllerHttp.js";
+
 const router = httpRouter();
+router.route({ path: "/controller/pairing", method: "POST", handler: controllerPairing });
+router.route({ path: "/controller/request", method: "POST", handler: controllerExecute });
 router.route({ path: "/github/oauth/callback", method: "GET", handler: githubOAuthCallback });
 router.route({ path: "/github/webhook", method: "POST", handler: receive });
 router.route({ path: "/github/app/setup", method: "GET", handler: setup });

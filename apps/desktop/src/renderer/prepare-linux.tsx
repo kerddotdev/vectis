@@ -10,7 +10,7 @@ import { useStateApi } from "./state.js";
 export function PrepareLinux() {
   const [os, setOs] = useState("linux");
   const [restorePath, setRestorePath] = useState("");
-  const { submit, perform } = useStateApi();
+  const { submit, perform, machineId } = useStateApi();
   const [imageDirectory, setImageDirectory] = useState("");
   const [storagePath, setStoragePath] = useState("");
   const [message, setMessage] = useState("");
@@ -96,6 +96,7 @@ export function PrepareLinux() {
             />
             <button
               type="button"
+              disabled={!!machineId}
               onClick={() =>
                 void perform("chooseRestoreImage").then((value) => {
                   if (typeof value === "string") setRestorePath(value);
@@ -165,6 +166,7 @@ export function PrepareLinux() {
           </label>
           <button
             type="button"
+            disabled={!!machineId}
             className="secondary"
             onClick={() =>
               void perform("chooseDirectory").then((value) => {
@@ -184,6 +186,7 @@ export function PrepareLinux() {
           </label>
           <button
             type="button"
+            disabled={!!machineId}
             className="secondary"
             onClick={() =>
               void perform("chooseDirectory").then((value) => {
@@ -235,13 +238,14 @@ export function PrepareLinux() {
 
 function InstallationFile({ name, label }: { name: string; label: string }) {
   const [path, setPath] = useState("");
-  const { perform } = useStateApi();
+  const { perform, machineId } = useStateApi();
   return (
     <label>
       {label}
       <input name={name} value={path} onChange={(event) => setPath(event.target.value)} required />
       <button
         type="button"
+        disabled={!!machineId}
         aria-label={`Choose ${label}`}
         onClick={() =>
           void perform("chooseFile").then((value) => {

@@ -1,22 +1,26 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Schema } from "effect";
 import { Snapshot, type Command } from "../../../../packages/protocol/src/index.js";
 import type { DesktopAction } from "../bridge.js";
 
-export async function request(action: DesktopAction, input?: unknown) {
+export async function request(action: DesktopAction, input?: unknown, machineId?: string) {
   if (!window.vectis)
     throw new Error("Open this interface through the Vectis desktop application.");
-  const reply = await window.vectis.request(action, input);
+  const reply = await window.vectis.request(action, input, machineId);
   if (!reply.ok) throw new Error(`${reply.error.message} ${reply.error.nextStep}`);
   return reply.data;
 }
 const State = createContext<{
+  machineId: string | undefined;
+  selectMachine: (id: string | undefined) => void;
   snapshot: Snapshot | null;
   error: string;
   perform: (action: DesktopAction, input?: unknown) => Promise<unknown>;
   submit: (command: Command) => Promise<unknown>;
 } | null>(null);
 export function StateProvider({ children }: { children: ReactNode }) {
+  const [machineId, setMachineId] = useState<string>();
+  const selected = useRef(machineId);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -25,32 +29,43 @@ export function StateProvider({ children }: { children: ReactNode }) {
     async function refresh() {
       if (document.visibilityState === "visible") {
         try {
-          const value = Schema.decodeUnknownSync(Snapshot)(await request("status"));
+          const value = Schema.decodeUnknownSync(Snapshot)(
+            await request("status", undefined, machineId),
+          );
           if (!stopped) setSnapshot(value);
         } catch {
           if (!stopped) setSnapshot(null);
         }
       }
-      if (!stopped) timer = setTimeout(() => void refresh(), 2000);
+      if (!stopped) timer = setTimeout(() => void refresh(), machineId ? 5000 : 2000);
     }
     void refresh();
     return () => {
       stopped = true;
       clearTimeout(timer);
     };
-  }, []);
+  }, [machineId]);
   async function perform(action: DesktopAction, input?: unknown) {
     setError("");
     try {
-      return await request(action, input);
+      const value = await request(action, input, machineId);
+      return selected.current === machineId ? value : undefined;
     } catch (issue) {
-      setError(issue instanceof Error ? issue.message : "The request failed.");
+      if (selected.current === machineId)
+        setError(issue instanceof Error ? issue.message : "The request failed.");
       return undefined;
     }
   }
   return (
     <State
       value={{
+        machineId,
+        selectMachine: (id) => {
+          selected.current = id;
+          setMachineId(id);
+          setSnapshot(null);
+          setError("");
+        },
         snapshot,
         error,
         perform,

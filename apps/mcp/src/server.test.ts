@@ -104,3 +104,36 @@ test.skipIf(process.platform !== "darwin")(
     }
   },
 );
+
+test("remote MCP sessions expose their target and cannot invoke local service management", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mcp-target-"));
+  const service = await startService({ home });
+  const api = new VectisClient(service.connection);
+  const server = createMcpServer(async () => api, undefined, undefined, "remote-test-machine");
+  const client = new Client({ name: "isolated-remote-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const names = (await client.listTools()).tools.map((tool) => tool.name);
+    expect(names).not.toContain("vectis_service");
+    expect(names).not.toContain("vectis_cloud");
+    expect(await client.callTool({ name: "vectis_capabilities", arguments: {} })).toMatchObject({
+      structuredContent: {
+        result: { target: { type: "remote", machineId: "remote-test-machine" } },
+      },
+    });
+    expect(
+      await client.callTool({ name: "vectis_service", arguments: { action: "stop" } }),
+    ).toMatchObject({
+      isError: true,
+      structuredContent: { error: { code: "unsupported_tool" } },
+    });
+    expect((await api.status()).machine).toBeDefined();
+  } finally {
+    await client.close();
+    await server.close();
+    await service.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});

@@ -21,6 +21,30 @@ export const phase = v.union(
   v.literal("cancelled"),
 );
 export default defineSchema({
+  inspections: defineTable({
+    owner: v.string(),
+    machineId: v.id("machines"),
+    key: v.string(),
+    queryJson: v.string(),
+    expiresAt: v.number(),
+    responseJson: v.optional(v.string()),
+    pending: v.boolean(),
+  })
+    .index("by_owner_key", ["owner", "key"])
+    .index("by_machine_pending", ["machineId", "pending", "expiresAt"]),
+  controllers: defineTable({
+    owner: v.string(),
+    name: v.string(),
+    requestDigest: v.string(),
+    credentialDigest: v.string(),
+    pairingExpiresAt: v.number(),
+    expiresAt: v.number(),
+    revoked: v.boolean(),
+    createdAt: v.number(),
+  })
+    .index("by_request", ["requestDigest"])
+    .index("by_owner", ["owner"])
+    .index("by_owner_active", ["owner", "revoked"]),
   migrationPreviews: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),
@@ -182,6 +206,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number(),
     resultJson: v.optional(v.string()),
+    cancelRequested: v.optional(v.boolean()),
   })
     .index("by_owner_key", ["owner", "key"])
     .index("by_machine_phase", ["machineId", "phase"]),

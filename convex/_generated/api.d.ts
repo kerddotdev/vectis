@@ -9,6 +9,8 @@
  */
 
 import type * as auth from "../auth.js";
+import type * as controllerHttp from "../controllerHttp.js";
+import type * as controllers from "../controllers.js";
 import type * as credentials from "../credentials.js";
 import type * as githubAccess from "../githubAccess.js";
 import type * as githubAppSetup from "../githubAppSetup.js";
@@ -25,6 +27,7 @@ import type * as githubValidators from "../githubValidators.js";
 import type * as githubWebhook from "../githubWebhook.js";
 import type * as http from "../http.js";
 import type * as httpBody from "../httpBody.js";
+import type * as inspections from "../inspections.js";
 import type * as jobStore from "../jobStore.js";
 import type * as jobs from "../jobs.js";
 import type * as machineTokens from "../machineTokens.js";
@@ -44,6 +47,8 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
+  controllerHttp: typeof controllerHttp;
+  controllers: typeof controllers;
   credentials: typeof credentials;
   githubAccess: typeof githubAccess;
   githubAppSetup: typeof githubAppSetup;
@@ -60,6 +65,7 @@ declare const fullApi: ApiFromModules<{
   githubWebhook: typeof githubWebhook;
   http: typeof http;
   httpBody: typeof httpBody;
+  inspections: typeof inspections;
   jobStore: typeof jobStore;
   jobs: typeof jobs;
   machineTokens: typeof machineTokens;

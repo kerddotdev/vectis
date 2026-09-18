@@ -8,6 +8,7 @@ import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api.js";
 import { VectisError } from "../../protocol/src/index.js";
+import { answerInspection } from "./inspection.js";
 import { advanceRemoteOperation } from "./remote-operation.js";
 import { machineTokenFetcher, type CloudConnection } from "./machine-auth.js";
 import type { KeychainCredentials } from "./keychain.js";
@@ -143,6 +144,14 @@ export function startCloudRelay(
         },
         abort.signal,
       );
+    const inspections = await interruptible(cloud.query(api.inspections.pending, {}), abort.signal);
+    for (const inspection of inspections.slice(0, 2)) {
+      const responseJson = await answerInspection(inspection.queryJson, local, abort.signal);
+      await interruptible(
+        cloud.mutation(api.inspections.respond, { id: inspection.id, responseJson }),
+        abort.signal,
+      );
+    }
     onState(cloud.client.connectionState().isWebSocketConnected ? "connected" : "unavailable");
   }
   function tick() {
@@ -168,6 +177,9 @@ export function startCloudRelay(
       });
   }
   const unsubscribe = cloud.onUpdate(api.operations.pending, {}, tick, () =>
+    onState("unavailable"),
+  );
+  const unsubscribeInspections = cloud.onUpdate(api.inspections.pending, {}, tick, () =>
     onState("unavailable"),
   );
   const disconnect = cloud.client.subscribeToConnectionState((state) => {
@@ -322,6 +334,7 @@ export function startCloudRelay(
       abort.abort();
       clearInterval(interval);
       unsubscribe();
+      unsubscribeInspections();
       disconnect();
       await cloud.close();
       await pendingToken?.catch(() => {});

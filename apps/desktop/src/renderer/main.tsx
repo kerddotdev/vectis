@@ -1,3 +1,4 @@
+import { MachineSelector } from "./machine-selector.js";
 import { PreparationResult } from "./preparation-result.js";
 import { MigrationResult } from "./migration-result.js";
 import { StrictMode, useState } from "react";
@@ -21,7 +22,7 @@ import { RepositoryJobs } from "./repository-jobs.js";
 import { Environments } from "./environments.js";
 import "./style.css";
 function Layout() {
-  const { snapshot, error, perform } = useStateApi();
+  const { snapshot, error, perform, machineId } = useStateApi();
   return (
     <div className="layout">
       <aside>
@@ -46,7 +47,8 @@ function Layout() {
           <span className="status">{snapshot ? snapshot.machine.name : "Service unavailable"}</span>
           <span>{snapshot?.cloud?.state ?? "Local"}</span>
         </header>
-        {!snapshot && (
+        <MachineSelector />
+        {!snapshot && !machineId && (
           <section className="notice">
             <h2>Start the local service</h2>
             <p>The service manages your VMs independently of this window.</p>
@@ -56,7 +58,10 @@ function Layout() {
           </section>
         )}
         {error && <p role="alert">{error}</p>}
-        <Outlet />
+        {!snapshot && machineId && (
+          <p role="status">Waiting for the remote machine. Check that its service is online.</p>
+        )}
+        <Outlet key={machineId ?? "local"} />
       </main>
     </div>
   );
@@ -65,8 +70,8 @@ function Overview() {
   const { snapshot, submit } = useStateApi();
   return (
     <>
-      <h1>Your local runners.</h1>
-      <p>Virtual machines and operations on this Mac.</p>
+      <h1>Your runners.</h1>
+      <p>Virtual machines and operations on the selected machine.</p>
       <div className="row">
         <button
           disabled={!snapshot}
@@ -285,7 +290,7 @@ function Storage() {
   );
 }
 function Connections() {
-  const { perform, submit, snapshot } = useStateApi();
+  const { perform, submit, snapshot, machineId } = useStateApi();
   const [repositories, setRepositories] = useState<MachineRepositories | null>(null);
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState<string | null>(null);
@@ -327,7 +332,9 @@ function Connections() {
   return (
     <>
       <h1>Connections</h1>
-      <p>Connect this Mac and your GitHub accounts. Build files stay on your machine.</p>
+      <p>
+        Connect your GitHub accounts and repositories. Build files stay on the selected machine.
+      </p>
       <button onClick={() => void perform("open.github")}>Connect GitHub</button>
       <ConnectRepository />
       <section className="section">
@@ -335,7 +342,7 @@ function Connections() {
         <button disabled={loading} onClick={() => void discover()}>
           {loading ? "Checking access" : "Refresh repositories"}
         </button>
-        {repositories?.length === 0 && <p>No repositories are connected to this Mac.</p>}
+        {repositories?.length === 0 && <p>No repositories are connected to this machine.</p>}
         {repositories?.map((repository) => (
           <div key={repository.id}>
             <div className="record">
@@ -393,8 +400,10 @@ function Connections() {
       </section>
       <section className="section">
         <h2>Connect this Mac</h2>
-        <button onClick={() => void pair()}>Begin pairing</button>
-        <button className="secondary" onClick={() => void finish()}>
+        <button disabled={!!machineId} onClick={() => void pair()}>
+          Begin pairing
+        </button>
+        <button disabled={!!machineId} className="secondary" onClick={() => void finish()}>
           Finish approved pairing
         </button>
         {message && <p role="status">{message}</p>}

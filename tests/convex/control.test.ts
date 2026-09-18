@@ -1,6 +1,7 @@
 import { generateKeyPairSync, createPublicKey, verify } from "node:crypto";
 import { convexTest } from "convex-test";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import { cancelForOwner } from "../../convex/operations.js";
 import schema from "../../convex/schema.js";
 import { api } from "../../convex/_generated/api.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -174,6 +175,7 @@ test("lost local replies and relay restart reuse the durable local operation", a
       advanceRemoteOperation(
         await pending(),
         {
+          status: (...args) => local.status(...args),
           submit: async (...args) => {
             await local.submit(...args);
             throw new Error("Connection lost after the service accepted the command.");
@@ -242,3 +244,54 @@ test("machine inventory is bounded, owner-only and rejects revoked credentials",
     device.mutation(api.machines.heartbeat, { environments: [environment] }),
   ).rejects.toThrow();
 });
+
+test.each([false, true])(
+  "cancellation after claim preserves whether a local effect already completed: %s",
+  async (completedLocally) => {
+    const t = convexTest(schema, modules);
+    const principal = identity("cancel-owner");
+    const owner = t.withIdentity(principal);
+    const home = await mkdtemp(join(tmpdir(), "vectis-cancel-relay-"));
+    const server = await startService({ home });
+    try {
+      const local = new VectisClient(server.connection);
+      const machineId = await owner.mutation(api.machines.enroll, {
+        localId: (await local.status()).machine.id,
+        name: "Cancel test",
+      });
+      const device = t.withIdentity({
+        issuer: "https://machines.test",
+        subject: machineId,
+        credentialVersion: 0,
+      });
+      const command = { type: "machine.pause", paused: true } as const;
+      const id = await owner.mutation(api.operations.submit, {
+        machineId,
+        key: "cancel-test",
+        commandJson: JSON.stringify(command),
+      });
+      const pending = async () => {
+        const [operation] = await device.query(api.operations.pending, {});
+        if (!operation) throw new Error("Expected pending operation");
+        return operation;
+      };
+      const acknowledge = (args: Acknowledgement) =>
+        device.mutation(api.operations.acknowledge, args);
+      const signal = new AbortController().signal;
+      await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+      if (completedLocally) await local.wait((await local.submit(command, `remote:${id}`)).id);
+      await t.run((ctx) => cancelForOwner(ctx, principal.tokenIdentifier, id));
+      await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+      if (completedLocally)
+        await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+      expect((await owner.query(api.operations.get, { id })).phase).toBe(
+        completedLocally ? "succeeded" : "cancelled",
+      );
+      expect((await local.status()).machine.paused).toBe(completedLocally);
+      expect((await local.status()).operations).toHaveLength(completedLocally ? 1 : 0);
+    } finally {
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
