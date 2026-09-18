@@ -103,6 +103,7 @@ GitHub pairing require separately configured development services.
         appleHelper: Boolean(process.env.VECTIS_APPLE_HELPER),
         qemu: Boolean(process.env.VECTIS_QEMU),
         qemuImg: Boolean(process.env.VECTIS_QEMU_IMG),
+        swtpm: Boolean(process.env.VECTIS_SWTPM),
       },
       home,
     });

@@ -4,15 +4,30 @@ import { VectisError } from "../../protocol/src/index.js";
 export function waitForQemu(child: ChildProcess, timeoutMs = 30000): Promise<void> {
   return new Promise((resolve, reject) => {
     let buffer = "";
+    let diagnostic = "";
     let phase = "greeting";
+    const stderr = (chunk: Buffer) => {
+      diagnostic = (diagnostic + chunk.toString("utf8")).slice(-8192);
+    };
     const cleanup = () => {
       clearTimeout(timer);
       child.stdout?.off("data", data);
-      child.off("exit", exit);
+      child.stderr?.off("data", stderr);
+      child.off("close", exit);
       child.off("error", exit);
     };
     const fail = () => {
       cleanup();
+      if (diagnostic.includes("HV_BAD_ARGUMENT") && diagnostic.includes("tpm-tis-device")) {
+        reject(
+          new VectisError(
+            "runtime_incompatible",
+            "Apple hardware acceleration rejected the QEMU TPM memory mapping.",
+            "Build the documented runtime in native/qemu and configure VECTIS_QEMU. Vectis does not fall back to emulation.",
+          ),
+        );
+        return;
+      }
       reject(
         new VectisError(
           "vm_start_failed",
@@ -72,7 +87,8 @@ export function waitForQemu(child: ChildProcess, timeoutMs = 30000): Promise<voi
     const exit = () => fail();
     const timer = setTimeout(fail, timeoutMs);
     child.stdout?.on("data", data);
-    child.once("exit", exit);
+    child.stderr?.on("data", stderr);
+    child.once("close", exit);
     child.once("error", exit);
     if (!child.stdout || !child.stdin || child.exitCode !== null || child.signalCode !== null)
       fail();

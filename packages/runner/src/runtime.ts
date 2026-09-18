@@ -16,6 +16,7 @@ export interface RuntimeOptions {
   readonly appleHelper?: string;
   readonly qemu?: string;
   readonly qemuImg?: string;
+  readonly swtpm?: string;
 }
 export interface OwnedInstance {
   readonly id: string;
@@ -109,12 +110,29 @@ export class VmRuntime {
     try {
       let args: string[];
       if (environment.os === "windows") {
-        if (!environment.firmwarePath || !environment.tpmSocket || !this.options.qemuImg)
+        if (
+          !environment.firmwarePath ||
+          !environment.firmwareVarsPath ||
+          !this.options.qemuImg ||
+          !this.options.swtpm
+        )
           throw new VectisError(
             "setup_required",
-            "Windows requires ARM64 UEFI firmware, a TPM socket, and qemu-img.",
-            "Configure a prepared Windows image and its firmware/TPM dependencies.",
+            "Windows requires ARM64 UEFI code, a variables template, swtpm, and qemu-img.",
+            "Configure the prepared Windows image, firmwarePath, firmwareVarsPath and VECTIS_SWTPM.",
           );
+        await access(this.options.swtpm, constants.X_OK);
+        await copyFile(
+          resolve(environment.firmwareVarsPath),
+          join(directory, "uefi-vars.fd"),
+          constants.COPYFILE_FICLONE,
+        );
+        if (environment.tpmStatePath)
+          await cp(resolve(environment.tpmStatePath), join(directory, "tpm"), {
+            recursive: true,
+            mode: constants.COPYFILE_FICLONE,
+          });
+        else await mkdir(join(directory, "tpm"), { mode: 0o700 });
         const disk = join(directory, "disk.qcow2");
         await runProcess(this.options.qemuImg, [
           "create",
@@ -135,16 +153,18 @@ export class VmRuntime {
           String(environment.cpu),
           "-m",
           String(environment.memoryMiB),
-          "-bios",
-          resolve(environment.firmwarePath),
           "-drive",
-          `file=${disk},if=virtio,format=qcow2`,
+          `file=${resolve(environment.firmwarePath).replaceAll(",", ",,")},if=pflash,format=raw,readonly=on`,
+          "-drive",
+          "file=uefi-vars.fd,if=pflash,format=raw",
+          "-drive",
+          "file=disk.qcow2,if=virtio,format=qcow2",
           "-netdev",
           "user,id=net0",
           "-device",
           "virtio-net-pci,netdev=net0",
           "-chardev",
-          `socket,id=chrtpm,path=${environment.tpmSocket}`,
+          "socket,id=chrtpm,path=tpm.sock",
           "-tpmdev",
           "emulator,id=tpm0,chardev=chrtpm",
           "-device",
@@ -192,12 +212,16 @@ export class VmRuntime {
         supervised ? process.execPath : executable,
         supervised ? [supervisor, executable, ...args] : args,
         {
-          stdio: ["pipe", "pipe", "ignore"],
+          stdio: ["pipe", "pipe", supervised ? "pipe" : "ignore"],
           detached: false,
+          ...(supervised ? { cwd: directory } : {}),
           env: {
             ...process.env,
             VECTIS_EXIT_RECEIPT: join(directory, "exit-receipt.json"),
             VECTIS_INSTANCE_ID: id,
+            ...(supervised && this.options.swtpm
+              ? { VECTIS_VM_TPM_EXECUTABLE: this.options.swtpm }
+              : {}),
           },
         },
       );
@@ -227,6 +251,7 @@ export class VmRuntime {
         throw error;
       }
       child.stdout?.resume();
+      child.stderr?.resume();
       return instance;
     } catch (error) {
       await rm(directory, { recursive: true, force: true });
