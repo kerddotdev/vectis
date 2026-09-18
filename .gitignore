@@ -18,3 +18,5 @@ apps/docs/src/content/docs/reference/cli.md
 apps/docs/site/
 
 apps/desktop/renderer/
+
+apps/docs/public/brand/

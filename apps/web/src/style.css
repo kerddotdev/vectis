@@ -30,6 +30,9 @@ header a {
   text-decoration: none;
 }
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-size: 25px;
   font-weight: 650;
   letter-spacing: -1px;

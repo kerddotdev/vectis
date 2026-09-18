@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const docs = join(root, "apps/docs");
 const source = join(docs, "src/content/docs");
+await cp(join(root, "assets/brand/web"), join(docs, "public/brand"), { recursive: true });
 const { stdout } = await promisify(execFile)(process.execPath, [
   join(root, "dist/apps/cli/src/main.js"),
   "--help",

@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
 import { LaunchAgent } from "./launch-agent.js";
+import { startService } from "../../../apps/server/src/http.js";
+import { localClient } from "./local.js";
 
 const macTest = test.skipIf(process.platform !== "darwin");
 macTest("aliases share a registration and unrelated definitions are preserved", async () => {
@@ -72,3 +74,46 @@ macTest("unreachable service with an outstanding lock is not unloaded", async ()
     await rm(root, { recursive: true, force: true });
   }
 });
+
+macTest(
+  "retries startup after an acknowledged shutdown exits without restarting the job",
+  async () => {
+    const root = await mkdtemp(join(tmpdir(), "vectis-agent-test-"));
+    const home = join(root, "state");
+    let running: Awaited<ReturnType<typeof startService>> | undefined = await startService({
+      home,
+    });
+    const machineId = running.store.snapshot().machine.id;
+    let starts = 0;
+    const calls: ReadonlyArray<string>[] = [];
+    try {
+      const agent = await LaunchAgent.forHome(home, {
+        directory: root,
+        execute: async (_file, args) => {
+          calls.push(args);
+          if (args[0] === "print") return running ? "\tpid = 123\n" : "\tstate = not running\n";
+          if (args[0] === "kickstart") {
+            starts++;
+            if (starts === 1) {
+              await running?.close();
+              running = undefined;
+            } else running = await startService({ home });
+          }
+          return "";
+        },
+      });
+      await writeFile(
+        agent.path,
+        `<key>Label</key><string>${agent.label}</string><key>VECTIS_HOME</key><string>${agent.home}</string>`,
+      );
+      await (await localClient(home)).shutdown({ ifIdle: true });
+      await expect(agent.start()).resolves.toMatchObject({ running: true });
+      expect(starts).toBe(2);
+      expect((await (await localClient(home)).status()).machine.id).toBe(machineId);
+      expect(calls.some((args) => args.includes("-k") || args[0] === "bootout")).toBe(false);
+    } finally {
+      await running?.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

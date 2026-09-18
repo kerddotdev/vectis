@@ -1,0 +1,36 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+>
+  <!-- Filled details only -->
+  <g id="fills" fill="#85412a">
+    <!-- Trigger node -->
+    <circle cx="4" cy="12" r="2" />
+
+    <!-- Isolated compute core -->
+    <path d="M12 10.55L13.45 12L12 13.45L10.55 12L12 10.55Z" />
+
+    <!-- Workflow outputs -->
+    <circle cx="20" cy="6" r="2" />
+    <circle cx="20" cy="18" r="2" />
+  </g>
+
+  <!-- Stroke-only elements -->
+  <g
+    id="strokes"
+    fill="none"
+    stroke="#85412a"
+    stroke-width="1"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  >
+    <!-- Workflow connections -->
+    <path d="M6 12H9M15 12H16.5C18.433 12 20 10.433 20 8.5V8M16.5 12C18.433 12 20 13.567 20 15.5V16" />
+
+    <!-- Ephemeral VM / runner -->
+    <rect x="9" y="9" width="6" height="6" rx="1.6" />
+  </g>
+</svg>

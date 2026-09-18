@@ -1,3 +1,4 @@
+import { compileBrandIcons } from "./release/brand-icons.js";
 import { execFile } from "node:child_process";
 import { chmod, copyFile, cp, mkdir, open, readdir, realpath, writeFile } from "node:fs/promises";
 import { basename, join, resolve, sep } from "node:path";
@@ -36,6 +37,7 @@ const contents = join(app, "Contents");
 const resources = join(contents, "Resources");
 await mkdir(join(contents, "MacOS"), { recursive: true });
 await mkdir(resources);
+await compileBrandIcons(resources);
 const excluded = [
   join(source, "application/apps/desktop"),
   join(source, "application/dist/apps/desktop"),
@@ -61,6 +63,8 @@ await writeFile(
 <key>CFBundleIdentifier</key><string>dev.kerd.vectis.runtime</string>
 <key>CFBundleName</key><string>Vectis Runtime</string>
 <key>CFBundleExecutable</key><string>vectis-launcher</string>
+<key>CFBundleIconFile</key><string>vectis.icns</string>
+<key>CFBundleIconName</key><string>vectis</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>
 <key>CFBundleVersion</key><string>1</string>
