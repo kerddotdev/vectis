@@ -143,71 +143,73 @@ export function RepositoriesTab({
                           </span>
                           <span className="hidden sm:block">{status}</span>
                         </Collapsible.Trigger>
-                        <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0 mt-2">
-                          <ul className="mx-5 mb-4 flex flex-col divide-y divide-hairline rounded-2xl ring-1 ring-hairline ring-inset sm:ml-13">
-                            {items.map((binding) => {
-                              const machine = machines?.find(
-                                (item) => item._id === binding.machineId,
-                              );
-                              const environment = machine?.environments?.find(
-                                (item) => item.id === binding.environmentId,
-                              );
-                              return (
-                                <li
-                                  key={binding._id}
-                                  className="flex items-center gap-3 py-2 pr-2 pl-4"
-                                >
-                                  {environment ? (
-                                    <OsIcon os={environment.os} className="size-4 text-muted" />
-                                  ) : (
-                                    <span className="size-4" aria-hidden />
-                                  )}
-                                  <span className="min-w-0 flex-1">
-                                    <span className="block truncate text-[15px]">
-                                      {environment?.name ?? binding.environmentId}
+                        <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
+                          <div className="px-5 pt-1 pb-4 sm:pl-13">
+                            <ul className="flex flex-col divide-y divide-hairline rounded-2xl ring-1 ring-hairline ring-inset">
+                              {items.map((binding) => {
+                                const machine = machines?.find(
+                                  (item) => item._id === binding.machineId,
+                                );
+                                const environment = machine?.environments?.find(
+                                  (item) => item.id === binding.environmentId,
+                                );
+                                return (
+                                  <li
+                                    key={binding._id}
+                                    className="flex items-center gap-3 py-2 pr-2 pl-4"
+                                  >
+                                    {environment ? (
+                                      <OsIcon os={environment.os} className="size-4 text-muted" />
+                                    ) : (
+                                      <span className="size-4" aria-hidden />
+                                    )}
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block truncate text-[15px]">
+                                        {environment?.name ?? binding.environmentId}
+                                      </span>
+                                      <span className="block truncate text-[13px] text-muted">
+                                        {machine?.name ?? "A removed Mac"}
+                                        {machine && !online(machine) && ", offline"}
+                                      </span>
                                     </span>
-                                    <span className="block truncate text-[13px] text-muted">
-                                      {machine?.name ?? "A removed Mac"}
-                                      {machine && !online(machine) && ", offline"}
-                                    </span>
-                                  </span>
-                                  {binding.enabled ? (
-                                    <Status tone="success">Connected</Status>
-                                  ) : (
-                                    <Status tone="neutral">Disabled</Status>
-                                  )}
-                                  {binding.enabled ? (
-                                    <ActionMenu
-                                      label={`Actions for ${repository} in ${environment?.name ?? binding.environmentId}`}
-                                      trigger={<EllipsisIcon className="size-4" />}
-                                      items={[
-                                        {
-                                          label: "Disable connection",
-                                          danger: true,
-                                          onSelect: () =>
-                                            void disable({ id: binding._id })
-                                              .then(() =>
-                                                setMessage({
-                                                  tone: "success",
-                                                  text: `${repository} no longer starts jobs in ${environment?.name ?? binding.environmentId}.`,
-                                                }),
-                                              )
-                                              .catch(() =>
-                                                setMessage({
-                                                  tone: "danger",
-                                                  text: "The connection could not be disabled. Try again.",
-                                                }),
-                                              ),
-                                        },
-                                      ]}
-                                    />
-                                  ) : (
-                                    <span className="size-9 shrink-0" aria-hidden />
-                                  )}
-                                </li>
-                              );
-                            })}
-                          </ul>
+                                    {binding.enabled ? (
+                                      <Status tone="success">Connected</Status>
+                                    ) : (
+                                      <Status tone="neutral">Disabled</Status>
+                                    )}
+                                    {binding.enabled ? (
+                                      <ActionMenu
+                                        label={`Actions for ${repository} in ${environment?.name ?? binding.environmentId}`}
+                                        trigger={<EllipsisIcon className="size-4" />}
+                                        items={[
+                                          {
+                                            label: "Disable connection",
+                                            danger: true,
+                                            onSelect: () =>
+                                              void disable({ id: binding._id })
+                                                .then(() =>
+                                                  setMessage({
+                                                    tone: "success",
+                                                    text: `${repository} no longer starts jobs in ${environment?.name ?? binding.environmentId}.`,
+                                                  }),
+                                                )
+                                                .catch(() =>
+                                                  setMessage({
+                                                    tone: "danger",
+                                                    text: "The connection could not be disabled. Try again.",
+                                                  }),
+                                                ),
+                                          },
+                                        ]}
+                                      />
+                                    ) : (
+                                      <span className="size-9 shrink-0" aria-hidden />
+                                    )}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
                         </Collapsible.Panel>
                       </Collapsible.Root>
                     </li>
