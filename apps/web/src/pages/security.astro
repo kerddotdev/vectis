@@ -1,0 +1,142 @@
+---
+import { site } from "@vectis/design/site";
+import PageHero from "../components/PageHero.astro";
+import Base from "../layouts/Base.astro";
+
+const zones = [
+  {
+    name: "Your Mac",
+    holds: [
+      "The local service and its database",
+      "Guest images and VM disks",
+      "Build files and checkouts",
+      "Credentials, in macOS Keychain",
+    ],
+  },
+  {
+    name: "Vectis cloud",
+    holds: [
+      "Your account, machines and controllers",
+      "Repository connections and job status",
+      "Credential fingerprints, not secrets",
+      "The GitHub App private key",
+    ],
+  },
+  {
+    name: "GitHub",
+    holds: [
+      "Your repositories and workflows",
+      "Workflow logs, artifacts and caches",
+      "Single-use runner registrations",
+      "Your fork approval policy",
+    ],
+  },
+];
+const sections = [
+  {
+    title: "On your Mac",
+    points: [
+      "The local service listens only on 127.0.0.1. Every request needs a token, and any request carrying a browser Origin is refused.",
+      "VM disks and build files stay on the machine. GitHub still receives the logs, artifacts and caches your workflows upload, exactly as with any runner.",
+      "Vectis stops only the processes it started and tracks. It never kills by name, and it cleans up only after it has evidence that a process exited.",
+    ],
+  },
+  {
+    title: "In the Vectis cloud",
+    points: [
+      "The cloud coordinates identity, GitHub access and remote commands. It stores machine names, environment summaries, repository connections, job states and operation results.",
+      "Machine and controller credentials stay in Keychain on each device. The cloud keeps only their fingerprints, and GitHub user tokens are used during verification and never saved.",
+      "The GitHub App private key lives only in the cloud. The single-use runner configuration it creates is held for at most 15 minutes and cleared once the runner is released.",
+    ],
+  },
+  {
+    title: "Inside a guest",
+    points: [
+      "Guests receive no host folders, no Docker socket and no host credentials. The GitHub App key never reaches a guest.",
+      "Vectis talks to guests over SSH with pinned host keys and without agent forwarding. The only GitHub credential a guest sees is the single-use runner configuration for its one job.",
+      "Each VM is deleted after its job. The next job starts from the clean image again.",
+    ],
+  },
+  {
+    title: "Public repositories and forks",
+    points: [
+      "A public repository must require approval for all outside contributors before Vectis will run its jobs or publish a migration. A weaker or unreadable policy blocks both.",
+      "Vectis never changes that policy and never approves a workflow run. Forks do not inherit your runners.",
+      "This is an approval-based trust model. It is not a guarantee against arbitrary hostile workloads, so approve outside changes the way you would for any self-hosted runner.",
+    ],
+  },
+  {
+    title: "Remote control",
+    points: [
+      "Remote commands are queued in the cloud and collected by each Mac over an outbound connection. No machine needs an open port.",
+      "A command for an unavailable Mac waits or fails. It never falls back to running on the Mac you are using.",
+      "Controllers are approved in the browser with a verification code, expire after 90 days, and can be revoked at any time. The service itself cannot be installed or stopped remotely.",
+    ],
+  },
+];
+---
+
+<Base
+  image="/og/security.png"
+  title="Security"
+  description="What stays on your Mac, what the Vectis cloud stores, what a guest receives, and how forks are handled."
+  current="/security"
+>
+  <PageHero title="What runs where, and who can touch it.">
+    <p>
+      Vectis splits the work between your Mac, a small coordination service and GitHub. This page
+      describes each boundary as the code enforces it today.
+    </p>
+  </PageHero>
+
+  <section class="shell pb-24 md:pb-32" aria-label="Trust boundaries">
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-3">
+      {
+        zones.map((zone, index) => (
+          <div
+            class:list={[
+              "enter flex flex-col gap-5 rounded-3xl p-7 ring-1",
+              index === 0 ? "bg-surface ring-hairline-strong" : "ring-hairline",
+            ]}
+            style={`animation-delay: ${200 + index * 120}ms`}
+          >
+            <p class="eyebrow">{index === 0 ? "Stays local" : index === 1 ? "Coordinates" : "Runs the workflow"}</p>
+            <h2 class="text-2xl font-medium">{zone.name}</h2>
+            <ul class="flex flex-col gap-2.5 text-[15px] text-muted">
+              {zone.holds.map((item) => (
+                <li class="border-t border-hairline pt-2.5">{item}</li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <div class="shell flex flex-col pb-24">
+    {
+      sections.map((section) => (
+        <section class="grid grid-cols-1 gap-8 border-t border-hairline py-16 lg:grid-cols-[1fr_1.6fr] lg:gap-16">
+          <h2 class="text-title max-w-[12ch] font-medium">{section.title}</h2>
+          <ul class="flex flex-col gap-6 text-lede text-muted">
+            {section.points.map((point) => (
+              <li class="max-w-[60ch]">{point}</li>
+            ))}
+          </ul>
+        </section>
+      ))
+    }
+    <section class="grid grid-cols-1 gap-8 border-t border-hairline py-16 lg:grid-cols-[1fr_1.6fr] lg:gap-16">
+      <h2 class="text-title max-w-[12ch] font-medium">Reporting a vulnerability</h2>
+      <div class="flex max-w-[60ch] flex-col items-start gap-6 text-lede text-muted">
+        <p>
+          Please report security issues privately through a GitHub security advisory rather than a
+          public issue. Include the version, what you observed and how to reproduce it.
+        </p>
+        <a class="button button-secondary" href={`${site.repository}/security/advisories/new`}>
+          Report a vulnerability
+        </a>
+      </div>
+    </section>
+  </div>
+</Base>
