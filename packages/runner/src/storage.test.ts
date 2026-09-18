@@ -56,3 +56,33 @@ test("reports file breakdown and never follows a symlink into another directory"
   await symlink(tmpdir(), join(home, "outside"));
   expect((await measureStorage(home)).status).toBe("unavailable");
 });
+
+test("isolated inspection reports the same sparse capacity", async () => {
+  const { inspectStorage } = await import("./storage.js");
+  const home = await fixture();
+  const path = join(home, "disk.img");
+  await writeFile(path, "isolated");
+  expect(await inspectStorage(path, path, Date.now() + 5000)).toMatchObject({
+    status: "available",
+    fileBytes: 8,
+    virtualCapacityBytes: 8,
+  });
+});
+
+test.skipIf(process.platform === "win32")(
+  "blocked filesystem inspection is terminated within its deadline",
+  async () => {
+    const { execFileSync } = await import("node:child_process");
+    const { inspectStorage } = await import("./storage.js");
+    const home = await fixture();
+    const disk = join(home, "pipe");
+    execFileSync("mkfifo", [disk]);
+    const file = join(home, "regular");
+    await writeFile(file, "data");
+    const started = Date.now();
+    const result = await inspectStorage(file, disk, Date.now() + 200);
+    expect(result.status).toBe("unavailable");
+    expect(result.reason).toContain("background runtime");
+    expect(Date.now() - started).toBeLessThan(2500);
+  },
+);
