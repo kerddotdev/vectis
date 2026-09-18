@@ -3,16 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node ../../dist/scripts/generate-docs.js && astro dev",
-    "build": "node ../../dist/scripts/generate-docs.js && astro build && node ../../dist/scripts/stage-site.js",
-    "preview": "astro preview"
+    "dev": "node ../../packages/design/fetch-fonts.mjs && node ../../dist/scripts/generate-docs.js && blume dev",
+    "build": "node ../../packages/design/fetch-fonts.mjs && node ../../dist/scripts/generate-docs.js && blume build",
+    "preview": "blume preview"
   },
   "dependencies": {
-    "@astrojs/markdown-remark": "7.3.1",
-    "@astrojs/starlight": "0.42.1",
-    "astro": "7.3.2"
+    "@vectis/design": "workspace:*",
+    "blume": "1.7.1"
   },
   "devDependencies": {
-    "wrangler": "4.131.2"
+    "astro": "7.3.3"
   }
 }

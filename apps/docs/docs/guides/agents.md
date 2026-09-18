@@ -39,4 +39,4 @@ For a remote host, sign in with the CLI and pass `--machine <id>` and the same `
 
 The repository's `skills/vectis/SKILL.md` is a portable skill for agents. Install it using your agent application's skill installer. It contains discovery, mutation, storage, and recovery guidance, without credentials or machine-specific configuration.
 
-For direct documentation retrieval, read [`llms.txt`](/llms.txt). The `/docs/markdown/` files are generated from the same public Markdown that builds this site.
+For direct documentation retrieval, read [`llms.txt`](/docs/llms.txt). Append `.md` to any documentation page URL for the same public Markdown that builds this site.

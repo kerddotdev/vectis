@@ -15,4 +15,4 @@ The central service coordinates identity and remote commands. VM disks and build
 
 ## Read without a browser
 
-The same documentation is available as Markdown under `/docs/markdown/`. [`llms.txt`](/llms.txt) indexes these files for agents.
+Append `.md` to any page URL to read its Markdown source. [`llms.txt`](/docs/llms.txt) indexes the pages for agents, and [`llms-full.txt`](/docs/llms-full.txt) contains all of them in one file.
