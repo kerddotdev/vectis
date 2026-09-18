@@ -63,3 +63,29 @@ For a team App Store Connect API key, use `--sign --notarize` with `APPLE_API_KE
 Keep the app at its installed location while its login service is registered. The portable payload and app contain their own copies of the runtime, so the payload can be removed after packaging if no service uses it.
 
 macOS file privacy permissions also apply to the signed background service. A successful CLI test from a terminal does not establish that the login service can access the same images or storage directory. Verify that access separately before relying on unattended VM startup.
+
+## Electron-free signed runtime
+
+The standalone runtime can also be packaged as a native macOS application bundle without Electron. Build the small launcher, then wrap a portable payload:
+
+```sh
+swift build --package-path native/apple --configuration release --product vectis-launcher
+pnpm package:headless --package /absolute/path/to/payload --launcher /absolute/path/to/vectis-launcher --output /absolute/path/to/new-runtime --identity YOUR_DEVELOPER_ID_IDENTITY
+pnpm package:verify /absolute/path/to/new-runtime
+```
+
+The output contains `Vectis Runtime.app` and `bin/vectis` and `bin/vectis-mcp`. Keep them together. Without `--identity`, this is an ad-hoc development build. Signing does not notarize the bundle; submit it with Apple's notarytool and staple the accepted ticket before distribution. Third-party redistribution requirements still apply to any included Windows runtime.
+
+## Replace an installed runtime
+
+Keep the previous package at its original location. Run the new package's CLI against the existing state directory:
+
+```sh
+/absolute/path/to/new-package/bin/vectis service update --home /absolute/path/to/state --json
+```
+
+This validates the new runtime paths, refuses active work, waits for the old service to stop, and replaces its login registration. The new service must respond before the update succeeds. If startup fails, Vectis attempts to restore and start the previous registration. VM images, credentials, and configuration stay in the same locations.
+
+After an interrupted update, use `service recover-update` with the same home. The saved previous registration remains available until recovery succeeds. Other registration changes are blocked while recovery is pending, and concurrent clients cannot replace the registration simultaneously. Keep both packages until the operation completes.
+
+The desktop's **Use this app's runtime** and **Recover runtime update** buttons use the same operations. MCP exposes `vectis_service` with `action: "update"` or `action: "recoverUpdate"`. Updates adopt the runtime running that client; they do not download a release. This recovery restores the runtime registration, not a backup of application data or a general database downgrade.
