@@ -1,3 +1,7 @@
+import type {
+  MigrationAnalysis,
+  MigrationPublication,
+} from "../../../packages/protocol/src/migrations.js";
 import { matchesRunnerLabels } from "../../../packages/github/src/runner-labels.js";
 import { setTimeout as delay } from "node:timers/promises";
 import type { JobRefresh, JobScan } from "../../../packages/protocol/src/jobs.js";
@@ -28,6 +32,8 @@ export class Service {
     readonly store: Store,
     readonly runtime: VmRuntime,
     readonly runnerConnection: () => RunnerBroker & {
+      analyzeMigration(bindingId: string, signal: AbortSignal): Promise<MigrationAnalysis>;
+      publishMigration(previewId: string, signal: AbortSignal): Promise<MigrationPublication>;
       repositories(): Promise<MachineRepositories>;
       connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
       setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
@@ -64,6 +70,52 @@ export class Service {
       let result: unknown;
       const snapshot = this.store.snapshot();
       switch (command.type) {
+        case "migration.analyze":
+        case "migration.publish": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          const broker = this.runnerConnection();
+          const abort = new AbortController();
+          const publishing = command.type === "migration.publish";
+          const request =
+            command.type === "migration.analyze"
+              ? broker.analyzeMigration(command.bindingId, abort.signal)
+              : broker.publishMigration(command.previewId, abort.signal);
+          const done = request
+            .then((result) => {
+              this.store.update(operation, {
+                status: "succeeded",
+                message: publishing
+                  ? "Migration PR observed on GitHub. No merge was performed."
+                  : "Migration preview prepared. Review the findings before publication.",
+                result,
+              });
+            })
+            .catch(() => {
+              this.store.update(operation, {
+                status: publishing
+                  ? "action_required"
+                  : abort.signal.aborted
+                    ? "cancelled"
+                    : "failed",
+                message: publishing
+                  ? "Migration publication could not be confirmed."
+                  : "Migration analysis did not complete.",
+                result: {
+                  code: publishing
+                    ? "migration_publication_unconfirmed"
+                    : "migration_analysis_failed",
+                  nextStep: publishing
+                    ? "Inspect the existing Vectis PR and branch, confirm runner verification and App permissions, then retry the same preview. Never merge automatically."
+                    : "Check repository access and prepared environment availability, then retry the analysis.",
+                },
+              });
+            })
+            .finally(() => {
+              this.tasks.delete(operation.id);
+            });
+          this.tasks.set(operation.id, { abort, done });
+          return;
+        }
         case "repository.connect": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           const environment = snapshot.environments.find(

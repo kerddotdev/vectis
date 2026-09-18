@@ -13,6 +13,12 @@ test("job refresh does not block machine control and retries reuse its durable o
       }),
   );
   const service = new Service(store, new VmRuntime({ home: "/unused-isolated-home" }), () => ({
+    analyzeMigration: vi.fn(async () => {
+      throw new Error("unused");
+    }),
+    publishMigration: vi.fn(async () => {
+      throw new Error("unused");
+    }),
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
@@ -55,6 +61,12 @@ test("disabling automatic admission cancels a queued demand before guest startup
   const runtime = new VmRuntime({ home: "/unused-isolated-home" });
   const start = vi.spyOn(runtime, "start");
   const service = new Service(store, runtime, () => ({
+    analyzeMigration: vi.fn(async () => {
+      throw new Error("unused");
+    }),
+    publishMigration: vi.fn(async () => {
+      throw new Error("unused");
+    }),
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
@@ -107,6 +119,12 @@ test("incomplete repository scans require attention instead of claiming full rec
   const store = new Store(":memory:");
   const scanJobs = vi.fn(async () => ({ runs: 2, jobs: 50, complete: false }));
   const service = new Service(store, new VmRuntime({ home: "/unused-isolated-home" }), () => ({
+    analyzeMigration: vi.fn(async () => {
+      throw new Error("unused");
+    }),
+    publishMigration: vi.fn(async () => {
+      throw new Error("unused");
+    }),
     scanJobs,
     refreshJob: async () => ({ jobId: 1, labels: [], status: "queued", conclusion: null }),
     repositories: async () => [],

@@ -47,6 +47,6 @@ Use the same optional resource flags on `environment start <id>` to override set
 
 Start with machine state, operation status, the error code and its `nextStep`. Missing runtime, missing image, insufficient capacity, and interrupted instances require different remedies. Registering a prepared image does not prove the guest OS or GitHub runner is ready.
 
-For workflow migration, use the advertised `migration.preview` command and inspect its findings and returned YAML. It does not write a branch or PR. Do not infer ARM64 compatibility from an x64 runner label. Public fork workflow approval remains a GitHub maintainer decision.
+For an isolated YAML snippet, `migration.preview` only returns proposed YAML. For a connected repository, use `migration analyze <binding-id> --wait --json` and inspect every changed file and finding. With user authorization to create the PR, use `migration publish <preview-id> --wait --json`. Publication requires successful runner evidence for the same environment revision and never merges. A conflicting branch or stale preview requires inspection, not a force push. An uncertain publication may already have created the PR; retry the same preview after checking GitHub. Do not infer ARM64 compatibility from an x64 runner label. Public fork workflow approval remains a GitHub maintainer decision.
 
 Only advertise operations present in capability discovery. Do not claim cloud pairing, automatic PR creation, a completed GitHub job, or support for an unverified guest based on a successful process launch.

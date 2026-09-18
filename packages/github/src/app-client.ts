@@ -77,7 +77,7 @@ export class GitHubAppClient {
     repo: string;
     repositoryId?: number;
     githubUserId: number;
-    purpose?: "runners" | "jobs";
+    purpose?: "runners" | "jobs" | "migration-read" | "migration-write";
   }) {
     if (
       !/^[A-Za-z0-9-]+$/.test(input.owner) ||
@@ -108,7 +108,16 @@ export class GitHubAppClient {
         permissions:
           input.purpose === "jobs"
             ? { actions: "read", metadata: "read" }
-            : { administration: "write", metadata: "read" },
+            : input.purpose === "migration-read"
+              ? { contents: "read", metadata: "read" }
+              : input.purpose === "migration-write"
+                ? {
+                    contents: "write",
+                    workflows: "write",
+                    pull_requests: "write",
+                    metadata: "read",
+                  }
+                : { administration: "write", metadata: "read" },
       }),
     );
     const repository = Schema.decodeUnknownSync(

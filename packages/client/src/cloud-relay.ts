@@ -1,3 +1,5 @@
+import { environmentRevision } from "./environment-revision.js";
+import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
 import type { RepositoryConnection } from "../../protocol/src/repositories.js";
 import { JobRefresh, JobScan } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
@@ -81,16 +83,21 @@ export function startCloudRelay(
                 operation.command === "runner.run" &&
                 ["accepted", "running", "action_required"].includes(operation.status),
             ),
-          environments: snapshot.environments
-            .slice(0, 100)
-            .map(({ id, name, os, cpu, memoryMiB, state }) => ({
-              id,
-              name,
-              os,
-              cpu,
-              memoryMiB,
-              state,
-            })),
+          environments: await Promise.all(
+            snapshot.environments.slice(0, 100).map(async (environment) => {
+              const { id, name, os, cpu, memoryMiB, state } = environment;
+              const revision = await environmentRevision(environment);
+              return {
+                id,
+                name,
+                os,
+                cpu,
+                memoryMiB,
+                state: revision ? state : ("action_required" as const),
+                ...(revision ? { revision } : {}),
+              };
+            }),
+          ),
         }),
         abort.signal,
       );
@@ -148,6 +155,24 @@ export function startCloudRelay(
       );
   }
   return {
+    async analyzeMigration(bindingId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const result = await interruptible(
+        cloud.action(api.githubMigrations.analyze, { bindingId }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+      );
+      return Schema.decodeUnknownSync(MigrationAnalysis)(result);
+    },
+    async publishMigration(previewId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const result = await interruptible(
+        cloud.action(api.githubMigrations.publish, { previewId }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+      );
+      return Schema.decodeUnknownSync(MigrationPublication)(result);
+    },
     async githubAccounts() {
       requireConnection();
       return interruptible(

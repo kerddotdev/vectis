@@ -144,3 +144,31 @@ test("job inspection uses read-only Actions permission without runner administra
     (await new GitHubAppClient(app).repositoryToken({ ...input, purpose: "jobs" })).repositoryId,
   ).toBe(123);
 });
+
+for (const purpose of ["migration-read", "migration-write"] as const) {
+  test(`${purpose} narrows workflow access without runner or Actions administration`, async () => {
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/installation"))
+        return Response.json({
+          id: 10,
+          app_id: 42,
+          account: { id: 7, type: "User" },
+          suspended_at: null,
+        });
+      if (url.endsWith("/access_tokens")) {
+        expect(JSON.parse(String(init?.body))).toEqual({
+          repository_ids: [123],
+          permissions:
+            purpose === "migration-read"
+              ? { contents: "read", metadata: "read" }
+              : { contents: "write", workflows: "write", pull_requests: "write", metadata: "read" },
+        });
+        return Response.json({ token: "test-migration-token" });
+      }
+      return Response.json({ id: 123, private: true, owner: { id: 7 } });
+    });
+    expect(
+      (await new GitHubAppClient(app).repositoryToken({ ...input, purpose })).repositoryId,
+    ).toBe(123);
+  });
+}

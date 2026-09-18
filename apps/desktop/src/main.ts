@@ -117,6 +117,17 @@ else {
               } else data = await finishPairing(home, credentials);
               break;
             }
+            case "open.pull":
+              if (
+                typeof input !== "string" ||
+                !/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*$/.test(
+                  input,
+                )
+              )
+                throw new VectisError("invalid_pull_url", "Expected a GitHub pull request URL.");
+              await shell.openExternal(input);
+              data = null;
+              break;
             case "open.docs":
               await shell.openExternal("https://vectis.kerd.dev/docs/");
               data = null;

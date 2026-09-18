@@ -3,7 +3,7 @@ import { internalMutation, internalQuery, query } from "./_generated/server.js";
 import type { QueryCtx } from "./_generated/server.js";
 import { machine } from "./auth.js";
 
-async function bindingAuthority(ctx: QueryCtx, bindingId: string, preparing: boolean) {
+export async function bindingAuthority(ctx: QueryCtx, bindingId: string, preparing: boolean) {
   const target = await machine(ctx);
   const id = ctx.db.normalizeId("repositoryBindings", bindingId);
   const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
@@ -76,6 +76,7 @@ export const claim = internalMutation({
       bindingId: binding._id,
       environmentId: environment.id,
       os: environment.os,
+      ...(environment.revision ? { environmentRevision: environment.revision } : {}),
       key: args.key,
       phase: "preparing",
       createdAt: now,
@@ -98,7 +99,9 @@ export const ready = internalMutation({
       lease.phase !== "preparing"
     )
       throw new ConvexError({ code: "runner_lease_conflict" });
-    await bindingAuthority(ctx, lease.bindingId, true);
+    const authority = await bindingAuthority(ctx, lease.bindingId, true);
+    if (lease.environmentRevision !== authority.environment?.revision)
+      throw new ConvexError({ code: "environment_changed" });
     if (
       !Number.isSafeInteger(args.runnerId) ||
       args.runnerId <= 0 ||

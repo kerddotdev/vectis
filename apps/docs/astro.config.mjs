@@ -15,6 +15,7 @@ export default defineConfig({
         { label: "Desktop", slug: "guides/desktop" },
         { label: "GitHub connections", slug: "guides/github" },
         { label: "Run a runner", slug: "guides/runners" },
+        { label: "Workflow migration", slug: "guides/migrations" },
         { label: "VM storage and resources", slug: "guides/storage" },
         { label: "Agent integration", slug: "guides/agents" },
         { label: "CLI reference", slug: "reference/cli" },

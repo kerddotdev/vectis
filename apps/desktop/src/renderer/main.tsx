@@ -1,3 +1,4 @@
+import { MigrationResult } from "./migration-result.js";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
@@ -115,6 +116,9 @@ function Overview() {
               <strong>{operation.command}</strong>
               <p>{operation.message}</p>
               <code>{operation.id}</code>
+              {(operation.command === "migration.analyze" ||
+                operation.command === "migration.publish") &&
+                operation.status === "succeeded" && <MigrationResult result={operation.result} />}
             </div>
             <span className="status">{operation.status}</span>
             {operation.command === "runner.run" && operation.status === "action_required" && (
@@ -128,6 +132,8 @@ function Overview() {
             {(operation.command === "runner.run" ||
               operation.command === "job.refresh" ||
               operation.command === "job.scan" ||
+              operation.command === "migration.analyze" ||
+              operation.command === "migration.publish" ||
               operation.command === "repository.connect") &&
               operation.status === "running" && (
                 <button
@@ -335,6 +341,12 @@ function Connections() {
               }
             >
               {repository.automatic ? "Disable automatic runners" : "Enable automatic runners"}
+            </button>
+            <button
+              className="secondary"
+              onClick={() => void submit({ type: "migration.analyze", bindingId: repository.id })}
+            >
+              Analyze workflow migration
             </button>
             <RepositoryJobs bindingId={repository.id} />
           </div>

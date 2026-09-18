@@ -11,6 +11,7 @@ export type DesktopAction =
   | "chooseDirectory"
   | "cloud.pair"
   | "cloud.finish"
+  | "open.pull"
   | "open.docs"
   | "open.github";
 export type DesktopReply =
