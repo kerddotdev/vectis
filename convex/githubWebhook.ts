@@ -1,3 +1,4 @@
+import { GitHubJob } from "../packages/github/src/job.js";
 import { Schema } from "effect";
 import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
@@ -7,7 +8,7 @@ const Payload = Schema.Struct({
   action: Schema.optional(Schema.String),
   installation: Schema.optional(Schema.Struct({ id: Schema.Int })),
   repository: Schema.optional(Schema.Struct({ id: Schema.Int })),
-  workflow_job: Schema.optional(Schema.Struct({ id: Schema.Int })),
+  workflow_job: Schema.optional(GitHubJob),
 });
 export const receive = httpAction(async (ctx, request) => {
   const event = request.headers.get("x-github-event");
@@ -44,7 +45,12 @@ export const receive = httpAction(async (ctx, request) => {
     ...(payload.action === undefined ? {} : { action: payload.action }),
     ...(payload.repository ? { repositoryId: payload.repository.id } : {}),
     ...(payload.installation ? { installationId: payload.installation.id } : {}),
-    ...(payload.workflow_job ? { jobId: payload.workflow_job.id } : {}),
+    ...(payload.workflow_job
+      ? {
+          jobId: payload.workflow_job.id,
+          job: { ...payload.workflow_job, labels: [...payload.workflow_job.labels] },
+        }
+      : {}),
   });
   return Response.json({ accepted: true, ...result }, { status: 202 });
 });

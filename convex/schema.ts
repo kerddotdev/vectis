@@ -91,6 +91,21 @@ export default defineSchema({
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),
+  githubJobs: defineTable({
+    installationId: v.number(),
+    repositoryId: v.number(),
+    jobId: v.number(),
+    runId: v.number(),
+    name: v.string(),
+    status: v.union(v.literal("queued"), v.literal("in_progress"), v.literal("completed")),
+    conclusion: v.union(v.string(), v.null()),
+    labels: v.array(v.string()),
+    runnerId: v.union(v.number(), v.null()),
+    runnerName: v.union(v.string(), v.null()),
+    updatedAt: v.number(),
+  })
+    .index("by_job", ["installationId", "repositoryId", "jobId"])
+    .index("by_repository", ["installationId", "repositoryId", "updatedAt"]),
   githubDeliveries: defineTable({
     deliveryId: v.string(),
     event: v.string(),

@@ -24,7 +24,7 @@ runs-on: [self-hosted, macOS, ARM64, vectis-macos-26-arm64]
 
 GitHub assigns queued jobs to available runners. Starting a runner does not assign it to a particular job or automatically dispatch a workflow. Automatic demand scheduling and migration PR creation are still being integrated. The manual runner task is bounded to six hours after listener startup.
 
-A successful Vectis operation confirms that its runner process completed and cleanup succeeded. Check the GitHub Actions run for the job's actual result. The listener's exit code alone is not a job result.
+A successful Vectis operation confirms that its runner process completed and cleanup succeeded. Use `vectis job list <binding-id> --json`, MCP `vectis_jobs`, or **Connections > Refresh GitHub jobs** to read the latest 100 observed GitHub jobs for the repository. These records come from signed GitHub webhooks and include the GitHub conclusion. If an event has not arrived, the record can be absent or stale; API-based resynchronization is still being integrated. Check the GitHub Actions run for the job's actual result. The listener's exit code alone is not a job result.
 
 ## Cancel and recover
 

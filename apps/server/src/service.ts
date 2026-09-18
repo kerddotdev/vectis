@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
+import type { JobRefresh } from "../../../packages/protocol/src/jobs.js";
 import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
 import type { MachineRepositories } from "../../../packages/protocol/src/repositories.js";
 import { runRunnerTask } from "./runner-task.js";
@@ -18,12 +19,13 @@ import { Store } from "./store.js";
 export class Service {
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
-  private runners = new Map<string, { abort: AbortController; done: Promise<void> }>();
+  private tasks = new Map<string, { abort: AbortController; done: Promise<void> }>();
   constructor(
     readonly store: Store,
     readonly runtime: VmRuntime,
     readonly runnerConnection: () => RunnerBroker & {
       repositories(): Promise<MachineRepositories>;
+      refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
     } = () => {
       throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
     },
@@ -55,6 +57,39 @@ export class Service {
       let result: unknown;
       const snapshot = this.store.snapshot();
       switch (command.type) {
+        case "job.refresh": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          const broker = this.runnerConnection();
+          const abort = new AbortController();
+          const done = broker
+            .refreshJob(command.bindingId, command.jobId, abort.signal)
+            .then((result) => {
+              this.store.update(operation, {
+                status: "succeeded",
+                message: "GitHub job state refreshed.",
+                result,
+              });
+            })
+            .catch(() => {
+              this.store.update(operation, {
+                status: abort.signal.aborted ? "cancelled" : "failed",
+                message: abort.signal.aborted
+                  ? "Stopped waiting for GitHub job refresh."
+                  : "GitHub job state could not be refreshed.",
+                result: {
+                  bindingId: command.bindingId,
+                  jobId: command.jobId,
+                  code: abort.signal.aborted ? "refresh_cancelled" : "job_refresh_failed",
+                  nextStep: "Check the repository binding and GitHub job ID, then retry the read.",
+                },
+              });
+            })
+            .finally(() => {
+              this.tasks.delete(operation.id);
+            });
+          this.tasks.set(operation.id, { abort, done });
+          return;
+        }
         case "runner.run": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           const broker = this.runnerConnection();
@@ -140,9 +175,9 @@ export class Service {
               });
             })
             .finally(() => {
-              this.runners.delete(operation.id);
+              this.tasks.delete(operation.id);
             });
-          this.runners.set(operation.id, { abort, done });
+          this.tasks.set(operation.id, { abort, done });
           return;
         }
         case "runner.reconcile": {
@@ -151,7 +186,7 @@ export class Service {
             !interrupted ||
             interrupted.command !== "runner.run" ||
             interrupted.status !== "action_required" ||
-            this.runners.has(command.id)
+            this.tasks.has(command.id)
           )
             throw new VectisError(
               "reconciliation_required",
@@ -195,11 +230,11 @@ export class Service {
           break;
         }
         case "operation.cancel": {
-          const active = this.runners.get(command.id);
+          const active = this.tasks.get(command.id);
           if (!active)
             throw new VectisError(
               "operation_not_cancellable",
-              "No active runner task has this operation ID.",
+              "No active cancellable task has this operation ID.",
             );
           active.abort.abort();
           result = { operationId: command.id, cancellationRequested: true };
@@ -422,9 +457,9 @@ export class Service {
   }
   async close() {
     this.closing = true;
-    for (const task of this.runners.values()) task.abort.abort();
+    for (const task of this.tasks.values()) task.abort.abort();
     await this.queue;
-    await Promise.all([...this.runners.values()].map((task) => task.done));
+    await Promise.all([...this.tasks.values()].map((task) => task.done));
     await this.runtime.close();
   }
 }

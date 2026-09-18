@@ -77,6 +77,7 @@ export class GitHubAppClient {
     repo: string;
     repositoryId?: number;
     githubUserId: number;
+    purpose?: "runners" | "jobs";
   }) {
     if (
       !/^[A-Za-z0-9-]+$/.test(input.owner) ||
@@ -104,7 +105,10 @@ export class GitHubAppClient {
         ...(input.repositoryId === undefined
           ? { repositories: [input.repo] }
           : { repository_ids: [input.repositoryId] }),
-        permissions: { administration: "write", metadata: "read" },
+        permissions:
+          input.purpose === "jobs"
+            ? { actions: "read", metadata: "read" }
+            : { administration: "write", metadata: "read" },
       }),
     );
     const repository = Schema.decodeUnknownSync(

@@ -77,6 +77,11 @@ export const Snapshot = Schema.Struct({
 });
 export type Snapshot = typeof Snapshot.Type;
 export const Command = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("job.refresh"),
+    bindingId: Identifier,
+    jobId: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
   Schema.Struct({ type: Schema.Literal("runner.reconcile"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("runner.run"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
@@ -122,6 +127,14 @@ export const Connection = Schema.Struct({
 export type Connection = typeof Connection.Type;
 export const capabilities = [
   {
+    name: "job.refresh",
+    description: "Refresh a known GitHub job through an authorized repository API request.",
+  },
+  {
+    name: "job.list",
+    description: "Read the latest 100 GitHub job records for an authorized repository binding.",
+  },
+  {
     name: "runner.reconcile",
     description: "Clean an interrupted runner registration after its VM has been verified stopped.",
   },
@@ -132,7 +145,8 @@ export const capabilities = [
   },
   {
     name: "operation.cancel",
-    description: "Request cancellation of an active runner and wait for its cleanup status.",
+    description:
+      "Request cancellation of an active background operation; inspect its final cleanup status.",
   },
   {
     name: "repository.list",

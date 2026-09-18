@@ -1,3 +1,4 @@
+import { Jobs } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { MachineRepositories } from "../../protocol/src/repositories.js";
 import { Diagnostics } from "../../protocol/src/diagnostics.js";
@@ -45,6 +46,11 @@ export class VectisClient {
   }
   async shutdown() {
     return this.request("/v1/shutdown", {});
+  }
+  async jobs(bindingId: string) {
+    return Schema.decodeUnknownSync(Jobs)(
+      await this.request(`/v1/jobs?bindingId=${encodeURIComponent(bindingId)}`),
+    );
   }
   async repositories() {
     return Schema.decodeUnknownSync(MachineRepositories)(await this.request("/v1/repositories"));

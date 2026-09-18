@@ -3,6 +3,7 @@ export type DesktopAction =
   | "storage"
   | "doctor"
   | "repositories"
+  | "jobs"
   | "command"
   | "service.install"
   | "service.stop"

@@ -21,7 +21,16 @@ const commandSchema = Schema.toJsonSchemaDocument(Request);
 const waitInput = Schema.Struct({ id: Identifier, timeoutMs: Schema.optional(Schema.Int) });
 const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
+const jobInput = Schema.Struct({ bindingId: Identifier });
+const jobSchema = Schema.toJsonSchemaDocument(jobInput);
 const tools = [
+  {
+    name: "vectis_jobs",
+    description:
+      "Read the latest 100 GitHub job records for a connected repository binding. GitHub conclusions are separate from local runner lifecycle status.",
+    inputSchema: { ...jobSchema.schema, $defs: jobSchema.definitions },
+    annotations: { readOnlyHint: true },
+  },
   {
     name: "vectis_repositories",
     description:
@@ -174,6 +183,13 @@ export function createMcpServer(
         case "vectis_storage":
           result = await (await connect()).storage();
           break;
+        case "vectis_jobs": {
+          const input = Schema.decodeUnknownSync(jobInput, { onExcessProperty: "error" })(
+            request.params.arguments,
+          );
+          result = await (await connect()).jobs(input.bindingId);
+          break;
+        }
         case "vectis_repositories":
           result = await (await connect()).repositories();
           break;

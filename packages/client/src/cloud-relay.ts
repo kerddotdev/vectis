@@ -1,3 +1,4 @@
+import { JobRefresh } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
@@ -138,6 +139,30 @@ export function startCloudRelay(
       );
   }
   return {
+    async refreshJob(bindingId: string, jobId: number, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const result = await interruptible(
+        cloud.action(api.githubJobs.refresh, { bindingId, jobId }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+      );
+      return Schema.decodeUnknownSync(JobRefresh)(result);
+    },
+    async jobs(bindingId: string) {
+      requireConnection();
+      try {
+        return await interruptible(
+          cloud.query(api.jobs.list, { bindingId }),
+          AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+        );
+      } catch {
+        throw new VectisError(
+          "job_access_unavailable",
+          "Repository job state could not be read.",
+          "Check this machine's repository binding and cloud connection, then retry.",
+        );
+      }
+    },
     async findRunner(key: string, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();

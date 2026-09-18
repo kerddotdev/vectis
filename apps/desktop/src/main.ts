@@ -49,6 +49,11 @@ else {
             case "status":
               data = await (await localClient(home)).status();
               break;
+            case "jobs": {
+              const bindingId = Schema.decodeUnknownSync(Schema.NonEmptyString)(input);
+              data = await (await localClient(home)).jobs(bindingId);
+              break;
+            }
             case "repositories":
               data = await (await localClient(home)).repositories();
               break;
