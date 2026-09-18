@@ -1,3 +1,5 @@
+import brandMark from "../../../../assets/brand/web/vectis.svg";
+import "../../../../assets/brand/web/colors.css";
 import { MachineSelector } from "./machine-selector.js";
 import { PreparationResult } from "./preparation-result.js";
 import { MigrationResult } from "./migration-result.js";
@@ -27,7 +29,7 @@ function Layout() {
     <div className="layout">
       <aside>
         <div className="brand">
-          Vectis <span>/</span>
+          <img src={brandMark} width="32" height="32" alt="" /> Vectis
         </div>
         <nav aria-label="Main navigation">
           <Link to="/" activeOptions={{ exact: true }}>

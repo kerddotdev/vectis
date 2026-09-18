@@ -1,3 +1,5 @@
+import brandMark from "../../../assets/brand/web/vectis.svg";
+import "../../../assets/brand/web/colors.css";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ClerkProvider, SignIn, UserButton, useAuth } from "@clerk/react";
@@ -143,7 +145,7 @@ function App() {
     <>
       <header>
         <a className="brand" href="/">
-          Vectis<span aria-hidden="true">/</span>
+          <img src={brandMark} width="32" height="32" alt="" /> Vectis
         </a>
         <a href="/docs/">Documentation</a>
       </header>

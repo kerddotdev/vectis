@@ -25,6 +25,9 @@ aside {
   gap: 40px;
 }
 .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   font-size: 25px;
   font-weight: 650;
 }

@@ -7,6 +7,11 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Vectis",
+      logo: {
+        light: "../../assets/brand/web/vectis-light.svg",
+        dark: "../../assets/brand/web/vectis.svg",
+      },
+      favicon: "/brand/vectis.svg",
       description: "Run GitHub Actions on your own machines.",
       customCss: ["./src/styles.css"],
       sidebar: [
