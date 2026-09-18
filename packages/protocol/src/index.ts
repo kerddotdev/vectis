@@ -76,7 +76,15 @@ export const Snapshot = Schema.Struct({
   cloud: Schema.optional(CloudStatus),
 });
 export type Snapshot = typeof Snapshot.Type;
+export const RepositoryConnection = Schema.Struct({
+  accountId: Identifier,
+  repositoryName: Schema.NonEmptyString,
+  environmentId: Identifier,
+});
+export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("job.scan"), bindingId: Identifier }),
+  Schema.Struct({ type: Schema.Literal("repository.connect"), ...RepositoryConnection.fields }),
   Schema.Struct({
     type: Schema.Literal("repository.automatic"),
     bindingId: Identifier,
@@ -137,8 +145,22 @@ export const Connection = Schema.Struct({
 export type Connection = typeof Connection.Type;
 export const capabilities = [
   {
+    name: "github.accounts",
+    description: "List the paired machine owner's verified GitHub identities.",
+  },
+  {
+    name: "repository.connect",
+    description:
+      "Connect a prepared environment to a repository after verifying current GitHub App access.",
+  },
+  {
     name: "repository.automatic",
     description: "Enable or disable future automatic runner admission for a repository binding.",
+  },
+  {
+    name: "job.scan",
+    description:
+      "Discover missing queued and running jobs through the GitHub API, and refresh previously active runs.",
   },
   {
     name: "job.refresh",

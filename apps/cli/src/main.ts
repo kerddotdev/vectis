@@ -36,6 +36,8 @@ async function main() {
       timeout: { type: "string" },
       cpu: { type: "string" },
       "job-id": { type: "string" },
+      account: { type: "string" },
+      environment: { type: "string" },
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
     },
@@ -51,6 +53,8 @@ async function main() {
 
 Usage: vectis <command> [options]
 
+  github accounts               List verified accounts available to this paired machine
+  repository connect <name>     Connect using --account <id> and --environment <id>
   github connect                Open the guided GitHub account connection
   cloud pair [--url <deployment>]  Begin browser-approved machine pairing
   cloud finish                  Complete an approved pairing from Keychain
@@ -60,6 +64,7 @@ Usage: vectis <command> [options]
   service start                 Start the installed or independent background service
   service run                   Run the service in the foreground
   service stop                  Stop through an authenticated service request
+  job scan <binding-id>         Discover missing jobs through the GitHub API
   job refresh <binding-id> <job-id>  Recover a job state directly from GitHub
   job list <binding-id>         Read recent GitHub job status for a connected repository
   repository enable-auto <id>   Enable automatic runners for matching queued jobs
@@ -259,6 +264,10 @@ GitHub pairing require separately configured development services.
     output({ stopping: true });
     return;
   }
+  if (command === "github" && subcommand === "accounts") {
+    output(await api.githubAccounts());
+    return;
+  }
   if (command === "job" && subcommand === "list" && id) {
     output(await api.jobs(id));
     return;
@@ -300,6 +309,8 @@ GitHub pairing require separately configured development services.
       bindingId: id,
       enabled: subcommand === "enable-auto",
     });
+  else if (command === "job" && subcommand === "scan" && id)
+    request = decodeCommand({ type: "job.scan", bindingId: id });
   else if (command === "job" && subcommand === "refresh" && id && positionals[3])
     request = decodeCommand({ type: "job.refresh", bindingId: id, jobId: Number(positionals[3]) });
   else if (command === "runner" && subcommand === "reconcile" && id)
@@ -312,6 +323,19 @@ GitHub pairing require separately configured development services.
     });
   else if (command === "operation" && subcommand === "cancel" && id)
     request = decodeCommand({ type: "operation.cancel", id });
+  else if (
+    command === "repository" &&
+    subcommand === "connect" &&
+    id &&
+    values.account &&
+    values.environment
+  )
+    request = decodeCommand({
+      type: "repository.connect",
+      accountId: values.account,
+      repositoryName: id,
+      environmentId: values.environment,
+    });
   else if (command === "environment" && subcommand === "register" && values.file)
     request = {
       type: "environment.register",

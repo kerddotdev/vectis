@@ -124,3 +124,51 @@ test("disabled bindings cannot request API access", async () => {
   await expect(device.action(api.githubJobs.refresh, { bindingId, jobId: 4 })).rejects.toThrow();
   expect(fetch).not.toHaveBeenCalled();
 });
+
+test("repository scans recover unknown jobs and recheck access before each page is saved", async () => {
+  const { device, bindingId, t, fetch, machineId } = await fixture();
+  const original = fetch.getMockImplementation();
+  if (!original) throw new Error("Missing test fetch");
+  let revoked = false;
+  fetch.mockImplementation(async (url) => {
+    if (url.includes("/actions/runs?"))
+      return Response.json({ total_count: 1, workflow_runs: [{ id: 5 }] });
+    if (url.includes("/actions/runs/5/jobs?")) {
+      if (revoked)
+        await t.run(async (ctx) => ctx.db.patch("machines", machineId, { revoked: true }));
+      return Response.json({
+        total_count: 1,
+        jobs: [
+          {
+            id: 4,
+            run_id: 5,
+            name: "Build",
+            status: "queued",
+            conclusion: null,
+            labels: ["vectis-mac"],
+            runner_id: null,
+            runner_name: null,
+          },
+        ],
+      });
+    }
+    return original(url);
+  });
+  expect(await device.action(api.githubJobs.scan, { bindingId })).toEqual({
+    runs: 1,
+    jobs: 1,
+    complete: true,
+  });
+  expect(await device.query(api.jobs.list, { bindingId })).toMatchObject([
+    { jobId: 4, status: "queued" },
+  ]);
+  revoked = true;
+  await expect(device.action(api.githubJobs.scan, { bindingId })).rejects.toThrow();
+});
+
+test("repository scans reject disabled access before requesting GitHub", async () => {
+  const { device, bindingId, t, fetch } = await fixture();
+  await t.run(async (ctx) => ctx.db.patch("repositoryBindings", bindingId, { enabled: false }));
+  await expect(device.action(api.githubJobs.scan, { bindingId })).rejects.toThrow();
+  expect(fetch).not.toHaveBeenCalled();
+});

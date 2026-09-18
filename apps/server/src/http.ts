@@ -137,6 +137,14 @@ export async function startService(
           throw new VectisError("cloud_unconfigured", "Connect this machine before reading jobs.");
         return reply(response, 200, await relay.jobs(bindingId));
       }
+      if (request.method === "GET" && request.url === "/v1/github/accounts") {
+        if (!relay)
+          throw new VectisError(
+            "cloud_unconfigured",
+            "Connect this machine before reading linked GitHub accounts.",
+          );
+        return reply(response, 200, await relay.githubAccounts());
+      }
       if (request.method === "GET" && request.url === "/v1/repositories") {
         if (!relay)
           throw new VectisError(

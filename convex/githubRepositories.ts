@@ -35,3 +35,26 @@ export const enable = action({
     });
   },
 });
+
+export const connectMachine = action({
+  args: { accountId: v.string(), repositoryName: v.string(), environmentId: v.string() },
+  handler: async (ctx, args): Promise<Id<"repositoryBindings">> => {
+    const verified = await ctx.runQuery(internal.repositoryBindings.authorizeMachine, {
+      accountId: args.accountId,
+      environmentId: args.environmentId,
+    });
+    const { installationId, repositoryId } = await new GitHubAppClient(
+      verified.app,
+    ).repositoryToken({
+      owner: verified.login,
+      repo: args.repositoryName,
+      githubUserId: verified.githubId,
+    });
+    return ctx.runMutation(internal.repositoryBindings.saveForMachine, {
+      ...args,
+      accountId: verified.accountId,
+      installationId,
+      repositoryId,
+    });
+  },
+});

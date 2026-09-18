@@ -22,3 +22,10 @@ export const JobRefresh = Schema.Struct({
   conclusion: Schema.NullOr(Schema.String),
 });
 export type JobRefresh = typeof JobRefresh.Type;
+
+export const JobScan = Schema.Struct({
+  runs: Schema.Int,
+  jobs: Schema.Int,
+  complete: Schema.Boolean,
+});
+export type JobScan = typeof JobScan.Type;

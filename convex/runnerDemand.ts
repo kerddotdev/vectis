@@ -103,3 +103,49 @@ export async function scheduleRunnerDemand(ctx: MutationCtx, machineId: Id<"mach
     }
   }
 }
+
+export async function scheduleJobScan(ctx: MutationCtx, machineId: Id<"machines">) {
+  const target = await ctx.db.get("machines", machineId);
+  if (
+    !target ||
+    target.revoked ||
+    target.paused !== false ||
+    !(await ctx.db.query("githubApps").first())
+  )
+    return;
+  const now = Date.now();
+  const interval = 300000;
+  const bindings = await ctx.db
+    .query("repositoryBindings")
+    .withIndex("by_machine", (q) => q.eq("machineId", machineId))
+    .take(100);
+  bindings.sort((left, right) => (left.lastJobScanAt ?? 0) - (right.lastJobScanAt ?? 0));
+  for (const binding of bindings) {
+    if (
+      !binding.enabled ||
+      !binding.automatic ||
+      binding.owner !== target.owner ||
+      (binding.lastJobScanAt ?? 0) > now - interval
+    )
+      continue;
+    const account = await ctx.db.get("githubAccounts", binding.accountId);
+    if (account?.owner !== target.owner) continue;
+    const key = `job-scan:${binding.installationId}:${binding.repositoryId}:${Math.floor(now / interval)}`;
+    const existing = await ctx.db
+      .query("operations")
+      .withIndex("by_owner_key", (q) => q.eq("owner", target.owner).eq("key", key))
+      .unique();
+    await ctx.db.patch("repositoryBindings", binding._id, { lastJobScanAt: now });
+    if (existing) continue;
+    await ctx.db.insert("operations", {
+      owner: target.owner,
+      machineId,
+      key,
+      commandJson: JSON.stringify({ type: "job.scan", bindingId: binding._id }),
+      phase: "accepted",
+      createdAt: now,
+      updatedAt: now,
+    });
+    return;
+  }
+}

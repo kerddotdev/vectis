@@ -25,6 +25,13 @@ const jobInput = Schema.Struct({ bindingId: Identifier });
 const jobSchema = Schema.toJsonSchemaDocument(jobInput);
 const tools = [
   {
+    name: "vectis_github_accounts",
+    description:
+      "List verified GitHub identities owned by this paired machine's owner. Use the returned account ID with repository.connect.",
+    inputSchema: emptyInput,
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "vectis_jobs",
     description:
       "Read the latest 100 GitHub job records for a connected repository binding. GitHub conclusions are separate from local runner lifecycle status.",
@@ -190,6 +197,9 @@ export function createMcpServer(
           result = await (await connect()).jobs(input.bindingId);
           break;
         }
+        case "vectis_github_accounts":
+          result = await (await connect()).githubAccounts();
+          break;
         case "vectis_repositories":
           result = await (await connect()).repositories();
           break;

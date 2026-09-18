@@ -1,4 +1,5 @@
-import { JobRefresh } from "../../protocol/src/jobs.js";
+import type { RepositoryConnection } from "../../protocol/src/repositories.js";
+import { JobRefresh, JobScan } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
@@ -147,12 +148,36 @@ export function startCloudRelay(
       );
   }
   return {
+    async githubAccounts() {
+      requireConnection();
+      return interruptible(
+        cloud.query(api.githubIdentity.forMachine, {}),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
+    async connectRepository(input: RepositoryConnection, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      return interruptible(
+        cloud.action(api.githubRepositories.connectMachine, input),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+      );
+    },
     async setAutomatic(bindingId: string, enabled: boolean) {
       requireConnection();
       await interruptible(
         cloud.mutation(api.repositoryBindings.setAutomatic, { bindingId, enabled }),
         AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
       );
+    },
+    async scanJobs(bindingId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const result = await interruptible(
+        cloud.action(api.githubJobs.scan, { bindingId }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+      );
+      return Schema.decodeUnknownSync(JobScan)(result);
     },
     async refreshJob(bindingId: string, jobId: number, signal: AbortSignal) {
       signal.throwIfAborted();

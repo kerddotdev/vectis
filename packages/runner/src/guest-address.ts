@@ -1,3 +1,5 @@
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFile } from "node:fs/promises";
 import { isIPv4 } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
@@ -30,6 +32,30 @@ export function addressFromLeases(source: string, macAddress: string) {
   return matches.values().next().value;
 }
 
+export function addressFromNeighbors(source: string, macAddress: string) {
+  const target = canonicalMac(macAddress);
+  if (!target)
+    throw new VectisError("invalid_guest_address", "The VM network identity is invalid.");
+  const matches = new Set<string>();
+  for (const line of source.split("\n")) {
+    const match = line.match(/^\S+ \(([^)]+)\) at ([^ ]+) on ([^ ]+)/);
+    const [, address, mac, network] = match ?? [];
+    if (
+      address &&
+      mac &&
+      network?.startsWith("bridge") &&
+      isIPv4(address) &&
+      canonicalMac(mac) === target
+    )
+      matches.add(address);
+  }
+  if (matches.size > 1)
+    throw new VectisError("ambiguous_guest_address", "Multiple addresses match this VM.");
+  return matches.values().next().value;
+}
+
+const inspectNeighbors = promisify(execFile);
+
 export async function waitForGuestAddress(macAddress: string, signal: AbortSignal) {
   while (!signal.aborted) {
     let contents: string;
@@ -47,6 +73,14 @@ export async function waitForGuestAddress(macAddress: string, signal: AbortSigna
       );
     const address = addressFromLeases(contents, macAddress);
     if (address) return address;
+    const neighbors = await inspectNeighbors("/usr/sbin/arp", ["-an"], {
+      signal,
+      timeout: 3000,
+      maxBuffer: 1048576,
+    }).catch(() => undefined);
+    signal.throwIfAborted();
+    const neighbor = neighbors && addressFromNeighbors(neighbors.stdout, macAddress);
+    if (neighbor) return neighbor;
     await delay(500, undefined, { signal });
   }
   signal.throwIfAborted();

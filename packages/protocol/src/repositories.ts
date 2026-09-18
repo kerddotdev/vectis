@@ -10,3 +10,9 @@ export const MachineRepositories = Schema.Array(
   }),
 );
 export type MachineRepositories = typeof MachineRepositories.Type;
+
+export const GitHubAccounts = Schema.Array(
+  Schema.Struct({ id: Identifier, githubId: Schema.Int, login: Schema.NonEmptyString }),
+);
+export type GitHubAccounts = typeof GitHubAccounts.Type;
+export { RepositoryConnection } from "./index.js";

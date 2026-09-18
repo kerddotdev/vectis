@@ -54,6 +54,9 @@ else {
               data = await (await localClient(home)).jobs(bindingId);
               break;
             }
+            case "github.accounts":
+              data = await (await localClient(home)).githubAccounts();
+              break;
             case "repositories":
               data = await (await localClient(home)).repositories();
               break;
