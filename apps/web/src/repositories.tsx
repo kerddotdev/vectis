@@ -39,7 +39,7 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
       setMessage("Repository connected. Runner readiness must still be verified on your Mac.");
     } catch {
       setMessage(
-        "Connection failed. Check the private repository name, App installation, and local environment ID.",
+        "Connection failed. Check the repository name, App installation and local environment ID. Public repositories must require approval for all external contributors.",
       );
     } finally {
       setWorking(false);
@@ -49,8 +49,8 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
     <section aria-labelledby="repositories-title">
       <h2 id="repositories-title">Repository connections</h2>
       <p>
-        Choose which prepared environment can serve a private repository owned by your connected
-        personal account.
+        Choose which prepared environment can serve a repository owned by your connected personal
+        account. Public repositories must require GitHub approval for all external contributors.
       </p>
       <form onSubmit={(event) => void submit(event)}>
         <fieldset disabled={working}>
