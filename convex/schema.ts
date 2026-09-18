@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { installation, verifiedUser } from "./githubValidators.js";
 
 export const phase = v.union(
   v.literal("accepted"),
@@ -11,6 +12,30 @@ export const phase = v.union(
   v.literal("cancelled"),
 );
 export default defineSchema({
+  githubLinks: defineTable({
+    owner: v.string(),
+    digest: v.string(),
+    verifier: v.optional(v.string()),
+    expiresAt: v.number(),
+    phase: v.union(
+      v.literal("pending"),
+      v.literal("exchanging"),
+      v.literal("review"),
+      v.literal("failed"),
+    ),
+    user: v.optional(verifiedUser),
+  })
+    .index("by_owner", ["owner"])
+    .index("by_digest", ["digest"]),
+  githubAccounts: defineTable({
+    owner: v.string(),
+    githubId: v.number(),
+    login: v.string(),
+    installations: v.array(installation),
+    verifiedAt: v.number(),
+  })
+    .index("by_owner", ["owner"])
+    .index("by_github", ["githubId"]),
   machines: defineTable({
     owner: v.string(),
     localId: v.string(),
@@ -22,6 +47,31 @@ export default defineSchema({
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),
+  githubDeliveries: defineTable({
+    deliveryId: v.string(),
+    event: v.string(),
+    action: v.optional(v.string()),
+    repositoryId: v.optional(v.number()),
+    installationId: v.optional(v.number()),
+    jobId: v.optional(v.number()),
+    receivedAt: v.number(),
+  }).index("by_delivery", ["deliveryId"]),
+  githubAppSetups: defineTable({
+    stateDigest: v.string(),
+    ownerId: v.number(),
+    ownerLogin: v.string(),
+    expiresAt: v.number(),
+    consumed: v.boolean(),
+  }).index("by_state", ["stateDigest"]),
+  githubApps: defineTable({
+    appId: v.number(),
+    slug: v.string(),
+    ownerId: v.number(),
+    clientId: v.string(),
+    privateKey: v.string(),
+    clientSecret: v.string(),
+    webhookSecret: v.string(),
+  }).index("by_app", ["appId"]),
   pairings: defineTable({
     owner: v.string(),
     requestDigest: v.string(),

@@ -1,4 +1,4 @@
-export async function smallJson(request: Request): Promise<unknown> {
+export async function readBody(request: Pick<Request, "body">, limit = 4096) {
   if (!request.body) throw new Error("Missing request body.");
   const reader = request.body.getReader();
   let length = 0;
@@ -8,7 +8,7 @@ export async function smallJson(request: Request): Promise<unknown> {
       const item = await reader.read();
       if (item.done) break;
       length += item.value.length;
-      if (length > 4096) throw new Error("Request body exceeds 4 KiB.");
+      if (length > limit) throw new Error("Request body exceeds the size limit.");
       chunks.push(item.value);
     }
   } finally {
@@ -20,5 +20,9 @@ export async function smallJson(request: Request): Promise<unknown> {
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  return JSON.parse(new TextDecoder().decode(bytes));
+  return bytes;
+}
+
+export async function smallJson(request: Pick<Request, "body">, limit = 4096): Promise<unknown> {
+  return JSON.parse(new TextDecoder().decode(await readBody(request, limit)));
 }

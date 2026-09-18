@@ -2,9 +2,16 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 
+import { receive } from "./githubWebhook.js";
+import { setup, manifestCallback } from "./githubHttp.js";
+import { callback as githubOAuthCallback } from "./githubOAuth.js";
 import { smallJson } from "./httpBody.js";
 
 const router = httpRouter();
+router.route({ path: "/github/oauth/callback", method: "GET", handler: githubOAuthCallback });
+router.route({ path: "/github/webhook", method: "POST", handler: receive });
+router.route({ path: "/github/app/setup", method: "GET", handler: setup });
+router.route({ path: "/github/manifest/callback", method: "GET", handler: manifestCallback });
 router.route({
   path: "/machine/pairing",
   method: "POST",

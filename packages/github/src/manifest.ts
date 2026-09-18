@@ -25,6 +25,6 @@ export function appManifest(name: string, homepage: string, backend: string) {
       pull_requests: "write",
       workflows: "write",
     },
-    default_events: ["workflow_job", "installation", "installation_repositories", "repository"],
+    default_events: ["workflow_job", "repository"],
   };
 }

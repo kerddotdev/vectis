@@ -14,6 +14,7 @@ import {
   decodeCommand,
   type Command,
 } from "../../../packages/protocol/src/index.js";
+import { githubConnection } from "../../../packages/client/src/github.js";
 import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
@@ -48,6 +49,7 @@ async function main() {
 
 Usage: vectis <command> [options]
 
+  github connect                Open the guided GitHub account connection
   cloud pair [--url <deployment>]  Begin browser-approved machine pairing
   cloud finish                  Complete an approved pairing from Keychain
   service install               Install and start a macOS login service
@@ -87,6 +89,11 @@ Examples:
 Only capabilities reported by this build are supported. Cloud setup and
 GitHub pairing require separately configured development services.
 `);
+    return;
+  }
+  if (command === "github" && subcommand === "connect") {
+    output(githubConnection());
+    process.exitCode = 3;
     return;
   }
   if (command === "cloud" && (subcommand === "pair" || subcommand === "finish")) {

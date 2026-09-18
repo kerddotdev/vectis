@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit && pnpm --filter @vectis/web exec tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm --filter @vectis/web exec tsc --noEmit && pnpm --filter @vectis/web exec tsc -p tsconfig.worker.json --noEmit",
     "test": "vitest run",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "format": "oxfmt .",
@@ -25,6 +25,7 @@
     "yaml": "2.9.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "5.20260915.1",
     "@types/node": "24.13.4",
     "convex-test": "0.0.58",
     "oxfmt": "0.68.0",
