@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { StorageReport } from "../../protocol/src/storage.js";
 import {
   ApiError,
   Operation,
@@ -14,7 +15,7 @@ export class VectisClient {
     if (url.protocol !== "https:" && !(url.protocol === "http:" && url.hostname === "127.0.0.1"))
       throw new VectisError("insecure_connection", "Connections require HTTPS or local loopback.");
   }
-  private async request(path: string, body?: unknown): Promise<unknown> {
+  private async request(path: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
     const response = await fetch(new URL(path, this.connection.url), {
       method: body === undefined ? "GET" : "POST",
       headers: {
@@ -22,7 +23,9 @@ export class VectisClient {
         "Content-Type": "application/json",
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(15000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+        : AbortSignal.timeout(15000),
       redirect: "error",
     });
     const value: unknown = await response.json();
@@ -32,8 +35,11 @@ export class VectisClient {
     }
     return value;
   }
-  async status() {
-    return Schema.decodeUnknownSync(Snapshot)(await this.request("/v1/status"));
+  async status(signal?: AbortSignal) {
+    return Schema.decodeUnknownSync(Snapshot)(await this.request("/v1/status", undefined, signal));
+  }
+  async storage() {
+    return Schema.decodeUnknownSync(StorageReport)(await this.request("/v1/storage"));
   }
   async capabilities() {
     return this.request("/v1/capabilities");
@@ -45,7 +51,15 @@ export class VectisClient {
   }
   async wait(id: string, signal: AbortSignal = AbortSignal.timeout(120000)): Promise<Operation> {
     while (!signal.aborted) {
-      const operation = (await this.status()).operations.find((item) => item.id === id);
+      const snapshot = await this.status(signal).catch((error) => {
+        if (signal.aborted)
+          throw new VectisError(
+            "wait_cancelled",
+            "Waiting was cancelled; the operation may still be running.",
+          );
+        throw error;
+      });
+      const operation = snapshot.operations.find((item) => item.id === id);
       if (!operation) throw new VectisError("operation_missing", "The operation was not found.");
       if (operation.status !== "accepted" && operation.status !== "running") return operation;
       await new Promise<void>((resolve, reject) => {
@@ -63,6 +77,7 @@ export class VectisClient {
           resolve();
         }, 200);
         signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) onAbort();
       });
     }
     throw new VectisError("wait_cancelled", "Waiting was cancelled; inspect operation status.");

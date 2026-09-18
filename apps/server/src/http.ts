@@ -9,6 +9,7 @@ import {
   VectisError,
   type Connection,
 } from "../../../packages/protocol/src/index.js";
+import { storageReport } from "../../../packages/runner/src/storage.js";
 import { Store } from "./store.js";
 import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
@@ -89,6 +90,8 @@ export async function startService(
         options.onShutdown?.();
         return;
       }
+      if (request.method === "GET" && request.url === "/v1/storage")
+        return reply(response, 200, await storageReport(store.snapshot(), options.home));
       if (request.method === "GET" && request.url === "/v1/status")
         return reply(response, 200, store.snapshot());
       if (request.method === "GET" && request.url === "/v1/capabilities")

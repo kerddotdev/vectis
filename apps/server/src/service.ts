@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { totalmem } from "node:os";
+import { cpus, totalmem } from "node:os";
 import { Schema } from "effect";
 import {
   Command,
@@ -22,7 +22,10 @@ export class Service {
   }
   async initialize() {
     for (const instance of this.store.snapshot().instances) {
-      if (instance.status === "interrupted" && (await this.runtime.reconcile(instance.id)))
+      if (
+        instance.status === "interrupted" &&
+        (await this.runtime.reconcile(instance.id, instance.directory))
+      )
         this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
     }
   }
@@ -58,6 +61,38 @@ export class Service {
             );
           this.store.put("environment", command.environment.id, command.environment);
           break;
+        case "environment.configure": {
+          const current = snapshot.environments.find((item) => item.id === command.id);
+          if (!current) throw new VectisError("environment_missing", "Environment not found.");
+          if (
+            command.cpu === undefined &&
+            command.memoryMiB === undefined &&
+            command.storagePath === undefined
+          )
+            throw new VectisError("invalid_request", "Provide CPU, memory or a storage path.");
+          if (
+            snapshot.instances.some(
+              (item) =>
+                item.environmentId === command.id &&
+                item.status === "running" &&
+                item.memoryMiB === undefined,
+            )
+          )
+            throw new VectisError(
+              "environment_busy",
+              "Stop legacy instances before changing their resource configuration.",
+            );
+          const environment = {
+            ...current,
+            ...(command.cpu !== undefined ? { cpu: command.cpu } : {}),
+            ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
+            ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
+          };
+          await this.runtime.validate(environment);
+          this.store.put("environment", command.id, environment);
+          result = { environment, appliesTo: "future_instances" };
+          break;
+        }
         case "environment.remove":
           if (
             snapshot.instances.some(
@@ -85,10 +120,22 @@ export class Service {
           const memory = active.reduce(
             (sum, instance) =>
               sum +
-              (snapshot.environments.find((item) => item.id === instance.environmentId)
-                ?.memoryMiB ?? 0),
+              (instance.memoryMiB ??
+                snapshot.environments.find((item) => item.id === instance.environmentId)
+                  ?.memoryMiB ??
+                0),
             environment.memoryMiB,
           );
+          const cpu = active.reduce(
+            (sum, instance) =>
+              sum +
+              (instance.cpu ??
+                snapshot.environments.find((item) => item.id === instance.environmentId)?.cpu ??
+                0),
+            environment.cpu,
+          );
+          if (cpu > cpus().length)
+            throw new VectisError("capacity_exceeded", "Requested VM CPUs exceed the host budget.");
           if (memory * 1024 * 1024 > totalmem() * 0.75)
             throw new VectisError(
               "capacity_exceeded",
@@ -107,6 +154,9 @@ export class Service {
           const record = {
             id,
             environmentId: environment.id,
+            directory: this.runtime.directoryFor(id, environment),
+            cpu: environment.cpu,
+            memoryMiB: environment.memoryMiB,
             status: "interrupted" as const,
             pid: 0,
             createdAt: operation.createdAt,
@@ -126,7 +176,7 @@ export class Service {
               pid: instance.process.pid ?? 0,
             });
           } catch (error) {
-            const remaining = await this.runtime.hasWorkDirectory(id);
+            const remaining = await this.runtime.hasWorkDirectory(id, record.directory);
             this.store.put("instance", id, {
               ...record,
               status: remaining ? "interrupted" : "stopped",
@@ -139,7 +189,10 @@ export class Service {
         case "instance.reconcile": {
           const instance = snapshot.instances.find((item) => item.id === command.id);
           if (!instance) throw new VectisError("instance_missing", "Instance not found.");
-          if (instance.status !== "interrupted" || !(await this.runtime.reconcile(command.id)))
+          if (
+            instance.status !== "interrupted" ||
+            !(await this.runtime.reconcile(command.id, instance.directory))
+          )
             throw new VectisError(
               "reconciliation_required",
               "Process exit is not yet verified.",

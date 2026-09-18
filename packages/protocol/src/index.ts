@@ -10,6 +10,7 @@ export const Environment = Schema.Struct({
   name: Schema.NonEmptyString,
   os: GuestOS,
   basePath: Schema.NonEmptyString,
+  storagePath: Schema.optional(Schema.NonEmptyString),
   cpu: Schema.Int,
   memoryMiB: Schema.Int,
   state: Schema.Literals(["ready", "action_required"]),
@@ -49,6 +50,9 @@ export const Machine = Schema.Struct({
 export const Instance = Schema.Struct({
   id: Identifier,
   environmentId: Identifier,
+  directory: Schema.optional(Schema.String),
+  cpu: Schema.optional(Schema.Int),
+  memoryMiB: Schema.optional(Schema.Int),
   status: Schema.Literals(["running", "stopped", "interrupted"]),
   pid: Schema.Int,
   createdAt: Schema.String,
@@ -66,6 +70,13 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
+  Schema.Struct({
+    type: Schema.Literal("environment.configure"),
+    id: Identifier,
+    cpu: Schema.optional(Schema.Int),
+    memoryMiB: Schema.optional(Schema.Int),
+    storagePath: Schema.optional(Schema.NonEmptyString),
+  }),
   Schema.Struct({ type: Schema.Literal("environment.start"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("instance.stop"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("instance.reconcile"), id: Identifier }),
@@ -91,6 +102,10 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "storage",
+    description: "Inspect base and VM file sizes, allocated blocks and host file breakdown.",
+  },
   { name: "status", description: "Read machine, environments, instances, and recent operations." },
   {
     name: "machine.pause",
@@ -103,6 +118,10 @@ export const capabilities = [
   {
     name: "environment.remove",
     description: "Remove an idle environment definition; never delete the source disk.",
+  },
+  {
+    name: "environment.configure",
+    description: "Set CPU, memory or an absolute VM storage directory for future instances.",
   },
   { name: "environment.start", description: "Start a disposable copy of a prepared environment." },
   {

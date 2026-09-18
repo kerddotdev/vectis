@@ -63,3 +63,19 @@ hostTest("explicit stop waits for process exit and cleanup", async () => {
   expect(instance.process.signalCode).toBe("SIGTERM");
   expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
 });
+
+hostTest(
+  "custom VM storage is separate from service state and cleanup preserves its parent",
+  async () => {
+    const { home, runtime, environment } = await fixture(
+      'process.stdout.write(\'{"event":"vm.running"}\\n\'); setInterval(() => {}, 1000);',
+    );
+    const storagePath = join(home, "selected-volume");
+    const instance = await runtime.start("custom", { ...environment, storagePath }, () => {});
+    expect(instance.directory).toBe(join(storagePath, "custom"));
+    expect(await runtime.hasWorkDirectory("custom", instance.directory)).toBe(true);
+    await runtime.stop(instance.id);
+    expect(await runtime.hasWorkDirectory("custom", instance.directory)).toBe(false);
+    expect((await stat(storagePath)).isDirectory()).toBe(true);
+  },
+);
