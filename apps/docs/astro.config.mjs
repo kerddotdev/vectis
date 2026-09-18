@@ -13,6 +13,8 @@ export default defineConfig({
         { label: "Start here", slug: "index" },
         { label: "Local setup", slug: "guides/local-setup" },
         { label: "Prepare Linux", slug: "guides/linux-setup" },
+        { label: "Install macOS", slug: "guides/macos-setup" },
+        { label: "Install Windows", slug: "guides/windows-setup" },
         { label: "Desktop", slug: "guides/desktop" },
         { label: "GitHub connections", slug: "guides/github" },
         { label: "Run a runner", slug: "guides/runners" },

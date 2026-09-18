@@ -1,3 +1,4 @@
+import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
@@ -77,11 +78,19 @@ export async function startService(
   await lock.close();
   const token = options.token ?? randomBytes(32).toString("hex");
   const store = new Store(join(options.home, "state.sqlite"));
-  const service = new Service(store, new VmRuntime(options), () => {
-    if (!relay)
-      throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
-    return relay;
-  });
+  const service = new Service(
+    store,
+    new VmRuntime(options),
+    () => {
+      if (!relay)
+        throw new VectisError(
+          "cloud_unconfigured",
+          "Connect this machine before starting runners.",
+        );
+      return relay;
+    },
+    options.keychainHelper ? new KeychainCredentials(options.keychainHelper) : undefined,
+  );
   let cloud: CloudStatus = { state: "unconfigured" };
   let relay: Awaited<ReturnType<typeof configuredRelay>>;
   let connection: Connection | undefined;

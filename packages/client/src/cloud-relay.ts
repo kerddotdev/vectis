@@ -105,6 +105,8 @@ export function startCloudRelay(
                     "environment.prepare-linux",
                     "environment.resume",
                     "environment.install-macos",
+                    "environment.install-windows",
+                    "environment.resume-windows",
                     "environment.resume-macos",
                     "environment.open-macos-setup",
                   ].includes(operation.command) &&

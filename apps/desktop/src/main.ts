@@ -90,6 +90,11 @@ else {
             case "service.stop":
               data = await (await localClient(home)).shutdown();
               break;
+            case "chooseFile": {
+              const result = await dialog.showOpenDialog(window, { properties: ["openFile"] });
+              data = result.canceled ? null : (result.filePaths[0] ?? null);
+              break;
+            }
             case "chooseRestoreImage": {
               const result = await dialog.showOpenDialog(window, {
                 properties: ["openFile"],

@@ -20,6 +20,16 @@ export const MacInstallation = Schema.Struct({
   restorePath: Schema.NonEmptyString,
 });
 export type MacInstallation = typeof MacInstallation.Type;
+export const WindowsInstallation = Schema.Struct({
+  ...LinuxPreparation.fields,
+  isoPath: Schema.NonEmptyString,
+  driversPath: Schema.NonEmptyString,
+  firmwarePath: Schema.NonEmptyString,
+  firmwareVarsPath: Schema.NonEmptyString,
+  imageName: Schema.NonEmptyString,
+  acceptLicense: Schema.Boolean,
+});
+export type WindowsInstallation = typeof WindowsInstallation.Type;
 export const Preparation = Schema.Struct({
   id: Identifier,
   configuration: LinuxPreparation,
@@ -115,6 +125,11 @@ export const RepositoryConnection = Schema.Struct({
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
   Schema.Struct({
+    type: Schema.Literal("environment.install-windows"),
+    ...WindowsInstallation.fields,
+  }),
+  Schema.Struct({ type: Schema.Literal("environment.resume-windows"), id: Identifier }),
+  Schema.Struct({
     type: Schema.Literal("environment.discard-macos"),
     id: Identifier,
     environmentId: Identifier,
@@ -188,6 +203,16 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "environment.install-windows",
+    description:
+      "Prepare Windows 11 ARM64 from local installation and driver ISOs with explicit license acceptance, private UEFI/TPM state and pinned guest SSH keys. Requires configured QEMU, qemu-img, swtpm and Keychain.",
+  },
+  {
+    name: "environment.resume-windows",
+    description:
+      "Continue an owned Windows installation after verifying its previous VM stopped. Preserves its disk and setup identity.",
+  },
   {
     name: "environment.discard-macos",
     description:

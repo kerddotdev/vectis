@@ -1,3 +1,4 @@
+import { hasReservedEnvironment } from "./preparation-state.js";
 import { Schema } from "effect";
 import {
   Preparation,
@@ -39,21 +40,13 @@ export async function startPreparation(
   let preparation: Preparation;
   if (command.type === "environment.resume") {
     preparation = Schema.decodeUnknownSync(Preparation)(store.get("preparation", command.id));
-    if (
-      preparation.phase === "prepared" &&
-      snapshot.environments.some((item) => item.id === preparation.configuration.id)
-    )
+    if (snapshot.environments.some((item) => item.id === preparation.configuration.id))
       throw new VectisError("preparation_complete", "This environment has already been prepared.");
   } else {
     const configuration = Schema.decodeUnknownSync(LinuxPreparation)(command);
     if (
       snapshot.environments.some((item) => item.id === configuration.id) ||
-      store
-        .list("preparation")
-        .some(
-          (value) =>
-            Schema.decodeUnknownSync(Preparation)(value).configuration.id === configuration.id,
-        )
+      hasReservedEnvironment(store, configuration.id)
     )
       throw new VectisError(
         "environment_exists",
