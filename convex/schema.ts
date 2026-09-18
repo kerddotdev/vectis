@@ -58,6 +58,27 @@ export default defineSchema({
     .index("by_owner", ["owner"])
     .index("by_machine", ["machineId"])
     .index("by_target", ["machineId", "repositoryId", "environmentId"]),
+  runnerLeases: defineTable({
+    owner: v.string(),
+    machineId: v.id("machines"),
+    bindingId: v.id("repositoryBindings"),
+    environmentId: v.string(),
+    os: v.union(v.literal("linux"), v.literal("macos"), v.literal("windows")),
+    key: v.string(),
+    phase: v.union(
+      v.literal("preparing"),
+      v.literal("ready"),
+      v.literal("action_required"),
+      v.literal("released"),
+    ),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    runnerId: v.optional(v.number()),
+    encodedConfig: v.optional(v.string()),
+    configExpiresAt: v.optional(v.number()),
+  })
+    .index("by_machine_key", ["machineId", "key"])
+    .index("by_machine_phase", ["machineId", "phase"]),
   machines: defineTable({
     owner: v.string(),
     localId: v.string(),

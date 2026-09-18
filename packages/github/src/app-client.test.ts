@@ -102,3 +102,22 @@ test("initial repository discovery still issues a token limited to one explicit 
   });
   expect(result.repositoryId).toBe(123);
 });
+
+test("runner deletion accepts empty responses and preserves HTTP failure status without response secrets", async () => {
+  const fetch = vi.fn(async (_url: string, init?: RequestInit) => {
+    expect(init?.method).toBe("DELETE");
+    expect(init?.body).toBeUndefined();
+    return new Response(null, { status: 204 });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const client = new GitHubAppClient(app);
+  await expect(
+    client.delete("scoped-token", "/repos/test-owner/sandbox/actions/runners/5"),
+  ).resolves.toBeUndefined();
+  fetch.mockImplementation(async () =>
+    Response.json({ message: "private diagnostic" }, { status: 404 }),
+  );
+  await expect(
+    client.delete("scoped-token", "/repos/test-owner/sandbox/actions/runners/5"),
+  ).rejects.toMatchObject({ status: 404, message: "GitHub API request failed (404)." });
+});

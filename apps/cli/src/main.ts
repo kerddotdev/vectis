@@ -71,6 +71,9 @@ Usage: vectis <command> [options]
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>             Stop an owned VM
   instance reconcile <id>        Recheck an interrupted instance safely
+  runner run <binding-id>        Start one disposable runner (requires a prepared connected environment)
+  runner reconcile <operation-id>  Clean an interrupted runner after verifying its VM stopped
+  operation cancel <id>          Request runner cancellation and cleanup
   operation get <id>             Inspect an operation
   operation wait <id>            Wait for an operation's terminal state
   command --file <path>          Submit any protocol command as JSON
@@ -87,6 +90,9 @@ Examples:
   vectis service start --home /tmp/vectis-demo --json
   vectis status --home /tmp/vectis-demo --json
   vectis environment register --file environment.json --wait --json
+  vectis repository list --json
+  vectis runner run <binding-id> --key <stable-key> --json
+  vectis operation wait <operation-id> --timeout 3600000 --json
 
 Only capabilities reported by this build are supported. Cloud setup and
 GitHub pairing require separately configured development services.
@@ -234,8 +240,13 @@ GitHub pairing require separately configured development services.
       "invalid_timeout",
       "Timeout must be a positive integer below 2147483648 milliseconds.",
     );
-  if (command === "operation" && subcommand !== "get" && subcommand !== "wait")
-    throw new VectisError("unknown_command", "Use operation get or operation wait.");
+  if (
+    command === "operation" &&
+    subcommand !== "get" &&
+    subcommand !== "wait" &&
+    subcommand !== "cancel"
+  )
+    throw new VectisError("unknown_command", "Use operation get, wait or cancel.");
   const api = await client();
   if (command === "service" && subcommand === "stop") {
     await api.shutdown();
@@ -254,7 +265,7 @@ GitHub pairing require separately configured development services.
     output(await api.status());
     return;
   }
-  if (command === "operation") {
+  if (command === "operation" && subcommand !== "cancel") {
     if (!id) throw new VectisError("missing_argument", "An operation ID is required.");
     const operation =
       subcommand === "wait"
@@ -262,13 +273,19 @@ GitHub pairing require separately configured development services.
         : (await api.status()).operations.find((item) => item.id === id);
     if (!operation) throw new VectisError("operation_missing", "Operation not found.");
     output(operation);
-    if (operation.status === "failed") process.exitCode = 1;
+    if (operation.status === "failed" || operation.status === "cancelled") process.exitCode = 1;
     if (operation.status === "action_required") process.exitCode = 3;
     return;
   }
   let request: Command;
   if (command === "pause" || command === "resume")
     request = { type: "machine.pause", paused: command === "pause" };
+  else if (command === "runner" && subcommand === "reconcile" && id)
+    request = decodeCommand({ type: "runner.reconcile", id });
+  else if (command === "runner" && subcommand === "run" && id)
+    request = decodeCommand({ type: "runner.run", bindingId: id });
+  else if (command === "operation" && subcommand === "cancel" && id)
+    request = decodeCommand({ type: "operation.cancel", id });
   else if (command === "environment" && subcommand === "register" && values.file)
     request = {
       type: "environment.register",
@@ -309,7 +326,7 @@ GitHub pairing require separately configured development services.
     ? await api.wait(accepted.id, AbortSignal.timeout(Number(values.timeout ?? 120000)))
     : accepted;
   output(result);
-  if (result.status === "failed") process.exitCode = 1;
+  if (result.status === "failed" || result.status === "cancelled") process.exitCode = 1;
   if (result.status === "action_required") process.exitCode = 3;
 }
 main().catch((error) => {

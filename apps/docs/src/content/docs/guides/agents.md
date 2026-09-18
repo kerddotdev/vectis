@@ -17,6 +17,8 @@ All current CLI commands are non-interactive. `--non-interactive` explicitly doc
 
 After cloud pairing and repository linking, run `pnpm vectis repository list --json` to discover the machine's repository IDs and environment bindings. A connection is not proof of runner readiness. Missing cloud access returns an error with a next step, not an empty successful list.
 
+For runner execution, use `runner run <binding-id>` and observe the returned operation. `operation cancel <id>` requests cleanup; `runner reconcile <id>` recovers an interrupted registration after VM exit is confirmed. See [runner control](/docs/guides/runners/). A completed runner lifecycle does not prove its GitHub job succeeded.
+
 ## MCP
 
 After `pnpm build`, configure a stdio MCP client with:

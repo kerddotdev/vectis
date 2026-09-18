@@ -115,6 +115,22 @@ function Overview() {
               <code>{operation.id}</code>
             </div>
             <span className="status">{operation.status}</span>
+            {operation.command === "runner.run" && operation.status === "action_required" && (
+              <button
+                className="secondary"
+                onClick={() => void submit({ type: "runner.reconcile", id: operation.id })}
+              >
+                Reconcile runner
+              </button>
+            )}
+            {operation.command === "runner.run" && operation.status === "running" && (
+              <button
+                className="secondary"
+                onClick={() => void submit({ type: "operation.cancel", id: operation.id })}
+              >
+                Cancel runner
+              </button>
+            )}
           </div>
         ))}
       </section>
@@ -233,9 +249,19 @@ function Storage() {
   );
 }
 function Connections() {
-  const { perform } = useStateApi();
+  const { perform, submit, snapshot } = useStateApi();
   const [repositories, setRepositories] = useState<MachineRepositories | null>(null);
   const [loading, setLoading] = useState(false);
+  const [starting, setStarting] = useState<string | null>(null);
+  async function startRunner(bindingId: string) {
+    setStarting(bindingId);
+    try {
+      const operation = await submit({ type: "runner.run", bindingId });
+      if (operation !== undefined) setMessage("Runner requested. Follow its progress in Overview.");
+    } finally {
+      setStarting(null);
+    }
+  }
   async function discover() {
     setLoading(true);
     setRepositories(null);
@@ -277,6 +303,12 @@ function Connections() {
           <div className="record" key={repository.id}>
             <strong>{repository.repositoryName}</strong>
             <span>{repository.environmentId}</span>
+            <button
+              disabled={starting !== null || !snapshot || snapshot.machine.paused}
+              onClick={() => void startRunner(repository.id)}
+            >
+              {starting === repository.id ? "Requesting runner" : "Start runner"}
+            </button>
           </div>
         ))}
       </section>

@@ -56,6 +56,9 @@ export const Instance = Schema.Struct({
   memoryMiB: Schema.optional(Schema.Int),
   status: Schema.Literals(["running", "stopped", "interrupted"]),
   pid: Schema.Int,
+  macAddress: Schema.optional(Schema.String),
+  sshHost: Schema.optional(Schema.String),
+  sshPort: Schema.optional(Schema.Int),
   createdAt: Schema.String,
 });
 export type Instance = typeof Instance.Type;
@@ -74,6 +77,9 @@ export const Snapshot = Schema.Struct({
 });
 export type Snapshot = typeof Snapshot.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("runner.reconcile"), id: Identifier }),
+  Schema.Struct({ type: Schema.Literal("runner.run"), bindingId: Identifier }),
+  Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
@@ -115,6 +121,19 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "runner.reconcile",
+    description: "Clean an interrupted runner registration after its VM has been verified stopped.",
+  },
+  {
+    name: "runner.run",
+    description:
+      "Run one disposable repository runner; job results remain authoritative on GitHub.",
+  },
+  {
+    name: "operation.cancel",
+    description: "Request cancellation of an active runner and wait for its cleanup status.",
+  },
   {
     name: "repository.list",
     description: "List currently authorized repositories for this cloud-connected machine.",

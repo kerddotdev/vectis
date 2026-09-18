@@ -111,7 +111,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     const helper = join(home, "helper");
     await writeFile(
       helper,
-      `#!${process.execPath}\nprocess.stdout.write('{"event":"vm.running"}\\n'); setInterval(() => {}, 1000);`,
+      `#!${process.execPath}\nprocess.stdout.write('{"event":"vm.running","macAddress":"02:00:00:00:00:01"}\\n'); setInterval(() => {}, 1000);`,
       { mode: 0o700 },
     );
     const server = await startService({ home, appleHelper: helper });
@@ -148,7 +148,19 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     expect((await client.wait(start.id)).status).toBe("succeeded");
     const snapshot = await client.status();
     expect(snapshot.environments[0]).toEqual(environment);
-    expect(snapshot.instances[0]).toMatchObject({ cpu: 1, memoryMiB: 512, status: "running" });
+    expect(snapshot.instances[0]).toMatchObject({
+      id: start.id,
+      macAddress: "02:00:00:00:00:01",
+      cpu: 1,
+      memoryMiB: 512,
+      status: "running",
+    });
+    const replay = await client.submit(
+      { type: "environment.start", id: "test", cpu: 1, memoryMiB: 512, storagePath },
+      "start",
+    );
+    expect(replay.id).toBe(start.id);
+    expect((await client.status()).instances).toHaveLength(1);
     expect(snapshot.instances[0]?.directory).toBe(
       join(storagePath, snapshot.instances[0]?.id ?? "missing"),
     );
