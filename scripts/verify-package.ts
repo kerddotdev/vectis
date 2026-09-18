@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { Schema } from "effect";
+import { Diagnostics } from "../packages/protocol/src/diagnostics.js";
 import { Snapshot } from "../packages/protocol/src/index.js";
 
 const path = process.argv[2];
@@ -41,6 +42,18 @@ try {
   await command(["service", "start"]);
   started = true;
   const initial = await snapshot();
+  const doctor = Schema.decodeUnknownSync(Diagnostics)(await command(["doctor"]));
+  if (!doctor.configured.appleHelper || !doctor.configured.keychainHelper)
+    throw new Error("Packaged Apple helpers were not configured automatically.");
+  const windows = await access(join(resolve(path), "runtime/windows/bin/qemu-system-aarch64")).then(
+    () => true,
+    () => false,
+  );
+  if (
+    windows &&
+    (!doctor.configured.qemu || !doctor.configured.qemuImg || !doctor.configured.swtpm)
+  )
+    throw new Error("Packaged Windows runtime was not configured automatically.");
   await command(["pause", "--wait"]);
   if (!(await snapshot()).machine.paused) throw new Error("Packaged service did not pause.");
   await command(["service", "stop"]);

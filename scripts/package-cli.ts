@@ -1,12 +1,27 @@
+import { constants } from "node:fs";
 import { spawn } from "node:child_process";
-import { chmod, copyFile, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { Schema } from "effect";
 import { downloadArtifact } from "../packages/runner/src/artifact.js";
 
 const { values } = parseArgs({
-  options: { output: { type: "string" }, helpers: { type: "string" } },
+  options: {
+    output: { type: "string" },
+    helpers: { type: "string" },
+    "windows-runtime": { type: "string" },
+  },
 });
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("The first portable package targets Apple Silicon macOS.");
@@ -66,6 +81,15 @@ for (const helper of ["vectis-vm", "vectis-keychain"]) {
   await copyFile(join(helpers, helper), destination);
   await chmod(destination, 0o755);
 }
+if (values["windows-runtime"]) {
+  const windows = await realpath(values["windows-runtime"]);
+  Schema.decodeUnknownSync(Schema.Struct({ platform: Schema.Literal("darwin-arm64") }))(
+    JSON.parse(await readFile(join(windows, "BUILD.json"), "utf8")),
+  );
+  for (const executable of ["qemu-system-aarch64", "qemu-img", "swtpm"])
+    await access(join(windows, "bin", executable), constants.X_OK);
+  await cp(windows, join(runtime, "windows"), { recursive: true, verbatimSymlinks: true });
+}
 await run("/usr/bin/codesign", [
   "--force",
   "--sign",
@@ -87,6 +111,11 @@ set -eu
 VECTIS_PACKAGE_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 export VECTIS_APPLE_HELPER="\${VECTIS_APPLE_HELPER:-$VECTIS_PACKAGE_ROOT/runtime/vectis-vm}"
 export VECTIS_KEYCHAIN_HELPER="\${VECTIS_KEYCHAIN_HELPER:-$VECTIS_PACKAGE_ROOT/runtime/vectis-keychain}"
+if [ -x "$VECTIS_PACKAGE_ROOT/runtime/windows/bin/qemu-system-aarch64" ]; then
+  export VECTIS_QEMU="\${VECTIS_QEMU:-$VECTIS_PACKAGE_ROOT/runtime/windows/bin/qemu-system-aarch64}"
+  export VECTIS_QEMU_IMG="\${VECTIS_QEMU_IMG:-$VECTIS_PACKAGE_ROOT/runtime/windows/bin/qemu-img}"
+  export VECTIS_SWTPM="\${VECTIS_SWTPM:-$VECTIS_PACKAGE_ROOT/runtime/windows/bin/swtpm}"
+fi
 exec "$VECTIS_PACKAGE_ROOT/runtime/bin/node" "$VECTIS_PACKAGE_ROOT/application/dist/apps/${entry}/src/main.js" "$@"
 `,
     { mode: 0o755 },
@@ -131,7 +160,10 @@ await writeFile(
       signing: "ad-hoc-development",
       node: nodeSource,
       included: ["CLI", "MCP", "local service", "Apple virtualization helper", "Keychain helper"],
-      excluded: ["QEMU", "qemu-img", "swtpm", "OS images"],
+      excluded: values["windows-runtime"]
+        ? ["OS images", "ARM64 UEFI firmware"]
+        : ["QEMU", "qemu-img", "swtpm", "OS images"],
+      windowsRuntime: values["windows-runtime"] ? "runtime/windows/BUILD.json" : null,
     },
     null,
     2,
