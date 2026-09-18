@@ -89,3 +89,15 @@ This validates the new runtime paths, refuses active work, waits for the old ser
 After an interrupted update, use `service recover-update` with the same home. The saved previous registration remains available until recovery succeeds. Other registration changes are blocked while recovery is pending, and concurrent clients cannot replace the registration simultaneously. Keep both packages until the operation completes.
 
 The desktop's **Use this app's runtime** and **Recover runtime update** buttons use the same operations. MCP exposes `vectis_service` with `action: "update"` or `action: "recoverUpdate"`. Updates adopt the runtime running that client; they do not download a release. This recovery restores the runtime registration, not a backup of application data or a general database downgrade.
+
+## Desktop disk image
+
+Create a signed, notarized development DMG from an already notarized desktop app. Include the matching collected runtime sources when Windows binaries are bundled:
+
+```sh
+pnpm package:disk-image --app /absolute/path/to/Vectis\ Dev.app --output /absolute/path/to/new.dmg --identity YOUR_DEVELOPER_ID_IDENTITY --sources /absolute/path/to/source-materials
+```
+
+Use the API key environment variables above or `--keychain-profile`. The command verifies the app signature and stapled ticket, includes an Applications shortcut and installation instructions, signs and notarizes the disk image, then writes a SHA-256 manifest alongside it. It does not publish the artifact.
+
+For a first installation, drag the app to Applications before opening it and installing the service. For an upgrade, place the new app in a separate permanent folder and use **Use this app's runtime**. Keep the old app at its original path until the switch succeeds. Do not overwrite a runtime used by a running service, and do not install the background service directly from a mounted DMG.

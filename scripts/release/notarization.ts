@@ -18,12 +18,16 @@ export async function notarizationArguments(profile?: string, environment = proc
   return ["--key", key, "--key-id", keyId, "--issuer", issuer];
 }
 
-export async function notarizeBundle(app: string, authentication: string[]) {
+export async function notarizeBundle(
+  app: string,
+  authentication: string[],
+  kind: "app" | "disk-image" = "app",
+) {
   const run = promisify(execFile);
   const root = await mkdtemp(join(tmpdir(), "vectis-notarization-"));
   try {
-    const archive = join(root, "application.zip");
-    await run("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, archive]);
+    const archive = kind === "app" ? join(root, "application.zip") : app;
+    if (kind === "app") await run("/usr/bin/ditto", ["-c", "-k", "--keepParent", app, archive]);
     const { stdout } = await run(
       "/usr/bin/xcrun",
       ["notarytool", "submit", archive, ...authentication, "--wait", "--output-format", "json"],
@@ -38,7 +42,12 @@ export async function notarizeBundle(app: string, authentication: string[]) {
       );
     await run("/usr/bin/xcrun", ["stapler", "staple", app]);
     await run("/usr/bin/xcrun", ["stapler", "validate", app]);
-    await run("/usr/sbin/spctl", ["--assess", "--type", "execute", app]);
+    await run(
+      "/usr/sbin/spctl",
+      kind === "app"
+        ? ["--assess", "--type", "execute", app]
+        : ["--assess", "--type", "open", "--context", "context:primary-signature", app],
+    );
     return { id: result.id, status: "Accepted" };
   } finally {
     await rm(root, { recursive: true, force: true });
