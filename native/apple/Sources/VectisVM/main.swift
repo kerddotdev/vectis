@@ -5,7 +5,7 @@ import Virtualization
 struct HelperError: Error { let message: String }
 
 @MainActor
-func emit(_ event: String, message: String? = nil) {
+func emit(_ event: String, message: String? = nil, macAddress: String? = nil) {
     if (event == "vm.stopped" || event == "vm.error"),
        let path = ProcessInfo.processInfo.environment["VECTIS_EXIT_RECEIPT"],
        let id = ProcessInfo.processInfo.environment["VECTIS_INSTANCE_ID"],
@@ -14,6 +14,7 @@ func emit(_ event: String, message: String? = nil) {
     }
     var body = ["event": event]
     if let message { body["message"] = message }
+    if let macAddress { body["macAddress"] = macAddress }
     if let data = try? JSONSerialization.data(withJSONObject: body) {
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data([10]))
@@ -114,7 +115,7 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
             window = console
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
-        emit("vm.running")
+        emit("vm.running", macAddress: network.macAddress.string)
     }
 
     func windowWillClose(_ notification: Notification) {

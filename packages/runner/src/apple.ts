@@ -1,7 +1,10 @@
 import type { ChildProcess } from "node:child_process";
 import { VectisError } from "../../protocol/src/index.js";
 
-export function waitForAppleVm(child: ChildProcess, timeoutMs = 30000): Promise<void> {
+export function waitForAppleVm(
+  child: ChildProcess,
+  timeoutMs = 30000,
+): Promise<{ macAddress?: string }> {
   return new Promise((resolve, reject) => {
     let buffer = "";
     const cleanup = () => {
@@ -36,8 +39,18 @@ export function waitForAppleVm(child: ChildProcess, timeoutMs = 30000): Promise<
         if (typeof event !== "object" || event === null || !("event" in event))
           return fail("The Apple helper returned an invalid event.");
         if (event.event === "vm.running") {
+          if (
+            "macAddress" in event &&
+            (typeof event.macAddress !== "string" ||
+              !/^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i.test(event.macAddress))
+          )
+            return fail("The Apple helper returned an invalid network address.");
           cleanup();
-          resolve();
+          resolve(
+            "macAddress" in event && typeof event.macAddress === "string"
+              ? { macAddress: event.macAddress }
+              : {},
+          );
           return;
         }
         if (event.event === "vm.error" || event.event === "vm.stopped")

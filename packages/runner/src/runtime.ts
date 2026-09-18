@@ -23,6 +23,7 @@ export interface OwnedInstance {
   readonly process: ChildProcess;
   readonly directory: string;
   readonly settled: Promise<void>;
+  readonly macAddress?: string;
 }
 export class VmRuntime {
   private readonly owned = new Map<string, OwnedInstance>();
@@ -180,12 +181,7 @@ export class VmRuntime {
         ];
       } else {
         const destination = join(directory, environment.os === "macos" ? "bundle" : "disk.img");
-        if (environment.os === "macos")
-          await cp(environment.basePath, destination, {
-            recursive: true,
-            mode: constants.COPYFILE_FICLONE,
-          });
-        else await copyFile(environment.basePath, destination, constants.COPYFILE_FICLONE);
+        await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination]);
         args = [
           "run",
           environment.os,
@@ -240,9 +236,10 @@ export class VmRuntime {
       void settled.catch(() => {});
       const instance = { id, process: child, directory, settled };
       this.owned.set(id, instance);
+      let network: { macAddress?: string } = {};
       try {
         if (environment.os === "windows") await waitForQemu(child);
-        else await waitForAppleVm(child);
+        else network = await waitForAppleVm(child);
         if (child.exitCode !== null || child.signalCode !== null)
           throw new VectisError("vm_start_failed", "The VM stopped during startup.");
       } catch (error) {
@@ -252,7 +249,9 @@ export class VmRuntime {
       }
       child.stdout?.resume();
       child.stderr?.resume();
-      return instance;
+      const ready = { ...instance, ...network };
+      this.owned.set(id, ready);
+      return ready;
     } catch (error) {
       await rm(directory, { recursive: true, force: true });
       throw error;

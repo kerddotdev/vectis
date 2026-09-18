@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, writeFile, rm, readFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile, stat, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -94,3 +94,36 @@ hostTest(
     await expect(stat(join(home, "disconnected-volume"))).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
+
+hostTest("native cloning preserves sparse disks and isolates guest writes", async () => {
+  const { home, runtime, environment } = await fixture(
+    'process.stdout.write(\'{"event":"vm.running"}\\n\'); setInterval(() => {}, 1000);',
+  );
+  const sparse = await open(environment.basePath, "r+");
+  try {
+    await sparse.truncate(64 * 1024 ** 2);
+  } finally {
+    await sparse.close();
+  }
+  const before = await stat(environment.basePath);
+  const instance = await runtime.start("sparse", environment, () => {});
+  const disk = join(home, "instances", "sparse", "disk.img");
+  const copied = await stat(disk);
+  expect(copied.size).toBe(before.size);
+  expect(copied.blocks).toBeLessThan(2048);
+  const work = await open(disk, "r+");
+  try {
+    await work.write("guest-write", 0, "utf8");
+  } finally {
+    await work.close();
+  }
+  const base = await open(environment.basePath, "r");
+  try {
+    const bytes = Buffer.alloc(14);
+    await base.read(bytes, 0, bytes.length, 0);
+    expect(bytes.toString()).toBe("untouched-base");
+  } finally {
+    await base.close();
+  }
+  await runtime.stop(instance.id);
+});
