@@ -429,8 +429,8 @@ export function Disclosure({ title, children }: { title: string; children: React
       <CollapsibleTrigger className="flex w-full items-center justify-between px-3 py-2.5 text-left font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
         {title}
       </CollapsibleTrigger>
-      <CollapsibleContent keepMounted className="flex flex-col gap-4 px-3 pb-3 data-closed:hidden">
-        {children}
+      <CollapsibleContent keepMounted className="data-closed:hidden">
+        <div className="flex flex-col gap-4 px-3 pb-3">{children}</div>
       </CollapsibleContent>
     </Collapsible>
   );

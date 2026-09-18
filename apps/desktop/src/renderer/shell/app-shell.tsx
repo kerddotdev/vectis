@@ -24,14 +24,6 @@ export function AppShell() {
     <div className="relative flex h-full">
       <div
         className={cn(
-          "absolute top-[9px] z-20 [-webkit-app-region:no-drag]",
-          fullscreen ? "left-3" : "left-[84px]",
-        )}
-      >
-        <SidebarToggle />
-      </div>
-      <div
-        className={cn(
           "relative shrink-0 overflow-hidden",
           !resizing && "transition-[width] duration-300 ease-drawer",
         )}
@@ -52,6 +44,14 @@ export function AppShell() {
       <main className="min-w-0 flex-1 bg-background shadow-[inset_0.5px_0_0_var(--vectis-hairline-strong)]">
         <Outlet key={machineId ?? "local"} />
       </main>
+      <div
+        className={cn(
+          "absolute top-[9px] z-30 [-webkit-app-region:no-drag]",
+          fullscreen ? "left-3" : "left-[84px]",
+        )}
+      >
+        <SidebarToggle />
+      </div>
     </div>
   );
 }

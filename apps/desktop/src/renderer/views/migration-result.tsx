@@ -50,27 +50,29 @@ export function MigrationResult({ result }: { result: unknown }) {
               label={file.changed ? "Changes proposed" : "Unchanged"}
             />
           </CollapsibleTrigger>
-          <CollapsibleContent className="flex flex-col gap-3 px-3 pb-3">
-            {file.findings.map((finding, index) => (
-              <p key={index} className="text-muted-foreground">
-                <span className="text-foreground">{finding.job}</span>: {finding.reason}
-              </p>
-            ))}
-            {file.changed && (
-              <div className="grid gap-3 lg:grid-cols-2">
-                {[
-                  ["Current workflow", file.before],
-                  ["Proposed workflow", file.after],
-                ].map(([label, source]) => (
-                  <div key={label} className="min-w-0">
-                    <p className="mb-1.5 text-xs font-medium text-muted-foreground">{label}</p>
-                    <pre className="max-h-80 overflow-auto rounded-lg bg-muted p-3 font-mono text-[12px] leading-relaxed">
-                      {source}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            )}
+          <CollapsibleContent>
+            <div className="flex flex-col gap-3 px-3 pb-3">
+              {file.findings.map((finding, index) => (
+                <p key={index} className="text-muted-foreground">
+                  <span className="text-foreground">{finding.job}</span>: {finding.reason}
+                </p>
+              ))}
+              {file.changed && (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {[
+                    ["Current workflow", file.before],
+                    ["Proposed workflow", file.after],
+                  ].map(([label, source]) => (
+                    <div key={label} className="min-w-0">
+                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">{label}</p>
+                      <pre className="max-h-80 overflow-auto rounded-lg bg-muted p-3 font-mono text-[12px] leading-relaxed">
+                        {source}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </CollapsibleContent>
         </Collapsible>
       ))}

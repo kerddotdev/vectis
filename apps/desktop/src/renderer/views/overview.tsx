@@ -9,6 +9,7 @@ import {
   Mono,
   Notice,
   Page,
+  Row,
   Section,
   StatCard,
   usePages,
@@ -26,7 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatDateTime, formatMemory, formatRelative } from "@/lib/format";
+import { formatDateTime, formatRelative } from "@/lib/format";
 import { cancellableCommands, commandLabels, preparationCommands } from "@/lib/operations";
 import { MigrationResult } from "@/views/migration-result";
 import { PreparationResult } from "@/views/preparation-result";
@@ -234,17 +235,17 @@ function InstanceRow({ instance }: { instance: Instance }) {
   const { snapshot, submit } = useStateApi();
   const environment = snapshot?.environments.find((item) => item.id === instance.environmentId);
   return (
-    <ExpandableRow
+    <Row
       leading={environment && <OsTile os={environment.os} />}
       title={environment?.name ?? instance.environmentId}
-      summary={
+      detail={
         <span className="inline-flex items-center gap-1.5">
           <InstanceStatus status={instance.status} inline />
           <span>· {formatRelative(instance.createdAt)}</span>
         </span>
       }
-      actions={
-        instance.status === "running" && (
+      trailing={
+        instance.status === "running" ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -260,40 +261,27 @@ function InstanceRow({ instance }: { instance: Instance }) {
             </TooltipTrigger>
             <TooltipContent>Stop VM</TooltipContent>
           </Tooltip>
-        )
-      }
-    >
-      <Details
-        items={[
-          ["CPU cores", instance.cpu],
-          ["Memory", instance.memoryMiB && formatMemory(instance.memoryMiB)],
-          [
-            "SSH",
-            instance.sshHost && <Mono>{`${instance.sshHost}:${instance.sshPort ?? 22}`}</Mono>,
-          ],
-          ["Process", <Mono key="pid">{instance.pid}</Mono>],
-          ["Started", formatDateTime(instance.createdAt)],
-          ["VM ID", <Mono key="id">{instance.id}</Mono>],
-          ["Directory", instance.directory && <Mono>{instance.directory}</Mono>],
-        ]}
-      />
-      {instance.status === "interrupted" && (
-        <Notice
-          tone="attention"
-          action={
-            <Button
-              size="sm"
-              onClick={() => void submit({ type: "instance.reconcile", id: instance.id })}
+        ) : instance.status === "interrupted" ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void submit({ type: "instance.reconcile", id: instance.id })}
+                />
+              }
             >
-              Reconcile VM
-            </Button>
-          }
-        >
-          The service lost track of this VM. Reconciling checks whether it still runs and cleans it
-          up.
-        </Notice>
-      )}
-    </ExpandableRow>
+              Reconcile
+            </TooltipTrigger>
+            <TooltipContent className="max-w-60">
+              The service lost track of this VM. Reconciling checks whether it still runs and cleans
+              it up.
+            </TooltipContent>
+          </Tooltip>
+        ) : undefined
+      }
+    />
   );
 }
 

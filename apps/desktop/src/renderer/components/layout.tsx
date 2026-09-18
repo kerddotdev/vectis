@@ -58,23 +58,26 @@ export function Page({
     <div className="view-enter flex h-full min-w-0 flex-col">
       <header
         className={cn(
-          "drag-region flex h-[46px] shrink-0 items-center gap-2 border-b pr-3 transition-colors duration-150",
+          "drag-region flex h-[46px] shrink-0 items-center gap-2 border-b pr-3 pl-4 transition-colors duration-150",
           condensed ? "border-border" : "border-transparent",
-          collapsed ? (fullscreen ? "pl-14" : "pl-[124px]") : "pl-4",
         )}
       >
         <span
           aria-hidden
           className={cn(
-            "truncate text-sm font-semibold transition-opacity duration-150",
+            "truncate text-sm font-semibold transition-[opacity,transform] duration-300 ease-drawer",
             condensed ? "opacity-100" : "opacity-0",
           )}
+          style={{ transform: `translateX(${collapsed ? (fullscreen ? 36 : 108) : 0}px)` }}
         >
           {title}
         </span>
         <div className="ml-auto flex items-center gap-1.5">{actions}</div>
       </header>
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
+      <div
+        ref={scroller}
+        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
+      >
         <div className="@container mx-auto max-w-[1120px] px-8 pt-4 pb-20">
           <h1
             ref={heading}
@@ -292,7 +295,7 @@ export function ExpandableRow({
         </CollapsibleTrigger>
         {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
       </div>
-      <CollapsibleContent className="data-open:animate-in data-open:fade-in-0 data-open:slide-in-from-top-1">
+      <CollapsibleContent>
         <div className="flex flex-col gap-4 pr-4 pb-4 pl-[46px]">{children}</div>
       </CollapsibleContent>
     </Collapsible>
