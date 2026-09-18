@@ -9,7 +9,8 @@
     "./motion.css": "./src/motion.css",
     "./tailwind.css": "./src/tailwind.css",
     "./fonts/*": "./fonts/*",
-    "./components/*": "./src/components/*"
+    "./components/*": "./src/components/*",
+    "./site": "./src/site.ts"
   },
   "scripts": {
     "fonts": "node fetch-fonts.mjs"

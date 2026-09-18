@@ -1,0 +1,60 @@
+---
+interface Props {
+  size?: number;
+  class?: string;
+}
+const { size = 24, class: className } = Astro.props;
+const gradient = `vectis-mark-${crypto.randomUUID().slice(0, 8)}`;
+---
+
+<svg
+  class:list={["vectis-mark", className]}
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  fill="none"
+  aria-hidden="true"
+  style={`--mark-dark: url(#${gradient})`}
+>
+  <defs>
+    <linearGradient
+      id={gradient}
+      x1="0"
+      y1="0"
+      x2="0"
+      y2="24"
+      gradientUnits="userSpaceOnUse"
+    >
+      <stop stop-color="#f1cc96"></stop>
+      <stop offset="1" stop-color="#b86b4c"></stop>
+    </linearGradient>
+  </defs>
+  <g class="fill">
+    <circle cx="4" cy="12" r="2"></circle>
+    <path d="M12 10.55L13.45 12L12 13.45L10.55 12L12 10.55Z"></path>
+    <circle cx="20" cy="6" r="2"></circle>
+    <circle cx="20" cy="18" r="2"></circle>
+  </g>
+  <g class="stroke" stroke-width="1" stroke-linecap="round" stroke-linejoin="round">
+    <path
+      d="M6 12H9M15 12H16.5C18.433 12 20 10.433 20 8.5V8M16.5 12C18.433 12 20 13.567 20 15.5V16"
+    ></path>
+    <rect x="9" y="9" width="6" height="6" rx="1.6"></rect>
+  </g>
+</svg>
+
+<style>
+  .vectis-mark {
+    --mark: var(--vectis-brand);
+    flex-shrink: 0;
+  }
+  :global(:root[data-theme="dark"]) .vectis-mark {
+    --mark: var(--mark-dark);
+  }
+  .fill {
+    fill: var(--mark);
+  }
+  .stroke {
+    stroke: var(--mark);
+  }
+</style>

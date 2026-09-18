@@ -1,0 +1,124 @@
+---
+import { site } from "../site";
+import Logo from "./Logo.astro";
+
+const columns = [
+  {
+    title: "Product",
+    links: [
+      { href: "/features", label: "Features" },
+      { href: "/security", label: "Security" },
+      { href: "/changelog", label: "Changelog" },
+      { href: site.download, label: "Download" },
+    ],
+  },
+  {
+    title: "Documentation",
+    links: [
+      { href: "/docs/guides/local-setup", label: "Local setup" },
+      { href: "/docs/guides/agents", label: "Agents" },
+      { href: "/docs/reference/cli", label: "CLI reference" },
+      { href: "/llms.txt", label: "llms.txt" },
+    ],
+  },
+  {
+    title: "Project",
+    links: [
+      { href: "/open-source", label: "Open source" },
+      { href: site.repository, label: "GitHub" },
+      { href: `${site.repository}/blob/main/LICENSE`, label: "MIT License" },
+    ],
+  },
+];
+---
+
+<footer class="site-footer">
+  <div class="inner">
+    <div class="about">
+      <a class="brand" href="/" aria-label="Vectis home">
+        <Logo size={20} />
+        <span>Vectis</span>
+      </a>
+      <p>GitHub Actions runners in disposable virtual machines on your own Mac.</p>
+    </div>
+    {
+      columns.map((column) => (
+        <nav aria-label={column.title}>
+          <p class="title">{column.title}</p>
+          {column.links.map((link) => (
+            <a href={link.href}>{link.label}</a>
+          ))}
+        </nav>
+      ))
+    }
+  </div>
+  <p class="legal">Vectis by KerD. Open source under the MIT License.</p>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--vectis-hairline);
+    font-family: var(--vectis-font-sans);
+    color: var(--vectis-muted);
+    font-size: 14px;
+  }
+  .inner {
+    display: grid;
+    grid-template-columns: 1.6fr repeat(3, 1fr);
+    gap: 40px;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 56px 24px 40px;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--vectis-foreground);
+    font-weight: 600;
+    font-size: 16px;
+    text-decoration: none;
+  }
+  .about p {
+    max-width: 30ch;
+    margin: 14px 0 0;
+    line-height: 1.5;
+  }
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .title {
+    margin: 0 0 4px;
+    color: var(--vectis-foreground);
+    font-weight: 500;
+  }
+  nav a {
+    color: inherit;
+    text-decoration: none;
+    transition: color 120ms;
+  }
+  nav a:hover {
+    color: var(--vectis-foreground);
+  }
+  a:focus-visible {
+    outline: 2px solid var(--vectis-brand);
+    outline-offset: 3px;
+    border-radius: 4px;
+  }
+  .legal {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 24px 40px;
+    font-size: 13px;
+  }
+  @media (max-width: 760px) {
+    .inner {
+      grid-template-columns: 1fr 1fr;
+    }
+    .about {
+      grid-column: 1 / -1;
+    }
+  }
+</style>
