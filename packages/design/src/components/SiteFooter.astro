@@ -51,7 +51,9 @@ const columns = [
       ))
     }
   </div>
-  <p class="legal">Vectis by kerd.dev. Open source under the MIT License.</p>
+  <p class="legal">
+    Vectis by <a href={site.author.url}>{site.author.name}</a>. Open source under the MIT License.
+  </p>
 </footer>
 
 <style>
@@ -111,6 +113,14 @@ const columns = [
     margin: 0 auto;
     padding: 0 24px 40px;
     font-size: 13px;
+  }
+  .legal a {
+    color: inherit;
+    text-underline-offset: 3px;
+    transition: color 120ms;
+  }
+  .legal a:hover {
+    color: var(--vectis-foreground);
   }
   @media (max-width: 760px) {
     .inner {

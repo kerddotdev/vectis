@@ -159,7 +159,7 @@ export function Storage() {
                         </span>
                       }
                     >
-                      <div className="flex flex-col divide-y divide-border rounded-xl ring-1 ring-border">
+                      <div className="flex flex-col divide-y divide-border rounded-xl ring-1 ring-border ring-inset">
                         {[
                           { id: "Base image", usage: environment.base },
                           ...environment.instances.map((instance) => ({

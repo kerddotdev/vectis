@@ -10,6 +10,7 @@ import {
   readControllerRequest,
   readPairingRequest,
 } from "./approvals.js";
+import { site } from "@vectis/design/site";
 import { Dashboard } from "./dashboard.js";
 import { Pending, TipProvider } from "./ui.js";
 
@@ -73,7 +74,12 @@ function Shell({ children, signedIn }: { children: ReactNode; signedIn: boolean 
       </main>
       <footer className="border-t border-hairline">
         <div className="mx-auto flex max-w-[1180px] flex-wrap items-center gap-x-5 gap-y-2 px-5 py-6 text-[13px] text-muted">
-          <span>Vectis by kerd.dev</span>
+          <span>
+            Vectis by{" "}
+            <a className="no-underline hover:text-foreground" href={site.author.url}>
+              {site.author.name}
+            </a>
+          </span>
           <a className="no-underline hover:text-foreground" href="/security">
             Security
           </a>

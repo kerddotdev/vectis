@@ -1,6 +1,7 @@
 // Repository and download links are placeholders until the public release exists.
 export const site = {
   url: "https://vectis.kerd.dev",
+  author: { name: "kerd.dev", url: "https://kerd.dev" },
   repository: "https://github.com/kerddotdev/vectis",
   download: "https://github.com/kerddotdev/vectis/releases/latest",
   navigation: [

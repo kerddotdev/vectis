@@ -104,7 +104,7 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
         </p>
       )}
       {jobs && jobs.length > 0 && (
-        <div className="flex flex-col divide-y divide-border rounded-xl ring-1 ring-border">
+        <div className="flex flex-col divide-y divide-border rounded-xl ring-1 ring-border ring-inset">
           {jobs.map((job) => (
             <div key={job.jobId} className="flex items-center gap-3 px-3.5 py-2.5">
               <Tooltip>

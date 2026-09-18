@@ -37,7 +37,7 @@ app.setName(app.isPackaged ? "Vectis" : "Vectis Dev");
 app.setAboutPanelOptions({
   applicationName: "Vectis",
   applicationVersion: app.isPackaged ? app.getVersion() : "Development",
-  copyright: "kerd.dev",
+  copyright: "kerd.dev · https://kerd.dev",
   website: "https://vectis.kerd.dev",
 });
 const home = process.env.VECTIS_HOME ?? join(homedir(), ".vectis");

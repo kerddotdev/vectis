@@ -41,7 +41,7 @@ export function MigrationResult({ result }: { result: unknown }) {
         <p className="text-muted-foreground">No workflow files found.</p>
       )}
       {result.files.map((file) => (
-        <Collapsible key={file.path} className="rounded-xl ring-1 ring-border">
+        <Collapsible key={file.path} className="rounded-xl ring-1 ring-border ring-inset">
           <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
             <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
             <Mono className="flex-1 text-foreground">{file.path}</Mono>

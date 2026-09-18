@@ -143,8 +143,8 @@ export function RepositoriesTab({
                           </span>
                           <span className="hidden sm:block">{status}</span>
                         </Collapsible.Trigger>
-                        <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0">
-                          <ul className="mx-5 mb-4 flex flex-col divide-y divide-hairline rounded-2xl ring-1 ring-hairline sm:ml-13">
+                        <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height,opacity] duration-200 ease-out data-ending-style:h-0 data-ending-style:opacity-0 data-starting-style:h-0 data-starting-style:opacity-0 mt-2">
+                          <ul className="mx-5 mb-4 flex flex-col divide-y divide-hairline rounded-2xl ring-1 ring-hairline ring-inset sm:ml-13">
                             {items.map((binding) => {
                               const machine = machines?.find(
                                 (item) => item._id === binding.machineId,
