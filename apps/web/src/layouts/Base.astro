@@ -1,0 +1,76 @@
+---
+import SiteFooter from "@vectis/design/components/SiteFooter.astro";
+import SiteHeader from "@vectis/design/components/SiteHeader.astro";
+import { themeStorageKey } from "@vectis/design/site";
+import generalSans from "@vectis/design/fonts/general-sans/GeneralSans-Variable.woff2?url";
+import "../styles/site.css";
+
+interface Props {
+  title: string;
+  description: string;
+  current?: string;
+  image?: string;
+  noindex?: boolean;
+}
+const { title, description, current, image = "/og/home.png", noindex = false } = Astro.props;
+const canonical = new URL(Astro.url.pathname.replace(/\/$/, "") || "/", Astro.site);
+const fullTitle = title === "Vectis" ? title : `${title} - Vectis`;
+const revealScript = `(() => {
+  const blocks = document.querySelectorAll("[data-reveal]");
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    blocks.forEach((block) => block.classList.add("revealed"));
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      entry.target.classList.add("revealed");
+      observer.unobserve(entry.target);
+    }
+  }, { threshold: 0.4 });
+  blocks.forEach((block) => observer.observe(block));
+})();`;
+const themeScript = `(() => {
+  const root = document.documentElement;
+  root.classList.add("js");
+  const media = matchMedia("(prefers-color-scheme: dark)");
+  const stored = () => { const value = localStorage.getItem(${JSON.stringify(themeStorageKey)}); return value === "light" || value === "dark" ? value : null; };
+  const apply = () => { root.dataset.theme = stored() ?? (media.matches ? "dark" : "light"); };
+  apply();
+  media.addEventListener("change", () => { if (!stored()) apply(); });
+})();`;
+---
+
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    {noindex && <meta name="robots" content="noindex" />}
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="preload" href={generalSans} as="font" type="font/woff2" crossorigin />
+    <meta name="theme-color" content="#f6f5f2" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#14171b" media="(prefers-color-scheme: dark)" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Vectis" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={new URL(image, Astro.site)} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="alternate" type="text/plain" title="llms.txt" href="/llms.txt" />
+    <script is:inline set:html={themeScript} />
+  </head>
+  <body>
+    <SiteHeader current={current} />
+    <main id="main" class="flex-1">
+      <slot />
+    </main>
+    <SiteFooter />
+    <script is:inline set:html={revealScript} />
+  </body>
+</html>

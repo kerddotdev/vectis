@@ -4,7 +4,7 @@
 
 `vectis.svg` is the original monochrome mark. `web/vectis.svg` applies the brand gradient to the same geometry; `web/vectis-light.svg` uses a deeper copper on light surfaces. These flat variants omit the native glass, shadow, and translucency effects.
 
-Import `web/colors.css` for `--vectis-sand`, `--vectis-copper`, `--vectis-brand-on-light`, and `--vectis-brand-gradient`. These are brand colors, not general text or interactive-state tokens.
+The brand colors live in `packages/design/src/tokens.css` as `--vectis-sand`, `--vectis-copper`, and `--vectis-brand-gradient`, next to the semantic tokens. The deep copper mark color is the light-theme `--vectis-brand`. Use the semantic tokens for text and interactive states, not the raw brand colors.
 
 | Role                   | sRGB      | Display P3                                  |
 | ---------------------- | --------- | ------------------------------------------- |

@@ -1,0 +1,37 @@
+@import "./tokens.css";
+@import "./fonts.css";
+@import "./motion.css";
+
+@theme inline {
+  --color-background: var(--vectis-background);
+  --color-surface: var(--vectis-surface);
+  --color-sidebar: var(--vectis-sidebar);
+  --color-raised: var(--vectis-raised);
+  --color-foreground: var(--vectis-foreground);
+  --color-muted: var(--vectis-muted);
+  --color-faint: var(--vectis-faint);
+  --color-hairline: var(--vectis-hairline);
+  --color-hairline-strong: var(--vectis-hairline-strong);
+  --color-glass: var(--vectis-glass);
+  --color-brand: var(--vectis-brand);
+  --color-brand-fill: var(--vectis-brand-fill);
+  --color-on-brand: var(--vectis-on-brand);
+  --color-brand-soft: var(--vectis-brand-soft);
+  --color-sand: var(--vectis-sand);
+  --color-copper: var(--vectis-copper);
+  --color-running: var(--vectis-running);
+  --color-success: var(--vectis-success);
+  --color-attention: var(--vectis-attention);
+  --color-danger: var(--vectis-danger);
+  --color-neutral: var(--vectis-neutral);
+
+  --font-sans: var(--vectis-font-sans);
+  --font-mono: var(--vectis-font-mono);
+  --font-ui: var(--vectis-font-ui);
+
+  --shadow-soft: var(--vectis-shadow-sm);
+  --shadow-float: var(--vectis-shadow-lg);
+
+  --ease-out: var(--vectis-ease-out);
+  --ease-drawer: var(--vectis-ease-drawer);
+}

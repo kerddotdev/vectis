@@ -9,14 +9,14 @@ dist/
 *.tsbuildinfo
 coverage/
 .build/
-apps/docs/public/markdown/
-apps/docs/public/llms.txt
-apps/docs/src/content/docs/reference/cli.md
+apps/docs/docs/reference/cli.md
+apps/docs/public/icon.svg
+apps/docs/.blume/
 .wrangler/
 .dev.vars
 .dev.vars.*
-apps/docs/site/
+apps/web/site/
 
 apps/desktop/renderer/
 
-apps/docs/public/brand/
+packages/design/fonts/

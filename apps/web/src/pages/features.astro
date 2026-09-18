@@ -1,0 +1,204 @@
+---
+import environmentsDark from "../assets/app/environments-dark.png";
+import environmentsLight from "../assets/app/environments-light.png";
+import repositoriesDark from "../assets/app/repositories-dark.png";
+import repositoriesLight from "../assets/app/repositories-light.png";
+import AppWindow from "../components/AppWindow.astro";
+import Feature from "../components/Feature.astro";
+import PageHero from "../components/PageHero.astro";
+import Base from "../layouts/Base.astro";
+import { codeLines } from "../lib/code";
+
+const sections = [
+  ["runners", "Disposable runners"],
+  ["guests", "Guest images"],
+  ["automatic", "Automatic runners"],
+  ["agents", "Agents and automation"],
+  ["migration", "Workflow migration"],
+  ["remote", "Remote control"],
+  ["app", "The Mac app"],
+];
+const prepare = `<span class="p">$</span> vectis environment prepare-linux ubuntu-24-arm64 \\
+    <span class="k">--image-directory</span> /Volumes/Runner/images \\
+    <span class="k">--storage-path</span> /Volumes/Runner/vms \\
+    <span class="k">--cpu</span> 4 <span class="k">--memory-mib</span> 8192 <span class="k">--disk-gib</span> 32 <span class="k">--json</span>
+<span class="p">$</span> vectis operation wait op_52aa <span class="k">--timeout</span> 3600000 <span class="k">--json</span>`;
+const mcpTools = [
+  "vectis_status",
+  "vectis_capabilities",
+  "vectis_command",
+  "vectis_wait",
+  "vectis_jobs",
+  "vectis_repositories",
+  "vectis_storage",
+  "vectis_doctor",
+  "vectis_github_accounts",
+  "vectis_github_connect",
+  "vectis_service",
+  "vectis_cloud",
+];
+const remote = `<span class="p">$</span> vectis login
+<span class="p">$</span> vectis machine list <span class="k">--json</span>
+<span class="p">$</span> vectis status <span class="k">--machine</span> studio <span class="k">--json</span>
+<span class="p">$</span> vectis runner run bind_app <span class="k">--machine</span> studio <span class="k">--json</span>`;
+const migration = `<span class="p">$</span> vectis migration analyze bind_app <span class="k">--wait --json</span>
+<span class="p">$</span> vectis migration publish prev_19c3 <span class="k">--wait --json</span>
+
+<span class="dim">branch</span>   vectis/migrate-workflows
+<span class="dim">changed</span>  runs-on: macos-latest <span class="dim">-&gt;</span> vectis-macos-26-arm64
+<span class="dim">skipped</span>  runs-on: ubuntu-latest <span class="dim">(x64, left as is)</span>`;
+---
+
+<Base
+  image="/og/features.png"
+  title="Features"
+  description="Disposable GitHub Actions runners, guest images, automatic runners, agent tooling, workflow migration and remote control."
+  current="/features"
+>
+  <PageHero title="Everything a runner needs, and nothing it keeps.">
+    <p>
+      Vectis turns an Apple Silicon Mac into a pool of clean, single-use GitHub Actions runners.
+      Here is what it does, and where it deliberately stops.
+    </p>
+  </PageHero>
+
+  <div class="shell grid grid-cols-1 gap-12 pb-24 lg:grid-cols-[11rem_1fr] lg:gap-16">
+    <nav aria-label="On this page" class="hidden lg:block">
+      <ol class="sticky top-28 flex flex-col gap-3 text-[14.5px]">
+        {
+          sections.map(([id, label]) => (
+            <li>
+              <a class="text-muted transition-colors hover:text-foreground" href={`#${id}`}>
+                {label}
+              </a>
+            </li>
+          ))
+        }
+      </ol>
+    </nav>
+
+    <div class="min-w-0">
+      <Feature id="runners" title="One job, one machine, then gone.">
+        <p>
+          Every job runs in its own virtual machine, cloned from the environment you prepared. The
+          official GitHub Actions runner registers just in time with a single-use configuration and
+          takes exactly one job.
+        </p>
+        <p>
+          Afterwards Vectis stops and deletes the VM and removes the runner registration. It only
+          reports success after it has seen the runner exit and the cleanup finish. If it cannot
+          prove that, the operation stops at action required instead of guessing.
+        </p>
+        <AppWindow
+          slot="artifact"
+          light={environmentsLight}
+          dark={environmentsDark}
+          alt="The Environments view listing macOS 26, Ubuntu 24.04 and Windows 11 guest images."
+        />
+      </Feature>
+
+      <Feature id="guests" title="Prepare a guest once.">
+        <p>
+          Vectis downloads macOS 26 from Apple and Ubuntu 24.04 from Canonical and checks each image
+          against a pinned SHA-256 before using it. Windows 11 installs from your own ISO, drivers
+          and license, with UEFI Secure Boot and a TPM.
+        </p>
+        <p>
+          You decide the CPU, memory and disk for each environment, and where images and VM disks
+          live, external drives included. Vectis keeps a quarter of your memory free for macOS.
+        </p>
+        <pre slot="artifact" class="code" data-reveal><code set:html={codeLines(prepare)} /></pre>
+      </Feature>
+
+      <Feature id="automatic" title="Runners that start themselves.">
+        <p>
+          Turn on automatic runners for a repository and Vectis watches for queued jobs that ask
+          for your labels. An idle, unpaused Mac picks up the demand on its next heartbeat and
+          starts one runner at a time.
+        </p>
+        <p>
+          It never retries a failed or cancelled job on its own, and it is off until you enable it
+          for each repository.
+        </p>
+        <AppWindow
+          slot="artifact"
+          light={repositoriesLight}
+          dark={repositoriesDark}
+          alt="The Repositories view with automatic runners enabled for one repository."
+        />
+      </Feature>
+
+      <Feature id="agents" title="Built for agents, not bolted on.">
+        <p>
+          The app, the CLI and the MCP server use one typed client, so agents get the same controls
+          you do. Every CLI command answers in JSON, errors carry a stable code and a next step,
+          and an operation that needs a person exits with code 3 instead of pretending to succeed.
+        </p>
+        <p>
+          A portable agent skill explains the safe way to drive Vectis, and every documentation page
+          is also available as Markdown through <a class="prose-link" href="/llms.txt">llms.txt</a>.
+        </p>
+        <div slot="artifact" class="flex flex-col gap-3">
+          <p class="eyebrow">MCP tools</p>
+          <ul class="grid grid-cols-1 gap-x-6 gap-y-2 font-mono text-[13.5px] sm:grid-cols-2">
+            {mcpTools.map((tool) => <li class="border-b border-hairline pb-2">{tool}</li>)}
+          </ul>
+        </div>
+      </Feature>
+
+      <Feature id="migration" title="A pull request, not a rewrite.">
+        <p>
+          Vectis reads your workflow files and changes only the jobs it knows can run on ARM64. It
+          leaves x64 jobs, reusable workflows, dynamic matrices and privileged triggers alone and
+          tells you why.
+        </p>
+        <p>
+          Publishing opens an ordinary pull request after one job has succeeded on your runners.
+          Review it like any other change. Vectis never merges it.
+        </p>
+        <pre slot="artifact" class="code" data-reveal><code set:html={codeLines(migration)} /></pre>
+      </Feature>
+
+      <Feature id="remote" title="Control any of your Macs from any other.">
+        <p>
+          Sign in once and the app, the CLI and agents can control every Mac on your account.
+          Commands queue in the Vectis cloud and each Mac collects them over an outbound
+          connection, so no machine needs an open port.
+        </p>
+        <p>
+          A remote command never falls back to running locally. Signed-in controllers expire after
+          90 days and you can revoke them at any time.
+        </p>
+        <pre slot="artifact" class="code" data-reveal><code set:html={codeLines(remote)} /></pre>
+      </Feature>
+
+      <Feature id="app" title="A Mac app that tells the truth.">
+        <p>
+          The Vectis app shows what the local service actually reports: running, waiting for you,
+          unsupported on this Mac, or done. Close the window and the service keeps running your jobs
+          in the background.
+        </p>
+        <p>
+          Prefer the terminal? Everything in the app is also in the CLI, with the same names and
+          the same results.
+        </p>
+        <div slot="artifact" class="flex flex-wrap gap-2">
+          {
+            [
+              ["Accepted", "text-neutral bg-neutral/10"],
+              ["Running", "text-running bg-running/10"],
+              ["Action required", "text-attention bg-attention/10"],
+              ["Succeeded", "text-success bg-success/10"],
+              ["Failed", "text-danger bg-danger/10"],
+              ["Cancelled", "text-neutral bg-neutral/10"],
+            ].map(([label, tone]) => (
+              <span class:list={["rounded-full px-3 py-1.5 text-[14px] font-medium", tone]}>
+                {label}
+              </span>
+            ))
+          }
+        </div>
+      </Feature>
+    </div>
+  </div>
+</Base>

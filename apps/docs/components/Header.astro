@@ -1,0 +1,141 @@
+---
+import SiteHeader from "@vectis/design/components/SiteHeader.astro";
+import Search from "blume/components/layout/Search.astro";
+
+type SearchProps = Parameters<typeof Search>[0];
+
+interface Props {
+  navigation: SearchProps["navigation"];
+  searchEnabled: boolean;
+  searchLocale?: string;
+  searchVersion?: string | null;
+  searchStrings?: SearchProps["strings"];
+}
+
+const { navigation, searchEnabled, searchLocale, searchVersion = null, searchStrings } =
+  Astro.props;
+
+// Replacing Blume's header drops its drawer script. The drawer sits below the
+// sticky header and reads its top offset from --blume-drawer-top.
+const drawerScript = `(() => {
+  const root = document.documentElement;
+  const desktop = matchMedia("(min-width: 64rem)");
+  const measure = () => {
+    const header = document.querySelector("[data-blume-header]");
+    if (header) root.style.setProperty("--blume-drawer-top", header.getBoundingClientRect().bottom + "px");
+  };
+  const sync = () => {
+    const open = root.hasAttribute("data-blume-nav-open");
+    for (const toggle of document.querySelectorAll("[data-vectis-nav-toggle]")) {
+      toggle.setAttribute("aria-expanded", String(open));
+    }
+  };
+  document.addEventListener("click", (event) => {
+    if (!(event.target instanceof Element) || !event.target.closest("[data-blume-nav-toggle]")) return;
+    if (root.toggleAttribute("data-blume-nav-open")) measure();
+    sync();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !root.hasAttribute("data-blume-nav-open")) return;
+    root.removeAttribute("data-blume-nav-open");
+    sync();
+  });
+  addEventListener("resize", () => {
+    if (!root.hasAttribute("data-blume-nav-open")) return;
+    if (desktop.matches) {
+      root.removeAttribute("data-blume-nav-open");
+      sync();
+    } else measure();
+  });
+})();`;
+---
+
+<SiteHeader current="/docs">
+  <button
+    slot="leading"
+    class="nav-toggle"
+    type="button"
+    aria-label="Toggle documentation navigation"
+    aria-expanded="false"
+    data-blume-nav-toggle
+    data-vectis-nav-toggle
+  >
+    <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="3"></rect>
+      <path d="M9.5 4.5v15"></path>
+    </svg>
+  </button>
+  {
+    searchEnabled && (
+      <Search
+        locale={searchLocale}
+        navigation={navigation}
+        strings={searchStrings}
+        version={searchVersion}
+      />
+    )
+  }
+</SiteHeader>
+<script is:inline set:html={drawerScript} />
+
+<style>
+  .nav-toggle {
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+    width: 34px;
+    height: 34px;
+    margin-left: -6px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--vectis-muted);
+    cursor: pointer;
+    transition:
+      color 120ms,
+      background 120ms;
+  }
+  .nav-toggle:hover,
+  .nav-toggle[aria-expanded="true"] {
+    color: var(--vectis-foreground);
+    background: var(--vectis-hairline);
+  }
+  .nav-toggle:focus-visible {
+    outline: 2px solid var(--vectis-brand);
+    outline-offset: 2px;
+  }
+  .nav-toggle svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.6;
+    stroke-linecap: round;
+  }
+  :global(.site-header [data-blume-search-open]) {
+    height: 34px;
+    border-color: var(--vectis-hairline-strong);
+    border-radius: 10px;
+    background: transparent;
+  }
+  :global(.site-header [data-blume-search-open]:hover) {
+    border-color: var(--vectis-hairline-strong);
+    background: var(--vectis-hairline);
+  }
+  @media (min-width: 64rem) {
+    .nav-toggle {
+      display: none;
+    }
+  }
+  @media (max-width: 63.99rem) {
+    :global(.site-header [data-blume-search-open]) {
+      width: 34px;
+      justify-content: center;
+      padding: 0;
+      border-color: transparent;
+    }
+  }
+  @media (max-width: 480px) {
+    :global(.site-header .controls .download) {
+      display: none;
+    }
+  }
+</style>

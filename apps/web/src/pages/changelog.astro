@@ -1,0 +1,67 @@
+---
+import { getCollection, render } from "astro:content";
+import { site } from "@vectis/design/site";
+import PageHero from "../components/PageHero.astro";
+import Base from "../layouts/Base.astro";
+
+const entries = (await getCollection("changelog")).sort(
+  (a, b) => b.data.date.getTime() - a.data.date.getTime(),
+);
+const rendered = await Promise.all(
+  entries.map(async (entry) => ({ entry, Content: (await render(entry)).Content })),
+);
+const format = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC" });
+---
+
+<Base
+  image="/og/changelog.png"
+  title="Changelog"
+  description="What changed in each Vectis release."
+  current="/changelog"
+>
+  <PageHero title="Changelog">
+    <p>What changed in each release of the Vectis app, CLI and service.</p>
+    <div class="mt-8 flex flex-wrap gap-3">
+      <a class="button button-primary" href={site.download}>Download the latest release</a>
+      <a class="button button-secondary" href={`${site.repository}/releases`}>All releases on GitHub</a>
+    </div>
+  </PageHero>
+  <div class="shell flex flex-col pb-28">
+    {
+      rendered.map(({ entry, Content }) => (
+        <article
+          id={`v${entry.data.version}`}
+          class="grid grid-cols-1 gap-6 border-t border-hairline py-14 lg:grid-cols-[14rem_1fr] lg:gap-16"
+        >
+          <header class="flex flex-col gap-1.5">
+            <p class="font-mono text-[15px]">{entry.data.version}</p>
+            <time class="eyebrow" datetime={entry.data.date.toISOString().slice(0, 10)}>
+              {format.format(entry.data.date)}
+            </time>
+          </header>
+          <div class="release flex max-w-[64ch] flex-col gap-5">
+            <h2 class="text-2xl font-medium">{entry.data.title}</h2>
+            <Content />
+          </div>
+        </article>
+      ))
+    }
+  </div>
+</Base>
+
+<style>
+  .release :global(p),
+  .release :global(li) {
+    color: var(--vectis-muted);
+  }
+  .release :global(ul) {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-left: 1.1em;
+    list-style: disc;
+  }
+  .release :global(li::marker) {
+    color: var(--vectis-brand);
+  }
+</style>

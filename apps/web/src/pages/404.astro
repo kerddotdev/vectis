@@ -1,0 +1,17 @@
+---
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="Page not found" description="This page does not exist." noindex>
+  <section class="shell flex flex-col items-start gap-6 py-28 md:py-40">
+    <p class="eyebrow">404</p>
+    <h1 class="text-title max-w-[18ch] font-medium">This page does not exist.</h1>
+    <p class="max-w-[48ch] text-lede text-muted">
+      It may have moved when the documentation was reorganized.
+    </p>
+    <div class="flex flex-wrap gap-3">
+      <a class="button button-primary" href="/">Go to the homepage</a>
+      <a class="button button-secondary" href="/docs">Open the docs</a>
+    </div>
+  </section>
+</Base>

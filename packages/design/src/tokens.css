@@ -1,0 +1,68 @@
+/*
+  Vectis design tokens. Colors resolve through light-dark(), so the active
+  color-scheme picks the value: the system preference by default, or an
+  explicit override with .light/.dark (desktop) or data-theme (web and docs).
+*/
+:root {
+  color-scheme: light dark;
+
+  --vectis-sand: #f1cc96;
+  --vectis-copper: #b86b4c;
+  --vectis-brand-gradient: linear-gradient(to bottom, var(--vectis-sand), var(--vectis-copper));
+
+  --vectis-background: light-dark(oklch(97% 0.004 91.4), oklch(20.3% 0.009 255.6));
+  --vectis-surface: light-dark(oklch(98.8% 0.003 84.6), oklch(23.3% 0.011 254.1));
+  --vectis-sidebar: light-dark(oklch(94.6% 0.007 88.6), oklch(25.5% 0.013 258.4));
+  --vectis-raised: light-dark(oklch(99.3% 0.003 106.4), oklch(27.5% 0.016 259.8));
+  --vectis-foreground: light-dark(oklch(23.2% 0.006 78.2), oklch(93.2% 0.007 80.7));
+  --vectis-muted: light-dark(oklch(50.9% 0.014 79.7), oklch(71.4% 0.012 256.7));
+  --vectis-faint: light-dark(oklch(62.2% 0.016 80.7), oklch(60.8% 0.014 255.5));
+  --vectis-hairline: light-dark(oklch(23.2% 0.006 78.2 / 9%), oklch(93.2% 0.007 80.7 / 8%));
+  --vectis-hairline-strong: light-dark(
+    oklch(23.2% 0.006 78.2 / 16%),
+    oklch(93.2% 0.007 80.7 / 14%)
+  );
+  --vectis-glass: light-dark(oklch(98.8% 0.003 84.6 / 72%), oklch(27.5% 0.016 259.8 / 72%));
+
+  --vectis-brand: light-dark(oklch(45.7% 0.1 39.1), oklch(81.8% 0.078 63.2));
+  --vectis-brand-fill: light-dark(oklch(54.2% 0.11 41), oklch(66.3% 0.107 45.2));
+  --vectis-on-brand: light-dark(oklch(98.2% 0.009 67.7), oklch(19.1% 0.017 53.5));
+  --vectis-brand-soft: light-dark(oklch(54.2% 0.11 41 / 10%), oklch(81.8% 0.078 63.2 / 10%));
+
+  --vectis-running: light-dark(oklch(49.2% 0.084 227.2), oklch(78.2% 0.08 221.2));
+  --vectis-success: light-dark(oklch(49.1% 0.094 154.5), oklch(77.8% 0.096 153.2));
+  --vectis-attention: light-dark(oklch(51% 0.108 74.2), oklch(80.2% 0.134 83.3));
+  --vectis-danger: light-dark(oklch(49.9% 0.172 29.1), oklch(74% 0.126 27.6));
+  --vectis-neutral: var(--vectis-muted);
+
+  --vectis-shadow-sm: 0 1px 2px light-dark(oklch(23.2% 0.006 78.2 / 6%), oklch(0% 0 0 / 30%));
+  --vectis-shadow-lg:
+    var(--vectis-shadow-sm),
+    0 12px 32px -12px light-dark(oklch(23.2% 0.006 78.2 / 18%), oklch(0% 0 0 / 50%));
+
+  --vectis-radius-sm: 8px;
+  --vectis-radius-md: 12px;
+  --vectis-radius-lg: 16px;
+  --vectis-radius-xl: 22px;
+
+  --vectis-font-sans: "General Sans", ui-sans-serif, system-ui, sans-serif;
+  --vectis-font-mono: "Fragment Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --vectis-font-ui: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+}
+
+:root.light,
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root.dark,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@media (color-gamut: p3) {
+  :root {
+    --vectis-sand: color(display-p3 0.92151 0.80538 0.61509);
+    --vectis-copper: color(display-p3 0.68021 0.43413 0.32205);
+  }
+}

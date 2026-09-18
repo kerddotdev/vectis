@@ -1,0 +1,22 @@
+---
+interface Props {
+  id: string;
+  title: string;
+}
+const { id, title } = Astro.props;
+---
+
+<section
+  id={id}
+  class="grid scroll-mt-24 grid-cols-1 gap-10 border-t border-hairline py-20 first:border-t-0 first:pt-0 md:py-24 lg:grid-cols-[1fr_1.1fr] lg:gap-16"
+>
+  <div class="flex flex-col gap-5">
+    <h2 class="text-title max-w-[16ch] font-medium">{title}</h2>
+    <div class="flex max-w-[48ch] flex-col gap-4 text-muted">
+      <slot />
+    </div>
+  </div>
+  <div class="min-w-0 self-center">
+    <slot name="artifact" />
+  </div>
+</section>

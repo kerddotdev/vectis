@@ -1,0 +1,73 @@
+@import "@vectis/design/tokens.css";
+
+@source "../../packages/design/src";
+
+:root,
+:root[data-theme="dark"] {
+  --blume-background: var(--vectis-background);
+  --blume-foreground: var(--vectis-foreground);
+  --blume-muted: var(--vectis-hairline);
+  --blume-muted-foreground: var(--vectis-muted);
+  --blume-border: var(--vectis-hairline-strong);
+  --blume-accent: var(--vectis-brand);
+  --blume-accent-foreground: var(--vectis-on-brand);
+  --blume-action: var(--vectis-brand-fill);
+  --blume-action-foreground: var(--vectis-on-brand);
+  --blume-code-background: var(--vectis-surface);
+  --blume-radius: 0.875rem;
+  /* Blume registers the configured fonts under hashed family names. */
+  --vectis-font-sans: var(--blume-font-body);
+  --vectis-font-mono: var(--blume-font-mono);
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  letter-spacing: -0.02em;
+}
+
+.prose {
+  font-size: 0.9375rem;
+}
+
+.prose :where(h1) {
+  font-weight: 600;
+  font-size: 2.75rem;
+}
+
+.prose :where(h2, h3) {
+  font-weight: 600;
+}
+
+.prose :where(a:not([data-blume-card])) {
+  text-decoration-color: color-mix(in oklch, var(--vectis-brand) 55%, transparent);
+  transition: text-decoration-color 120ms;
+}
+
+.prose :where(a:not([data-blume-card]):hover) {
+  text-decoration-color: var(--vectis-brand);
+}
+
+::selection {
+  background: var(--vectis-brand-soft);
+}
+
+@media (min-width: 64rem) {
+  [data-blume-doc-grid] {
+    max-width: 1200px;
+  }
+}
+
+@media (min-width: 80rem) {
+  [data-blume-doc-grid] {
+    grid-template-columns: 15rem minmax(0, 1fr) 15rem;
+  }
+}
+
+.bg-black\/40,
+.bg-black\/30 {
+  background-color: oklch(20% 0.01 255 / 38%);
+}

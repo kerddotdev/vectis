@@ -1,0 +1,110 @@
+---
+import { site } from "@vectis/design/site";
+import PageHero from "../components/PageHero.astro";
+import Base from "../layouts/Base.astro";
+import { codeLines } from "../lib/code";
+
+const map = [
+  ["apps/server", "The local service that owns processes, VMs, credentials and state."],
+  ["apps/cli, apps/mcp", "The command line and the MCP server, on the shared client."],
+  ["apps/desktop", "The native Mac app."],
+  ["apps/web, apps/docs", "This website, browser connections and the documentation."],
+  ["packages/runner, native/apple", "VM processes, disk inspection and Apple virtualization."],
+  ["packages/github, packages/migration", "GitHub contracts and workflow migration."],
+  ["convex", "Identity, GitHub integration and remote commands in the cloud."],
+  ["skills/vectis", "The portable agent skill."],
+];
+const build = `<span class="p">$</span> git clone ${site.repository}.git
+<span class="p">$</span> cd vectis
+<span class="p">$</span> pnpm install <span class="k">--frozen-lockfile</span>
+<span class="p">$</span> pnpm build
+<span class="p">$</span> pnpm vectis <span class="k">--help</span>
+<span class="p">$</span> pnpm desktop:build &amp;&amp; pnpm desktop:start`;
+---
+
+<Base
+  image="/og/open-source.png"
+  title="Open source"
+  description="Vectis is MIT licensed. See how the project is organized, build it from source and contribute."
+>
+  <PageHero title="Open source, down to the last runner.">
+    <p>
+      Vectis is released under the MIT License. The app, the service, the CLI, the cloud functions
+      and this website all live in one repository.
+    </p>
+    <div class="mt-8 flex flex-wrap gap-3">
+      <a class="button button-primary" href={site.repository}>View on GitHub</a>
+      <a class="button button-secondary" href={`${site.repository}/blob/main/LICENSE`}
+        >Read the license</a
+      >
+    </div>
+  </PageHero>
+
+  <div class="shell flex flex-col pb-28">
+    <section
+      class="grid grid-cols-1 gap-10 border-t border-hairline py-16 lg:grid-cols-[1fr_1.4fr] lg:gap-16"
+    >
+      <div class="flex flex-col gap-5">
+        <h2 class="text-title max-w-[12ch] font-medium">Build it yourself.</h2>
+        <p class="max-w-[44ch] text-muted">
+          You need an Apple Silicon Mac with Node.js 24 and pnpm. Building the signed app bundles
+          also needs Xcode 26 for the icon.
+        </p>
+        <a class="prose-link self-start" href="/docs/guides/development-packages"
+          >Development packages guide</a
+        >
+      </div>
+      <pre class="code min-w-0 self-center" data-reveal><code set:html={codeLines(build)} /></pre>
+    </section>
+
+    <section
+      class="grid grid-cols-1 gap-10 border-t border-hairline py-16 lg:grid-cols-[1fr_1.4fr] lg:gap-16"
+    >
+      <h2 class="text-title max-w-[12ch] font-medium">How the code is organized.</h2>
+      <dl class="flex flex-col">
+        {
+          map.map(([path, role]) => (
+            <div class="grid grid-cols-1 gap-1 border-b border-hairline py-4 sm:grid-cols-[16rem_1fr] sm:gap-6">
+              <dt class="font-mono text-[14px]">{path}</dt>
+              <dd class="text-muted">{role}</dd>
+            </div>
+          ))
+        }
+      </dl>
+    </section>
+
+    <section
+      class="grid grid-cols-1 gap-10 border-t border-hairline py-16 lg:grid-cols-[1fr_1.4fr] lg:gap-16"
+    >
+      <h2 class="text-title max-w-[12ch] font-medium">Other components.</h2>
+      <div class="flex max-w-[60ch] flex-col gap-5 text-lede text-muted">
+        <p>
+          The Mac app includes Electron and Node.js. Windows guests run on QEMU with a small TPM
+          patch released under the GPL, alongside software TPM and firmware components that keep
+          their own licenses.
+        </p>
+        <p>
+          Vectis ships no guest operating system. macOS and Ubuntu are downloaded from their
+          publishers, and Windows installs from media and a license you provide.
+        </p>
+      </div>
+    </section>
+
+    <section
+      class="grid grid-cols-1 gap-10 border-t border-hairline py-16 lg:grid-cols-[1fr_1.4fr] lg:gap-16"
+    >
+      <h2 class="text-title max-w-[12ch] font-medium">Contributing.</h2>
+      <div class="flex max-w-[60ch] flex-col items-start gap-6 text-lede text-muted">
+        <p>
+          Bug reports and pull requests are welcome on GitHub. For anything larger than a fix, open
+          an issue first so we can agree on the approach. Security issues go through a private
+          advisory, as described on the security page.
+        </p>
+        <div class="flex flex-wrap gap-3">
+          <a class="button button-secondary" href={`${site.repository}/issues`}>Open an issue</a>
+          <a class="button button-secondary" href="/security">Security policy</a>
+        </div>
+      </div>
+    </section>
+  </div>
+</Base>

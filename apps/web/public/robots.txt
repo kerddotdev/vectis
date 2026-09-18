@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /connect
+
+Sitemap: https://vectis.kerd.dev/sitemap-index.xml
+Sitemap: https://vectis.kerd.dev/docs/sitemap.xml
