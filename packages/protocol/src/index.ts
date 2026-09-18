@@ -83,7 +83,13 @@ export const Command = Schema.Union([
     memoryMiB: Schema.optional(Schema.Int),
     storagePath: Schema.optional(Schema.NonEmptyString),
   }),
-  Schema.Struct({ type: Schema.Literal("environment.start"), id: Identifier }),
+  Schema.Struct({
+    type: Schema.Literal("environment.start"),
+    id: Identifier,
+    cpu: Schema.optional(Schema.Int),
+    memoryMiB: Schema.optional(Schema.Int),
+    storagePath: Schema.optional(Schema.NonEmptyString),
+  }),
   Schema.Struct({ type: Schema.Literal("instance.stop"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("instance.reconcile"), id: Identifier }),
   Schema.Struct({
@@ -129,7 +135,11 @@ export const capabilities = [
     name: "environment.configure",
     description: "Set CPU, memory or an absolute VM storage directory for future instances.",
   },
-  { name: "environment.start", description: "Start a disposable copy of a prepared environment." },
+  {
+    name: "environment.start",
+    description:
+      "Start a disposable VM with optional CPU, memory and storage overrides for this instance.",
+  },
   {
     name: "instance.reconcile",
     description: "Reconcile an interrupted instance only after verified process exit.",
