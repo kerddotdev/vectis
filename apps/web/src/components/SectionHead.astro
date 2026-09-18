@@ -1,0 +1,20 @@
+---
+interface Props {
+  eyebrow: string;
+  title: string;
+  id?: string;
+}
+const { eyebrow, title, id } = Astro.props;
+---
+
+<header class="flex max-w-[44rem] flex-col gap-4">
+  <p class="eyebrow">{eyebrow}</p>
+  <h2 id={id} class="text-title font-medium">{title}</h2>
+  {
+    Astro.slots.has("default") && (
+      <div class="text-lede text-muted">
+        <slot />
+      </div>
+    )
+  }
+</header>

@@ -1,0 +1,264 @@
+---
+import { site } from "@vectis/design/site";
+import overviewDark from "../assets/app/overview-dark.png";
+import overviewLight from "../assets/app/overview-light.png";
+import AppWindow from "../components/AppWindow.astro";
+import JobTrace from "../components/JobTrace.astro";
+import SectionHead from "../components/SectionHead.astro";
+import Base from "../layouts/Base.astro";
+import { codeLines } from "../lib/code";
+
+const lifecycle = [
+  {
+    title: "GitHub queues a job.",
+    body: "Your workflow asks for vectis-macos-26-arm64. Vectis notices the demand on its next heartbeat, or you start a runner yourself.",
+  },
+  {
+    title: "A fresh VM boots.",
+    body: "Vectis clones your prepared image into a disposable virtual machine with the CPU and memory you chose.",
+  },
+  {
+    title: "One runner takes one job.",
+    body: "The official GitHub Actions runner registers just in time with a single-use configuration, then runs that job and nothing else.",
+  },
+  {
+    title: "Nothing is left behind.",
+    body: "The VM is stopped and deleted, and the runner registration is removed. If cleanup cannot be confirmed, Vectis tells you instead of guessing.",
+  },
+];
+const phases = [
+  ["accepted", ""],
+  ["running", "preparing_guest"],
+  ["running", "registering"],
+  ["running", "listening"],
+  ["running", "cleaning"],
+  ["succeeded", "runner exited, VM removed"],
+];
+const guests = [
+  ["macOS 26", "Apple Virtualization", "Downloaded from Apple and verified"],
+  ["Ubuntu 24.04", "Apple Virtualization", "Official cloud image, verified by SHA-256"],
+  ["Windows 11", "QEMU on Hypervisor.framework, TPM 2.0", "Installed from your own ISO and license"],
+];
+const promises = [
+  [
+    "Loopback only.",
+    "The local service listens on 127.0.0.1, requires a token, and refuses requests from browsers.",
+  ],
+  [
+    "Keys stay in Keychain.",
+    "Machine and controller credentials live in macOS Keychain. The cloud keeps fingerprints, not secrets.",
+  ],
+  [
+    "Forks wait for you.",
+    "Public repositories must require approval for outside contributors. Vectis never approves a run on your behalf.",
+  ],
+  [
+    "Guests start empty.",
+    "No host folders, no Docker socket, no host credentials. Guest SSH host keys are pinned.",
+  ],
+];
+const phaseLog = phases
+  .map(
+    ([state, phase]) =>
+      `<span class="dim">op_7c1e  </span><span${state === "succeeded" ? ' class="ok"' : ""}>${state.padEnd(11)}</span><span class="dim">${phase}</span>`,
+  )
+  .join("\n");
+const agentExample = `<span class="p">$</span> vectis status <span class="k">--json</span>
+<span class="p">$</span> vectis runner run bind_app <span class="k">--key</span> nightly-42 <span class="k">--json</span>
+<span class="p">$</span> vectis operation wait op_7c1e <span class="k">--timeout</span> 3600000 <span class="k">--json</span>
+
+<span class="p">$</span> vectis environment prepare-linux ubuntu-24-arm64 <span class="k">--json</span>
+<span class="dim">{"error": {</span>
+<span class="dim">  "code":</span> <span class="k">"machine_paused"</span><span class="dim">,</span>
+<span class="dim">  "message":</span> "Resume the machine before preparing a guest."<span class="dim">,</span>
+<span class="dim">  "nextStep":</span> "Run vectis doctor for diagnostics."
+<span class="dim">}}</span>`;
+const migrationExample = `<span class="dim">.github/workflows/test.yml</span>
+
+jobs:
+  test-macos:
+<span class="del">-    runs-on: macos-latest</span>
+<span class="add">+    runs-on: vectis-macos-26-arm64</span>
+  test-linux:
+<span class="del">-    runs-on: ubuntu-24.04-arm</span>
+<span class="add">+    runs-on: vectis-ubuntu-24-arm64</span>`;
+---
+
+<Base
+  title="Vectis"
+  description="GitHub Actions runners in disposable macOS, Ubuntu and Windows virtual machines on your own Apple Silicon Mac."
+>
+  <section class="shell flex flex-col gap-10 pt-24 md:gap-12 md:pt-40">
+    <h1 class="enter max-w-[13ch] text-display font-medium text-balance">
+      GitHub Actions, on the Mac you already own.
+    </h1>
+    <div class="enter flex flex-col gap-10 [animation-delay:140ms] md:flex-row md:items-end md:justify-between">
+      <p class="max-w-[44ch] text-lede text-muted">
+        Vectis gives every job a fresh macOS, Ubuntu or Windows virtual machine on your Apple
+        Silicon Mac, then deletes it when the job is done. VM disks and build files never leave
+        the machine.
+      </p>
+      <div class="flex shrink-0 flex-wrap items-center gap-3">
+        <a class="button button-primary" href={site.download}>Download for macOS</a>
+        <a class="button button-secondary" href="/docs">Read the docs</a>
+      </div>
+    </div>
+  </section>
+
+  <section class="shell pt-24 pb-28 md:pt-32 md:pb-36" aria-label="The life of a job">
+    <JobTrace />
+  </section>
+
+  <section class="shell pb-28">
+    <AppWindow
+      light={overviewLight}
+      dark={overviewDark}
+      alt="The Vectis app showing two running virtual machines and recent runner operations."
+      eager
+    />
+  </section>
+
+  <section class="border-t border-hairline py-24 md:py-32" aria-labelledby="lifecycle">
+    <div class="shell grid grid-cols-1 gap-14 lg:grid-cols-[1.2fr_1fr]">
+      <div class="flex flex-col gap-12">
+        <SectionHead eyebrow="How a job runs" title="Every job starts from a clean machine." id="lifecycle" />
+        <ol class="grid gap-x-10 gap-y-9 sm:grid-cols-2">
+          {
+            lifecycle.map((step, index) => (
+              <li class="flex flex-col gap-2 border-t border-hairline pt-5">
+                <span class="font-mono text-[13px] text-brand">0{index + 1}</span>
+                <h3 class="text-lg font-medium">{step.title}</h3>
+                <p class="text-muted">{step.body}</p>
+              </li>
+            ))
+          }
+        </ol>
+      </div>
+      <figure class="flex flex-col gap-3 self-center">
+        <pre class="code" data-reveal aria-label="Operation phases for one runner"><code set:html={codeLines(phaseLog)} /></pre>
+        <figcaption class="text-[14px] text-muted">
+          A runner operation, from request to verified cleanup.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section class="border-t border-hairline py-24 md:py-32" aria-labelledby="guests">
+    <div class="shell flex flex-col gap-12">
+      <SectionHead eyebrow="Guests" title="Three operating systems. One Mac." id="guests">
+        <p>
+          Prepare a guest once. Vectis keeps the image clean and starts a copy for every job, labelled
+          so your workflows can ask for it by name.
+        </p>
+      </SectionHead>
+      <div class="overflow-x-auto">
+        <table class="w-full min-w-[640px] border-collapse text-left">
+          <thead>
+            <tr class="eyebrow">
+              <th class="border-b border-hairline pb-3 font-normal">Guest (ARM64)</th>
+              <th class="border-b border-hairline pb-3 font-normal">Virtualization</th>
+              <th class="border-b border-hairline pb-3 font-normal">Image</th>
+            </tr>
+          </thead>
+          <tbody>
+            {
+              guests.map(([name, runtime, image]) => (
+                <tr>
+                  <td class="border-b border-hairline py-5 pr-6 text-xl font-medium">{name}</td>
+                  <td class="border-b border-hairline py-5 pr-6 text-muted">{runtime}</td>
+                  <td class="border-b border-hairline py-5 text-muted">{image}</td>
+                </tr>
+              ))
+            }
+          </tbody>
+        </table>
+      </div>
+      <p class="max-w-[60ch] text-muted">
+        Jobs pick a guest with a label such as <code class="text-foreground">vectis-ubuntu-24-arm64</code
+        >. CPU, memory and the disk location are yours to set, including external drives.
+      </p>
+    </div>
+  </section>
+
+  <section class="border-t border-hairline py-24 md:py-32" aria-labelledby="agents">
+    <div class="shell grid grid-cols-1 gap-14 lg:grid-cols-2 lg:items-center">
+      <div class="flex flex-col gap-8">
+        <SectionHead eyebrow="For agents" title="Everything you can do, an agent can do." id="agents">
+          <p>
+            The app, the CLI and the MCP server share one typed client. Every command speaks JSON,
+            every failure carries a stable code and a next step, and long operations can be waited
+            on.
+          </p>
+        </SectionHead>
+        <dl class="grid gap-5 text-[15px]">
+          <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
+            <dt class="font-medium">MCP server</dt>
+            <dd class="text-muted">
+              Twelve tools, from <code>vectis_status</code> to <code>vectis_command</code> and
+              <code>vectis_wait</code>.
+            </dd>
+          </div>
+          <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
+            <dt class="font-medium">Agent skill</dt>
+            <dd class="text-muted">A portable skill that teaches agents the safe way to use Vectis.</dd>
+          </div>
+          <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
+            <dt class="font-medium">llms.txt</dt>
+            <dd class="text-muted">
+              Every documentation page is also Markdown, indexed at <a class="prose-link" href="/llms.txt"
+                >/llms.txt</a
+              >.
+            </dd>
+          </div>
+        </dl>
+      </div>
+      <pre class="code" data-reveal><code set:html={codeLines(agentExample)} /></pre>
+    </div>
+  </section>
+
+  <section class="border-t border-hairline py-24 md:py-32" aria-labelledby="migration">
+    <div class="shell grid grid-cols-1 gap-14 lg:grid-cols-2 lg:items-center">
+      <pre class="code order-2 lg:order-1" data-reveal><code set:html={codeLines(migrationExample)} /></pre>
+      <div class="order-1 lg:order-2">
+        <SectionHead eyebrow="Workflow migration" title="Your workflows move over in a pull request." id="migration">
+          <p>
+            Vectis reads your workflows, rewrites only the jobs that can run on ARM64, and opens an
+            ordinary pull request for you to review. It waits for one successful job on your runners
+            before publishing, and it never merges.
+          </p>
+        </SectionHead>
+      </div>
+    </div>
+  </section>
+
+  <section class="border-t border-hairline py-24 md:py-32" aria-labelledby="security">
+    <div class="shell flex flex-col gap-12">
+      <SectionHead eyebrow="Security" title="Your Mac stays yours." id="security" />
+      <div class="grid gap-x-12 gap-y-10 md:grid-cols-2">
+        {
+          promises.map(([title, body]) => (
+            <div class="flex flex-col gap-2 border-t border-hairline pt-5">
+              <h3 class="text-lg font-medium">{title}</h3>
+              <p class="max-w-[46ch] text-muted">{body}</p>
+            </div>
+          ))
+        }
+      </div>
+      <a class="prose-link self-start" href="/security">How Vectis draws its trust boundaries</a>
+    </div>
+  </section>
+
+  <section class="border-t border-hairline py-24 md:py-32">
+    <div class="shell flex flex-col items-start gap-8">
+      <h2 class="text-display max-w-[16ch] font-medium">Free, open source, and yours to run.</h2>
+      <p class="max-w-[52ch] text-lede text-muted">
+        Vectis is MIT licensed. Read the code, build it yourself, or download the app and connect
+        your first repository.
+      </p>
+      <div class="flex flex-wrap gap-3">
+        <a class="button button-primary" href={site.download}>Download for macOS</a>
+        <a class="button button-secondary" href={site.repository}>View on GitHub</a>
+      </div>
+    </div>
+  </section>
+</Base>

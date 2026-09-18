@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { SignIn, UserButton } from "@clerk/react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { Schema } from "effect";
-import { api } from "../../../convex/_generated/api.js";
-import { ControllerApproval } from "../../../packages/protocol/src/controller.js";
+import { api } from "../../../../convex/_generated/api.js";
+import { ControllerApproval } from "../../../../packages/protocol/src/controller.js";
+import { Account, SignInPanel } from "./Connect.js";
+import { Button, Card, Code, Heading, Notice, Pending } from "./ui.js";
 
 export function readControllerRequest(deploymentUrl: string | undefined) {
   try {
@@ -48,59 +49,65 @@ export function RemoteAccess({ request }: { request: ControllerApproval | null }
   }
   return (
     <>
-      <h1>Remote control access</h1>
-      <p>
-        A signed-in CLI or desktop can control the machines owned by your Vectis account. Jobs and
-        VM disks stay on those machines.
-      </p>
+      <Heading eyebrow="Remote control" title="Remote control access">
+        <p>
+          A signed-in CLI or desktop can control the machines owned by your Vectis account. Jobs and
+          VM disks stay on those machines.
+        </p>
+      </Heading>
       {isLoading ? (
-        <p role="status">Checking your account...</p>
+        <Pending>Checking your account</Pending>
       ) : !isAuthenticated ? (
-        <SignIn
-          routing="hash"
-          fallbackRedirectUrl="/connect?controller=1"
-          signUpFallbackRedirectUrl="/connect?controller=1"
-        />
+        <SignInPanel redirect="/connect?controller=1" />
       ) : (
         <>
-          <UserButton />
+          <Account>Signed in to Vectis.</Account>
           {state === "approved" ? (
-            <p role="status">
-              Approved. Return to Vectis and run <code>vectis login finish</code>.
-            </p>
+            <Notice tone="success">
+              Approved. Return to Vectis and run <Code>vectis login finish</Code>.
+            </Notice>
           ) : request ? (
-            <section>
-              <h2>Approve {request.name}</h2>
-              <p>
-                Verification code:{" "}
-                <strong>{request.requestDigest.slice(0, 12).toUpperCase()}</strong>
+            <Card label={`Approve ${request.name}`}>
+              <h2 className="text-xl font-medium">Approve {request.name}</h2>
+              <p className="flex flex-wrap items-baseline gap-3 text-muted">
+                Verification code
+                <span className="font-mono text-lg tracking-widest text-foreground">
+                  {request.requestDigest.slice(0, 12).toUpperCase()}
+                </span>
               </p>
-              <p>
+              <Notice tone="attention">
                 Only approve a login you started yourself, with a matching code. This grants control
                 of your machines for up to 90 days. You can revoke it below at any time.
-              </p>
-              <button disabled={state === "working"} onClick={() => void connect()}>
-                {state === "working" ? "Approving..." : "Approve remote control"}
-              </button>
-            </section>
+              </Notice>
+              <div>
+                <Button disabled={state === "working"} onClick={() => void connect()}>
+                  {state === "working" ? "Approving" : "Approve remote control"}
+                </Button>
+              </div>
+            </Card>
           ) : (
-            <p>
-              Run <code>vectis login</code> from the CLI to begin a new connection.
+            <p className="text-muted">
+              Run <Code>vectis login</Code> from the CLI to begin a new connection.
             </p>
           )}
-          <section>
-            <h2>Connected clients</h2>
+          <Card label="Connected clients">
+            <h2 className="text-xl font-medium">Connected clients</h2>
             {connections === undefined ? (
-              <p role="status">Loading connections...</p>
+              <Pending>Loading connections</Pending>
             ) : connections.length === 0 ? (
-              <p>No remote clients are connected.</p>
+              <p className="text-muted">No remote clients are connected.</p>
             ) : (
-              <ul>
+              <ul className="flex flex-col divide-y divide-hairline">
                 {connections.map((connection) => (
-                  <li key={connection.id}>
-                    {connection.name} / expires{" "}
-                    {new Date(connection.expiresAt).toLocaleDateString()}
-                    <button
+                  <li key={connection.id} className="flex items-center justify-between gap-4 py-3">
+                    <span>
+                      {connection.name}
+                      <span className="block text-[14px] text-muted">
+                        Expires {new Date(connection.expiresAt).toLocaleDateString()}
+                      </span>
+                    </span>
+                    <Button
+                      variant="secondary"
                       disabled={revoking !== ""}
                       onClick={() => {
                         setRevoking(connection.id);
@@ -113,15 +120,19 @@ export function RemoteAccess({ request }: { request: ControllerApproval | null }
                       }}
                     >
                       Revoke access
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
             )}
-          </section>
+          </Card>
         </>
       )}
-      {error && <p role="alert">{error}</p>}
+      {error && (
+        <Notice tone="danger" role="alert">
+          {error}
+        </Notice>
+      )}
     </>
   );
 }

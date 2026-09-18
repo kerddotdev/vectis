@@ -1,0 +1,14 @@
+---
+import Connect from "../connect/Connect.tsx";
+import Base from "../layouts/Base.astro";
+---
+
+<Base
+  title="Connect"
+  description="Approve a Vectis machine, a remote controller, or a GitHub account."
+  noindex
+>
+  <section class="shell max-w-[760px] py-20 md:py-28">
+    <Connect client:only="react" />
+  </section>
+</Base>

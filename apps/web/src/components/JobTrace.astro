@@ -1,0 +1,182 @@
+---
+const steps = [
+  ["push", "kerd/app@main"],
+  ["queued", "runs-on: vectis-macos-26-arm64"],
+  ["running", "fresh macOS 26 VM, 6 CPU, 12 GB"],
+  ["succeeded", "4m 12s"],
+  ["cleaned up", "VM deleted, runner removed"],
+] as const;
+---
+
+<figure class="trace">
+  <svg
+    viewBox="0 0 1152 200"
+    role="img"
+    aria-label="A push to kerd/app is queued for vectis-macos-26-arm64, runs in a fresh macOS 26 virtual machine, succeeds, and the VM and runner registration are removed."
+  >
+    <path class="rail" d="M8 100H860"></path>
+    <path class="hot a" pathLength="1" d="M8 100H300"></path>
+    <path class="hot b" pathLength="1" d="M300 100H560"></path>
+    <path class="hot c" pathLength="1" d="M760 100H860"></path>
+    <path class="hot d" pathLength="1" d="M860 100C900 100 940 90 940 50"></path>
+    <path class="hot d" pathLength="1" d="M860 100C900 100 940 110 940 150"></path>
+    <circle class="node start" cx="8" cy="100" r="5"></circle>
+    <circle class="ring" cx="300" cy="100" r="6"></circle>
+    <rect class="vm" x="560" y="68" width="200" height="64" rx="14"></rect>
+    <path class="node core" d="M660 91l9 9-9 9-9-9Z"></path>
+    <circle class="node end" cx="940" cy="50" r="5"></circle>
+    <circle class="node end" cx="940" cy="150" r="5"></circle>
+    <g class="labels">
+      <text class="strong l1" x="8" y="72">push</text>
+      <text class="l1" x="8" y="136">kerd/app@main</text>
+      <text class="strong l2" x="300" y="72" text-anchor="middle">queued</text>
+      <text class="l2" x="300" y="136" text-anchor="middle">runs-on: vectis-macos-26-arm64</text>
+      <text class="l3" x="660" y="52" text-anchor="middle">fresh VM · 6 CPU · 12 GB</text>
+      <text class="strong l3" x="660" y="160" text-anchor="middle">running · macOS 26</text>
+      <text class="strong l4" x="958" y="55">succeeded · 4m 12s</text>
+      <text class="l4" x="958" y="155">VM deleted · runner removed</text>
+    </g>
+  </svg>
+  <ol class="list">
+    {
+      steps.map(([state, detail]) => (
+        <li>
+          <span>{state}</span>
+          {detail}
+        </li>
+      ))
+    }
+  </ol>
+</figure>
+
+<style>
+  .trace {
+    margin: 0;
+  }
+  svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+  text {
+    font-family: var(--vectis-font-mono);
+    font-size: 13px;
+    fill: var(--vectis-muted);
+  }
+  .strong {
+    fill: var(--vectis-foreground);
+  }
+  .rail {
+    fill: none;
+    stroke: var(--vectis-hairline-strong);
+    stroke-width: 1;
+  }
+  .hot {
+    fill: none;
+    stroke: var(--vectis-brand);
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    animation: draw var(--duration) cubic-bezier(0.45, 0, 0.55, 1) var(--delay) forwards;
+  }
+  .a {
+    --delay: 250ms;
+    --duration: 500ms;
+  }
+  .b {
+    --delay: 750ms;
+    --duration: 450ms;
+  }
+  .c {
+    --delay: 1450ms;
+    --duration: 260ms;
+  }
+  .d {
+    --delay: 1710ms;
+    --duration: 420ms;
+  }
+  .node {
+    fill: var(--vectis-brand);
+  }
+  .ring {
+    fill: var(--vectis-background);
+    stroke: var(--vectis-brand);
+    stroke-width: 1.4;
+  }
+  .vm {
+    fill: var(--vectis-surface);
+    stroke: var(--vectis-brand);
+    stroke-width: 1.4;
+  }
+  .start,
+  .ring,
+  .vm,
+  .core,
+  .end,
+  .labels text {
+    animation: vectis-fade-in 360ms var(--vectis-ease-out) var(--appear, 0ms) backwards;
+  }
+  .start,
+  .l1 {
+    --appear: 100ms;
+  }
+  .ring,
+  .l2 {
+    --appear: 750ms;
+  }
+  .vm,
+  .core,
+  .l3 {
+    --appear: 1200ms;
+  }
+  .end,
+  .l4 {
+    --appear: 2130ms;
+  }
+  .list {
+    display: none;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-family: var(--vectis-font-mono);
+    font-size: 13px;
+    color: var(--vectis-muted);
+    border-left: 1.4px solid var(--vectis-brand);
+  }
+  .list li {
+    padding: 6px 0 6px 16px;
+  }
+  .list span {
+    display: block;
+    color: var(--vectis-foreground);
+  }
+  @keyframes draw {
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .hot {
+      stroke-dashoffset: 0;
+    }
+    .hot,
+    .start,
+    .ring,
+    .vm,
+    .core,
+    .end,
+    .labels text {
+      animation: none;
+    }
+  }
+  @media (max-width: 720px) {
+    svg {
+      display: none;
+    }
+    .list {
+      display: block;
+    }
+  }
+</style>

@@ -1,0 +1,158 @@
+@import "tailwindcss";
+@import "@vectis/design/tailwind.css";
+
+@source "../../../../packages/design/src";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+@theme {
+  --text-display: clamp(2.75rem, 1.6rem + 4.6vw, 5.25rem);
+  --text-display--line-height: 0.98;
+  --text-display--letter-spacing: -0.035em;
+  --text-title: clamp(2rem, 1.4rem + 2.2vw, 3rem);
+  --text-title--line-height: 1.04;
+  --text-title--letter-spacing: -0.028em;
+  --text-lede: clamp(1.0625rem, 1rem + 0.3vw, 1.1875rem);
+  --text-lede--line-height: 1.55;
+}
+
+@layer base {
+  html {
+    background: var(--vectis-background);
+    color: var(--vectis-foreground);
+    font-family: var(--vectis-font-sans);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    scroll-padding-top: 88px;
+  }
+  body {
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    font-size: 1.0625rem;
+    line-height: 1.6;
+  }
+  ::selection {
+    background: var(--vectis-brand-soft);
+  }
+  :focus-visible {
+    outline: 2px solid var(--vectis-brand);
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+  code,
+  kbd,
+  pre {
+    font-family: var(--vectis-font-mono);
+  }
+}
+
+@utility shell {
+  width: 100%;
+  max-width: 1200px;
+  margin-inline: auto;
+  padding-inline: 24px;
+}
+
+@utility eyebrow {
+  font-family: var(--vectis-font-mono);
+  font-size: 0.8125rem;
+  letter-spacing: 0.02em;
+  color: var(--vectis-muted);
+}
+
+@utility enter {
+  animation: vectis-rise-in 520ms var(--vectis-ease-out) backwards;
+}
+
+@layer components {
+  .code {
+    margin: 0;
+    overflow-x: auto;
+    padding: 20px 22px;
+    border-radius: var(--vectis-radius-lg);
+    background: color-mix(in oklch, var(--vectis-foreground) 4%, var(--vectis-surface));
+    box-shadow: inset 0 0 0 1px var(--vectis-hairline);
+    font-size: 13.5px;
+    line-height: 1.75;
+    color: var(--vectis-foreground);
+    tab-size: 2;
+  }
+  .code .p,
+  .code .dim {
+    color: var(--vectis-muted);
+  }
+  .code .k {
+    color: var(--vectis-brand);
+  }
+  .code .ok {
+    color: var(--vectis-success);
+  }
+  .code .del {
+    display: inline-block;
+    width: 100%;
+    color: var(--vectis-danger);
+    background: color-mix(in oklch, var(--vectis-danger) 9%, transparent);
+  }
+  .code .add {
+    display: inline-block;
+    width: 100%;
+    color: var(--vectis-success);
+    background: color-mix(in oklch, var(--vectis-success) 10%, transparent);
+  }
+  .prose-link {
+    color: var(--vectis-brand);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--vectis-brand) 35%, transparent);
+    text-underline-offset: 4px;
+    transition: text-decoration-color 150ms;
+  }
+  .prose-link:hover {
+    text-decoration-color: var(--vectis-brand);
+  }
+  .button {
+    display: inline-flex;
+    height: 44px;
+    align-items: center;
+    gap: 8px;
+    padding-inline: 20px;
+    border-radius: 999px;
+    font-size: 15.5px;
+    font-weight: 500;
+    text-decoration: none;
+    transition:
+      transform 120ms var(--vectis-ease-out),
+      filter 150ms,
+      background 150ms;
+  }
+  .button:active {
+    transform: scale(0.98);
+  }
+  .button-primary {
+    background: var(--vectis-brand-fill);
+    color: var(--vectis-on-brand);
+  }
+  .button-primary:hover {
+    filter: brightness(1.06);
+  }
+  .button-secondary {
+    color: var(--vectis-foreground);
+    box-shadow: inset 0 0 0 1px var(--vectis-hairline-strong);
+  }
+  .button-secondary:hover {
+    background: var(--vectis-hairline);
+  }
+}
+
+@layer components {
+  .code .line {
+    display: block;
+    min-height: 1lh;
+  }
+  :root.js .code[data-reveal]:not(.revealed) .line {
+    opacity: 0;
+  }
+  .code[data-reveal].revealed .line {
+    animation: vectis-rise-in 280ms var(--vectis-ease-out) calc(var(--i) * 110ms) backwards;
+  }
+}
