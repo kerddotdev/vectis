@@ -23,10 +23,11 @@ export const prepare = action({
     });
     const client = new GitHubAppClient(authority.app);
     const access = await repositoryAccess(client, {
-      owner: authority.account.login,
+      owner: authority.binding.repositoryOwner ?? authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
       githubUserId: authority.account.githubId,
+      githubLogin: authority.account.login,
     });
     if (access.installationId !== authority.binding.installationId)
       throw new ConvexError({
@@ -107,10 +108,11 @@ export const release = action({
     });
     const client = new GitHubAppClient(authority.app);
     const access = await repositoryAccess(client, {
-      owner: authority.account.login,
+      owner: authority.binding.repositoryOwner ?? authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
       githubUserId: authority.account.githubId,
+      githubLogin: authority.account.login,
       purpose: "cleanup",
     });
     const expectedName = `vectis-${lease._id}`;

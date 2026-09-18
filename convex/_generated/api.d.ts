@@ -10,6 +10,7 @@
 
 import type * as auth from "../auth.js";
 import type * as credentials from "../credentials.js";
+import type * as githubAccess from "../githubAccess.js";
 import type * as githubAppSetup from "../githubAppSetup.js";
 import type * as githubDeliveries from "../githubDeliveries.js";
 import type * as githubHttp from "../githubHttp.js";
@@ -44,6 +45,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   credentials: typeof credentials;
+  githubAccess: typeof githubAccess;
   githubAppSetup: typeof githubAppSetup;
   githubDeliveries: typeof githubDeliveries;
   githubHttp: typeof githubHttp;

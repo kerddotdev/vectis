@@ -1,6 +1,10 @@
 "use node";
 import { ConvexError } from "convex/values";
-import { GitHubAppClient, GitHubApprovalError } from "../packages/github/src/app-client.js";
+import {
+  GitHubAppClient,
+  GitHubApprovalError,
+  GitHubAdminError,
+} from "../packages/github/src/app-client.js";
 
 export async function repositoryAccess(
   client: GitHubAppClient,
@@ -9,7 +13,7 @@ export async function repositoryAccess(
   try {
     return await client.repositoryToken(input);
   } catch (error) {
-    if (error instanceof GitHubApprovalError)
+    if (error instanceof GitHubApprovalError || error instanceof GitHubAdminError)
       throw new ConvexError({ code: error.code, message: error.message, nextStep: error.nextStep });
     throw error;
   }

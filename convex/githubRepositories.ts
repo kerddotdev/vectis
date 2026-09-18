@@ -12,6 +12,7 @@ export const enable = action({
     accountId: v.id("githubAccounts"),
     machineId: v.id("machines"),
     repositoryName: v.string(),
+    repositoryOwner: v.optional(v.string()),
     environmentId: v.string(),
   },
   handler: async (ctx, args): Promise<Id<"repositoryBindings">> => {
@@ -24,7 +25,8 @@ export const enable = action({
     const { installationId, repositoryId } = await repositoryAccess(
       new GitHubAppClient(verified.app),
       {
-        owner: verified.login,
+        owner: args.repositoryOwner ?? verified.login,
+        githubLogin: verified.login,
         repo: args.repositoryName,
         githubUserId: verified.githubId,
       },
@@ -39,7 +41,12 @@ export const enable = action({
 });
 
 export const connectMachine = action({
-  args: { accountId: v.string(), repositoryName: v.string(), environmentId: v.string() },
+  args: {
+    accountId: v.string(),
+    repositoryName: v.string(),
+    repositoryOwner: v.optional(v.string()),
+    environmentId: v.string(),
+  },
   handler: async (ctx, args): Promise<Id<"repositoryBindings">> => {
     const verified = await ctx.runQuery(internal.repositoryBindings.authorizeMachine, {
       accountId: args.accountId,
@@ -48,7 +55,8 @@ export const connectMachine = action({
     const { installationId, repositoryId } = await repositoryAccess(
       new GitHubAppClient(verified.app),
       {
-        owner: verified.login,
+        owner: args.repositoryOwner ?? verified.login,
+        githubLogin: verified.login,
         repo: args.repositoryName,
         githubUserId: verified.githubId,
       },

@@ -23,7 +23,10 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
           error instanceof ConvexError &&
           Schema.is(
             Schema.Struct({
-              code: Schema.Literal("public_runner_approval_required"),
+              code: Schema.Literals([
+                "public_runner_approval_required",
+                "repository_admin_required",
+              ]),
               message: Schema.String,
               nextStep: Schema.String,
             }),
@@ -93,18 +96,19 @@ export function startCloudRelay(
         cloud.mutation(api.machines.heartbeat, {
           paused: snapshot.machine.paused,
           runnerIdle:
+            snapshot.preparationBusy !== true &&
             snapshot.instances.every((instance) => instance.status === "stopped") &&
-            !snapshot.operations.some(
-              (operation) =>
-                [
-                  "runner.run",
-                  "environment.prepare-linux",
-                  "environment.resume",
-                  "environment.install-macos",
-                  "environment.resume-macos",
-                  "environment.open-macos-setup",
-                ].includes(operation.command) &&
-                ["accepted", "running", "action_required"].includes(operation.status),
+            !snapshot.operations.some((operation) =>
+              operation.command === "runner.run"
+                ? ["accepted", "running", "action_required"].includes(operation.status)
+                : [
+                    "environment.prepare-linux",
+                    "environment.resume",
+                    "environment.install-macos",
+                    "environment.resume-macos",
+                    "environment.open-macos-setup",
+                  ].includes(operation.command) &&
+                  ["accepted", "running"].includes(operation.status),
             ),
           environments: await Promise.all(
             snapshot.environments.slice(0, 100).map(async (environment) => {
@@ -207,7 +211,14 @@ export function startCloudRelay(
       signal.throwIfAborted();
       requireConnection();
       return interruptible(
-        cloud.action(api.githubRepositories.connectMachine, input),
+        cloud.action(api.githubRepositories.connectMachine, {
+          accountId: input.accountId,
+          environmentId: input.environmentId,
+          repositoryName: input.repositoryName,
+          ...(input.repositoryOwner === undefined
+            ? {}
+            : { repositoryOwner: input.repositoryOwner }),
+        }),
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
       );
     },

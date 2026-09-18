@@ -60,6 +60,7 @@ export default defineSchema({
     machineId: v.id("machines"),
     repositoryId: v.number(),
     repositoryName: v.string(),
+    repositoryOwner: v.optional(v.string()),
     installationId: v.number(),
     environmentId: v.string(),
     enabled: v.boolean(),

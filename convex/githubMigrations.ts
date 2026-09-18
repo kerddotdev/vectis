@@ -25,10 +25,11 @@ export const analyze = action({
     const environment = authority.environment;
     const client = new GitHubAppClient(authority.app);
     const access = await repositoryAccess(client, {
-      owner: authority.account.login,
+      owner: authority.binding.repositoryOwner ?? authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
       githubUserId: authority.account.githubId,
+      githubLogin: authority.account.login,
       purpose: "migration-read",
     });
     if (access.installationId !== authority.binding.installationId)
@@ -89,10 +90,11 @@ export const publish = action({
       preparing: true,
     });
     const access = await repositoryAccess(new GitHubAppClient(authority.app), {
-      owner: authority.account.login,
+      owner: authority.binding.repositoryOwner ?? authority.account.login,
       repo: authority.binding.repositoryName,
       repositoryId: authority.binding.repositoryId,
       githubUserId: authority.account.githubId,
+      githubLogin: authority.account.login,
       purpose: "migration-write",
     });
     if (access.installationId !== authority.binding.installationId)
@@ -104,7 +106,7 @@ export const publish = action({
     return publishMigration(
       {
         repositoryId: access.repositoryId,
-        owner: authority.account.login,
+        owner: authority.binding.repositoryOwner ?? authority.account.login,
         repository: authority.binding.repositoryName,
         baseBranch: report.baseBranch,
         baseCommit: report.baseCommit,

@@ -12,6 +12,7 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
   const [accountId, setAccountId] = useState("");
   const [machineId, setMachineId] = useState("");
   const [repositoryName, setRepositoryName] = useState("");
+  const [repositoryOwner, setRepositoryOwner] = useState("");
   const [environmentId, setEnvironmentId] = useState("");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
@@ -34,12 +35,13 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
         accountId: account.id,
         machineId: machine._id,
         repositoryName,
+        ...(repositoryOwner ? { repositoryOwner } : {}),
         environmentId,
       });
       setMessage("Repository connected. Runner readiness must still be verified on your Mac.");
     } catch {
       setMessage(
-        "Connection failed. Check the repository name, App installation and local environment ID. Public repositories must require approval for all external contributors.",
+        "Connection failed. Check the repository owner and name, App installation, repository administrator access and local environment ID. Public repositories must require approval for all external contributors.",
       );
     } finally {
       setWorking(false);
@@ -49,8 +51,9 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
     <section aria-labelledby="repositories-title">
       <h2 id="repositories-title">Repository connections</h2>
       <p>
-        Choose which prepared environment can serve a repository owned by your connected personal
-        account. Public repositories must require GitHub approval for all external contributors.
+        Choose which prepared environment can serve a personal or organization repository.
+        Organization access requires a verified repository administrator. Public repositories must
+        require GitHub approval for all external contributors.
       </p>
       <form onSubmit={(event) => void submit(event)}>
         <fieldset disabled={working}>
@@ -68,6 +71,15 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
                 </option>
               ))}
             </select>
+          </label>
+          <label>
+            Repository owner (optional organization)
+            <input
+              value={repositoryOwner}
+              pattern="[A-Za-z0-9-]+"
+              onChange={(event) => setRepositoryOwner(event.target.value)}
+              placeholder="Selected GitHub account"
+            />
           </label>
           <label>
             Repository name
@@ -133,8 +145,13 @@ export function RepositoryConnections({ accounts }: { accounts: Accounts }) {
       {bindings?.map((binding) => (
         <div key={binding._id} className="repository">
           <p>
-            <strong>{binding.repositoryName}</strong> / {binding.environmentId} /{" "}
-            {binding.enabled ? "Connected" : "Disabled"}
+            <strong>
+              {binding.repositoryOwner ??
+                accounts.find((account) => account.id === binding.accountId)?.login ??
+                "Unknown account"}
+              /{binding.repositoryName}
+            </strong>{" "}
+            / {binding.environmentId} / {binding.enabled ? "Connected" : "Disabled"}
           </p>
           {binding.enabled && (
             <button

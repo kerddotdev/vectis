@@ -9,6 +9,7 @@ export function ConnectRepository() {
   const [accountId, setAccountId] = useState("");
   const [environmentId, setEnvironmentId] = useState("");
   const [repositoryName, setRepositoryName] = useState("");
+  const [repositoryOwner, setRepositoryOwner] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
   async function load() {
@@ -33,6 +34,7 @@ export function ConnectRepository() {
         type: "repository.connect",
         accountId,
         repositoryName,
+        ...(repositoryOwner ? { repositoryOwner } : {}),
         environmentId,
       });
       if (result !== undefined)
@@ -70,6 +72,15 @@ export function ConnectRepository() {
                 </option>
               ))}
             </select>
+          </label>
+          <label>
+            Repository owner (optional organization)
+            <input
+              value={repositoryOwner}
+              pattern="[A-Za-z0-9-]+"
+              onChange={(event) => setRepositoryOwner(event.target.value)}
+              placeholder="Selected GitHub account"
+            />
           </label>
           <label>
             Repository name
