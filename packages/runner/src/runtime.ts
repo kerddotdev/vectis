@@ -1,9 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
-import { access, copyFile, cp, mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, cp, mkdir, rm, stat, writeFile, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { cpus, freemem } from "node:os";
-import { once } from "node:events";
+import { Schema } from "effect";
+import { cpus } from "node:os";
+import { fileURLToPath } from "node:url";
+import { waitForQemu } from "./qmp.js";
+import { availableHostMemory } from "./memory.js";
+import { runProcess } from "./process.js";
 import { waitForAppleVm } from "./apple.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
 
@@ -17,6 +21,7 @@ export interface OwnedInstance {
   readonly id: string;
   readonly process: ChildProcess;
   readonly directory: string;
+  readonly settled: Promise<void>;
 }
 export class VmRuntime {
   private readonly owned = new Map<string, OwnedInstance>();
@@ -38,11 +43,15 @@ export class VmRuntime {
         "Provide an existing raw Linux disk, qcow2 Windows disk, or installed macOS bundle.",
       );
   }
-  async start(id: string, environment: Environment, onExit: () => void): Promise<OwnedInstance> {
+  async start(
+    id: string,
+    environment: Environment,
+    onExit: (cleaned: boolean) => void,
+  ): Promise<OwnedInstance> {
     await this.validate(environment);
     if (process.platform !== "darwin" || process.arch !== "arm64")
       throw new VectisError("unsupported_host", "This release requires an Apple Silicon Mac.");
-    if (environment.memoryMiB * 1024 * 1024 > freemem())
+    if (environment.memoryMiB * 1024 * 1024 > (await availableHostMemory()))
       throw new VectisError(
         "insufficient_memory",
         "Not enough free host memory for this instance.",
@@ -114,6 +123,8 @@ export class VmRuntime {
           "-monitor",
           "none",
           "-serial",
+          "null",
+          "-qmp",
           "stdio",
         ];
       } else {
@@ -131,6 +142,7 @@ export class VmRuntime {
           String(environment.cpu),
           String(environment.memoryMiB),
           join(directory, "efi.bin"),
+          ...(environment.seedPath ? [resolve(environment.seedPath)] : []),
         ];
       }
       await writeFile(
@@ -138,32 +150,86 @@ export class VmRuntime {
         JSON.stringify({ instanceId: id, servicePid: process.pid, environmentId: environment.id }),
         { mode: 0o600 },
       );
-      const child = spawn(executable, args, {
-        stdio: ["pipe", "pipe", "ignore"],
-        detached: false,
-      });
-      try {
-        if (environment.os === "windows") await once(child, "spawn");
-        else await waitForAppleVm(child);
-      } catch (error) {
-        if (child.pid && child.exitCode === null && child.signalCode === null) {
-          const exited = once(child, "exit");
-          child.kill("SIGKILL");
-          await exited;
+      const supervised = environment.os === "windows";
+      const supervisor = fileURLToPath(
+        new URL(
+          import.meta.url.endsWith(".ts") ? "./supervisor.ts" : "./supervisor.js",
+          import.meta.url,
+        ),
+      );
+      const child = spawn(
+        supervised ? process.execPath : executable,
+        supervised ? [supervisor, executable, ...args] : args,
+        {
+          stdio: ["pipe", "pipe", "ignore"],
+          detached: false,
+          env: {
+            ...process.env,
+            VECTIS_EXIT_RECEIPT: join(directory, "exit-receipt.json"),
+            VECTIS_INSTANCE_ID: id,
+          },
+        },
+      );
+      child.stdin?.on("error", () => {});
+      const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+      const settled = closed.then(async () => {
+        let cleaned = false;
+        try {
+          await rm(directory, { recursive: true, force: true });
+          cleaned = true;
+        } finally {
+          this.owned.delete(id);
+          onExit(cleaned);
         }
+      });
+      void settled.catch(() => {});
+      const instance = { id, process: child, directory, settled };
+      this.owned.set(id, instance);
+      try {
+        if (environment.os === "windows") await waitForQemu(child);
+        else await waitForAppleVm(child);
+        if (child.exitCode !== null || child.signalCode !== null)
+          throw new VectisError("vm_start_failed", "The VM stopped during startup.");
+      } catch (error) {
+        if (this.owned.has(id)) await this.stop(id);
+        else await settled;
         throw error;
       }
       child.stdout?.resume();
-      const instance = { id, process: child, directory };
-      this.owned.set(id, instance);
-      child.once("exit", () => {
-        this.owned.delete(id);
-        onExit();
-      });
       return instance;
     } catch (error) {
       await rm(directory, { recursive: true, force: true });
       throw error;
+    }
+  }
+  async hasWorkDirectory(id: string) {
+    return stat(join(this.options.home, "instances", id)).then(
+      () => true,
+      (error: unknown) => {
+        if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+        throw error;
+      },
+    );
+  }
+  async reconcile(id: string): Promise<boolean> {
+    if (this.owned.has(id)) return false;
+    if (!(await this.hasWorkDirectory(id))) return true;
+    const directory = join(this.options.home, "instances", id);
+    try {
+      const receipt = Schema.decodeUnknownSync(
+        Schema.Struct({ instanceId: Schema.String, pid: Schema.Int }),
+      )(JSON.parse(await readFile(join(directory, "exit-receipt.json"), "utf8")));
+      if (receipt.instanceId !== id || receipt.pid <= 0) return false;
+      try {
+        process.kill(receipt.pid, 0);
+        return false;
+      } catch (error) {
+        if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) return false;
+      }
+      await rm(directory, { recursive: true, force: true });
+      return true;
+    } catch {
+      return false;
     }
   }
   async stop(id: string) {
@@ -174,41 +240,19 @@ export class VmRuntime {
         "This service does not own a running instance with that ID.",
         "Inspect interrupted instances; Vectis never kills an unverified PID.",
       );
-    const exited = once(instance.process, "exit");
-    instance.process.kill("SIGTERM");
-    const timer = setTimeout(() => instance.process.kill("SIGKILL"), 5000);
+    if (instance.process.exitCode === null && instance.process.signalCode === null)
+      instance.process.kill("SIGTERM");
+    const timer = setTimeout(() => {
+      if (instance.process.exitCode === null && instance.process.signalCode === null)
+        instance.process.kill("SIGKILL");
+    }, 5000);
     try {
-      await exited;
+      await instance.settled;
     } finally {
       clearTimeout(timer);
     }
-    await rm(instance.directory, { recursive: true, force: true });
   }
   async close() {
     await Promise.all([...this.owned.keys()].map((id) => this.stop(id)));
   }
-}
-export async function runProcess(
-  executable: string,
-  args: readonly string[],
-  signal?: AbortSignal,
-): Promise<string> {
-  const child = spawn(executable, [...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    ...(signal ? { signal } : {}),
-  });
-  let output = "";
-  child.stdout.setEncoding("utf8");
-  child.stdout.on("data", (chunk: string) => {
-    output = (output + chunk).slice(-65536);
-  });
-  child.stderr.resume();
-  const [code] = await once(child, "exit");
-  if (code !== 0)
-    throw new VectisError(
-      "process_failed",
-      "An external command failed.",
-      "Inspect the environment and runtime configuration.",
-    );
-  return output;
 }

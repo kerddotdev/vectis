@@ -125,6 +125,7 @@ export async function startService(
   server.requestTimeout = 15000;
   server.headersTimeout = 10000;
   try {
+    await service.initialize();
     await new Promise<void>((resolve, reject) => {
       server.once("error", reject);
       server.listen(options.port ?? 0, "127.0.0.1", () => {

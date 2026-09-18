@@ -5,6 +5,12 @@ struct HelperError: Error { let message: String }
 
 @MainActor
 func emit(_ event: String, message: String? = nil) {
+    if (event == "vm.stopped" || event == "vm.error"),
+       let path = ProcessInfo.processInfo.environment["VECTIS_EXIT_RECEIPT"],
+       let id = ProcessInfo.processInfo.environment["VECTIS_INSTANCE_ID"],
+       let receipt = try? JSONSerialization.data(withJSONObject: ["instanceId": id, "pid": getpid()]) {
+        try? receipt.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
     var body = ["event": event]
     if let message { body["message"] = message }
     if let data = try? JSONSerialization.data(withJSONObject: body) {
@@ -20,10 +26,10 @@ final class Controller: NSObject, VZVirtualMachineDelegate {
     var stopping = false
 
     func start(arguments: [String]) async throws {
-        guard arguments.count == 7, arguments[1] == "run",
+        guard (7...8).contains(arguments.count), arguments[1] == "run",
               let cpu = Int(arguments[4]), let memory = UInt64(arguments[5]),
               cpu > 0, memory >= 512, memory <= UInt64.max / 1048576 else {
-            throw HelperError(message: "Usage: vectis-vm run linux|macos image cpu memoryMiB efiPath")
+            throw HelperError(message: "Usage: vectis-vm run linux|macos image cpu memoryMiB efiPath [seedPath]")
         }
         let os = arguments[2]
         let image = URL(fileURLWithPath: arguments[3])
@@ -63,6 +69,11 @@ final class Controller: NSObject, VZVirtualMachineDelegate {
         }
         let attachment = try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false)
         configuration.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: attachment)]
+        if arguments.count == 8 {
+            guard os == "linux" else { throw HelperError(message: "A setup seed is supported only for Linux.") }
+            let seed = try VZDiskImageStorageDeviceAttachment(url: URL(fileURLWithPath: arguments[7]), readOnly: true)
+            configuration.storageDevices.append(VZVirtioBlockDeviceConfiguration(attachment: seed))
+        }
         let network = VZVirtioNetworkDeviceConfiguration()
         network.macAddress = VZMACAddress.randomLocallyAdministered()
         network.attachment = VZNATNetworkDeviceAttachment()

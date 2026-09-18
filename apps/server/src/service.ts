@@ -20,6 +20,12 @@ export class Service {
   ) {
     store.recover();
   }
+  async initialize() {
+    for (const instance of this.store.snapshot().instances) {
+      if (instance.status === "interrupted" && (await this.runtime.reconcile(instance.id)))
+        this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
+    }
+  }
   submit(key: string, command: Command): Operation {
     if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
     if (key.length > 200) throw new VectisError("invalid_request", "The request key is too long.");
@@ -98,25 +104,48 @@ export class Service {
           )
             throw new VectisError("macos_limit", "The two-instance macOS limit has been reached.");
           const id = randomUUID();
-          const instance = await this.runtime.start(id, environment, () => {
-            const current = this.store.get("instance", id);
-            if (current)
-              this.store.put("instance", id, {
-                id,
-                environmentId: environment.id,
-                status: "stopped",
-                pid: 0,
-                createdAt: operation.createdAt,
-              });
-          });
-          this.store.put("instance", id, {
+          const record = {
             id,
             environmentId: environment.id,
-            status: "running",
-            pid: instance.process.pid ?? 0,
-            createdAt: new Date().toISOString(),
-          });
+            status: "interrupted" as const,
+            pid: 0,
+            createdAt: operation.createdAt,
+          };
+          this.store.put("instance", id, record);
+          try {
+            const instance = await this.runtime.start(id, environment, (cleaned) => {
+              this.store.put("instance", id, {
+                ...record,
+                status: cleaned ? "stopped" : "interrupted",
+                pid: 0,
+              });
+            });
+            this.store.put("instance", id, {
+              ...record,
+              status: "running",
+              pid: instance.process.pid ?? 0,
+            });
+          } catch (error) {
+            const remaining = await this.runtime.hasWorkDirectory(id);
+            this.store.put("instance", id, {
+              ...record,
+              status: remaining ? "interrupted" : "stopped",
+            });
+            throw error;
+          }
           result = { instanceId: id };
+          break;
+        }
+        case "instance.reconcile": {
+          const instance = snapshot.instances.find((item) => item.id === command.id);
+          if (!instance) throw new VectisError("instance_missing", "Instance not found.");
+          if (instance.status !== "interrupted" || !(await this.runtime.reconcile(command.id)))
+            throw new VectisError(
+              "reconciliation_required",
+              "Process exit is not yet verified.",
+              "Inspect the instance and retry reconciliation after the runtime has exited.",
+            );
+          this.store.put("instance", command.id, { ...instance, status: "stopped", pid: 0 });
           break;
         }
         case "instance.stop":

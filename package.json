@@ -10,7 +10,8 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint --deny-warnings apps packages scripts",
-    "vectis": "node dist/apps/cli/src/main.js"
+    "vectis": "node dist/apps/cli/src/main.js",
+    "proof:linux": "node dist/scripts/prove-linux.js"
   },
   "dependencies": {
     "convex": "1.45.0",
