@@ -1,0 +1,13 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+>
+  <!-- Filled details only -->
+  <g id="fills" fill="currentColor">
+    <!-- Isolated compute core -->
+    <path d="M12 10.55L13.45 12L12 13.45L10.55 12L12 10.55Z" />
+  </g>
+</svg>

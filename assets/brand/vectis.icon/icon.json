@@ -1,0 +1,112 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "display-p3:0.79376,0.93581,0.93484,1.00000",
+      "display-p3:0.73334,0.66905,0.91082,1.00000"
+    ]
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "blend-mode-specializations": [
+            {
+              "value": "normal"
+            },
+            {
+              "appearance": "tinted",
+              "value": "normal"
+            }
+          ],
+          "fill-specializations": [
+            {
+              "value": {
+                "linear-gradient": [
+                  "display-p3:0.98411,0.96550,0.96511,0.00000",
+                  "display-p3:0.99608,0.99608,0.99608,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "linear-gradient": [
+                  "display-p3:0.79376,0.93581,0.93484,1.00000",
+                  "display-p3:0.73334,0.66905,0.91082,0.69000"
+                ]
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "linear-gradient": [
+                  "display-p3:0.98352,0.96219,0.96487,0.27154",
+                  "display-p3:0.98411,0.96550,0.96511,0.00000"
+                ]
+              }
+            }
+          ],
+          "glass": true,
+          "hidden": false,
+          "image-name": "vectis-vm.svg",
+          "name": "vectis-vm",
+          "position": {
+            "scale": 52,
+            "translation-in-points": [0, 0]
+          }
+        },
+        {
+          "blend-mode": "normal",
+          "fill-specializations": [
+            {
+              "value": {
+                "linear-gradient": [
+                  "display-p3:0.98411,0.96550,0.96511,0.15189",
+                  "display-p3:0.98637,0.97194,0.96930,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "linear-gradient": [
+                  "display-p3:0.79376,0.93581,0.93484,1.00000",
+                  "display-p3:0.73334,0.66905,0.91082,1.00000"
+                ]
+              }
+            },
+            {
+              "appearance": "tinted",
+              "value": {
+                "linear-gradient": [
+                  "display-p3:0.99582,0.99466,0.99329,0.67023",
+                  "display-p3:0.99608,0.99608,0.99608,1.00000"
+                ]
+              }
+            }
+          ],
+          "glass": true,
+          "hidden": false,
+          "image-name": "vectis.svg",
+          "name": "vectis",
+          "position": {
+            "scale": 38,
+            "translation-in-points": [0, 0]
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "circles": ["watchOS"],
+    "squares": "shared"
+  }
+}
