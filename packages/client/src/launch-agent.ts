@@ -97,7 +97,10 @@ export class LaunchAgent {
     };
   }
 
-  async install(environment: NodeJS.ProcessEnv = process.env) {
+  async install(environment: NodeJS.ProcessEnv = process.env, nodeExecutable = process.execPath) {
+    if (!isAbsolute(nodeExecutable))
+      throw new VectisError("invalid_runtime_path", "Node must use an absolute executable path.");
+    await access(nodeExecutable, constants.X_OK);
     if (await this.installed()) return this.start();
     const existing = await localClient(this.home)
       .then((api) => api.status())
@@ -127,7 +130,7 @@ export class LaunchAgent {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>Label</key><string>${this.label}</string>
-<key>ProgramArguments</key><array><string>${escapeXml(process.execPath)}</string><string>${escapeXml(entry)}</string></array>
+<key>ProgramArguments</key><array><string>${escapeXml(nodeExecutable)}</string><string>${escapeXml(entry)}</string></array>
 <key>EnvironmentVariables</key><dict>${Object.entries(variables)
       .map(([key, value]) => `<key>${key}</key><string>${escapeXml(value)}</string>`)
       .join("")}</dict>

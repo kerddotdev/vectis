@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Virtualization
 
 struct HelperError: Error { let message: String }
@@ -20,7 +21,8 @@ func emit(_ event: String, message: String? = nil) {
 }
 
 @MainActor
-final class Controller: NSObject, VZVirtualMachineDelegate {
+final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
+    var window: NSWindow?
     var machine: VZVirtualMachine?
     var signals: [DispatchSourceSignal] = []
     var stopping = false
@@ -63,13 +65,15 @@ final class Controller: NSObject, VZVirtualMachineDelegate {
             let graphics = VZMacGraphicsDeviceConfiguration()
             graphics.displays = [VZMacGraphicsDisplayConfiguration(widthInPixels: 1280, heightInPixels: 800, pixelsPerInch: 80)]
             configuration.graphicsDevices = [graphics]
+            configuration.keyboards = [VZUSBKeyboardConfiguration()]
+            configuration.pointingDevices = [VZUSBScreenCoordinatePointingDeviceConfiguration()]
             disk = image.appendingPathComponent("disk.img")
         } else {
             throw HelperError(message: "Only linux and macos guests use the Apple helper.")
         }
         let attachment = try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false)
         configuration.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: attachment)]
-        if arguments.count == 8 {
+        if arguments.count == 8 && arguments[7] != "--console" {
             guard os == "linux" else { throw HelperError(message: "A setup seed is supported only for Linux.") }
             let seed = try VZDiskImageStorageDeviceAttachment(url: URL(fileURLWithPath: arguments[7]), readOnly: true)
             configuration.storageDevices.append(VZVirtioBlockDeviceConfiguration(attachment: seed))
@@ -96,7 +100,25 @@ final class Controller: NSObject, VZVirtualMachineDelegate {
             }
         }
         try await vm.start()
+        if arguments.last == "--console" {
+            guard os == "macos" else { throw HelperError(message: "The graphical console requires macOS.") }
+            let view = VZVirtualMachineView()
+            view.virtualMachine = vm
+            view.capturesSystemKeys = true
+            let console = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 800), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
+            console.title = "Vectis macOS setup"
+            console.contentView = view
+            console.delegate = self
+            console.center()
+            console.makeKeyAndOrderFront(nil)
+            window = console
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
         emit("vm.running")
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        Task { @MainActor in await self.stop() }
     }
 
     func stop() async {
@@ -126,12 +148,20 @@ final class Controller: NSObject, VZVirtualMachineDelegate {
     }
 }
 
+let showConsole = CommandLine.arguments.last == "--console"
+if showConsole { NSApplication.shared.setActivationPolicy(.regular) }
 let controller = Controller()
 Task { @MainActor in
-    do { try await controller.start(arguments: CommandLine.arguments) }
+    do {
+        if CommandLine.arguments.dropFirst().first == "install-macos" {
+            try await installMac(arguments: CommandLine.arguments)
+            exit(0)
+        }
+        try await controller.start(arguments: CommandLine.arguments)
+    }
     catch {
         emit("vm.error", message: (error as? HelperError)?.message ?? error.localizedDescription)
         exit(1)
     }
 }
-dispatchMain()
+if showConsole { NSApplication.shared.run() } else { dispatchMain() }
