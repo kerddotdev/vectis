@@ -36,14 +36,20 @@ const toggleScript = `document.addEventListener("click", (event) => {
     </nav>
     <div class="controls">
       <slot />
-      <a class="icon" href={site.repository} aria-label="Vectis on GitHub">
+      <a class="icon" href={site.repository} aria-label="Vectis on GitHub" data-tooltip="GitHub">
         <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
           <path
             d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.52-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.42-2.7 5.39-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"
           ></path>
         </svg>
       </a>
-      <button class="icon" type="button" data-vectis-theme-toggle aria-label="Switch color theme">
+      <button
+        class="icon"
+        type="button"
+        data-vectis-theme-toggle
+        aria-label="Switch color theme"
+        data-tooltip="Switch theme"
+      >
         <svg class="sun" width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="12" cy="12" r="4"></circle>
           <path
@@ -83,11 +89,17 @@ const toggleScript = `document.addEventListener("click", (event) => {
     top: 0;
     z-index: 40;
     height: 64px;
-    background: color-mix(in oklch, var(--vectis-background) 86%, transparent);
-    backdrop-filter: blur(18px) saturate(140%);
     border-bottom: 1px solid var(--vectis-hairline);
     font-family: var(--vectis-font-sans);
     color: var(--vectis-foreground);
+  }
+  .site-header::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: color-mix(in oklch, var(--vectis-background) 86%, transparent);
+    backdrop-filter: blur(18px) saturate(140%);
   }
   .inner {
     display: flex;
@@ -145,6 +157,34 @@ const toggleScript = `document.addEventListener("click", (event) => {
     transition:
       color 120ms,
       background 120ms;
+  }
+  .icon {
+    position: relative;
+  }
+  .icon[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    padding: 5px 10px;
+    border-radius: 8px;
+    background: var(--vectis-foreground);
+    color: var(--vectis-background);
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.3;
+    white-space: nowrap;
+    pointer-events: none;
+    opacity: 0;
+    transform: translate(-50%, -2px) scale(0.96);
+    transition:
+      opacity 120ms var(--vectis-ease-out, ease-out),
+      transform 120ms var(--vectis-ease-out, ease-out);
+  }
+  .icon[data-tooltip]:is(:hover, :focus-visible)::after {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+    transition-delay: 400ms;
   }
   .icon:hover,
   .menu summary:hover {
@@ -205,8 +245,8 @@ const toggleScript = `document.addEventListener("click", (event) => {
     min-width: 200px;
     padding: 6px;
     border-radius: 16px;
-    background: var(--vectis-glass);
-    backdrop-filter: blur(24px) saturate(160%);
+    background: color-mix(in oklch, var(--vectis-raised) 88%, transparent);
+    backdrop-filter: blur(28px) saturate(170%);
     box-shadow:
       inset 0 0 0 1px var(--vectis-hairline-strong),
       var(--vectis-shadow-lg);

@@ -1,8 +1,8 @@
 // Repository and download links are placeholders until the public release exists.
 export const site = {
   url: "https://vectis.kerd.dev",
-  repository: "https://github.com/kerddev/vectis",
-  download: "https://github.com/kerddev/vectis/releases/latest",
+  repository: "https://github.com/kerddotdev/vectis",
+  download: "https://github.com/kerddotdev/vectis/releases/latest",
   navigation: [
     { href: "/features", label: "Features" },
     { href: "/security", label: "Security" },

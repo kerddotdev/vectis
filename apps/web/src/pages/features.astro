@@ -64,11 +64,14 @@ const migration = `<span class="p">$</span> vectis migration analyze bind_app <s
 
   <div class="shell grid grid-cols-1 gap-12 pb-24 lg:grid-cols-[11rem_1fr] lg:gap-16">
     <nav aria-label="On this page" class="hidden lg:block">
-      <ol class="sticky top-28 flex flex-col gap-3 text-[14.5px]">
+      <ol class="sticky top-28 flex flex-col border-l border-hairline text-[14.5px]" data-toc>
         {
           sections.map(([id, label]) => (
             <li>
-              <a class="text-muted transition-colors hover:text-foreground" href={`#${id}`}>
+              <a
+                class="-ml-px block border-l-2 border-transparent py-1.5 pl-4 text-muted transition-colors duration-200 hover:text-foreground aria-[current=true]:border-brand aria-[current=true]:text-foreground"
+                href={`#${id}`}
+              >
                 {label}
               </a>
             </li>
@@ -202,3 +205,25 @@ const migration = `<span class="p">$</span> vectis migration analyze bind_app <s
     </div>
   </div>
 </Base>
+
+<script is:inline>
+  (() => {
+    const links = [...document.querySelectorAll("[data-toc] a")];
+    const sections = links.map((link) => document.querySelector(link.hash));
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const line = innerHeight * 0.35;
+      let active = 0;
+      sections.forEach((section, index) => {
+        if (section && section.getBoundingClientRect().top <= line) active = index;
+      });
+      if (innerHeight + scrollY >= document.documentElement.scrollHeight - 4)
+        active = sections.length - 1;
+      links.forEach((link, index) => link.setAttribute("aria-current", String(index === active)));
+    };
+    addEventListener("scroll", () => (frame ||= requestAnimationFrame(update)), { passive: true });
+    addEventListener("resize", update);
+    update();
+  })();
+</script>
