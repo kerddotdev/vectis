@@ -28,6 +28,15 @@ pnpm package:cli --output /absolute/path/to/new-package --helpers /absolute/path
 
 Staging copies the ARM64 binaries and non-system libraries, rewrites library references within the bundle, and records source hashes. It does not modify the original installations. This development bundle still requires complete corresponding sources and third-party license materials before redistribution; `BUILD.json` records that limitation.
 
+Collect the pinned sources and verify them against the runtime you intend to package:
+
+```sh
+pnpm package:runtime-sources --runtime /absolute/path/to/windows-runtime --output /absolute/path/to/source-materials
+pnpm package:verify-runtime-sources --runtime /absolute/path/to/windows-runtime --sources /absolute/path/to/source-materials
+```
+
+Verification checks component versions, source and upstream patch coverage against the runtime's bundled SPDX records, archive checksums and sizes, notice and recipe files, and the custom QEMU patch. Missing or mismatched materials fail verification. The DMG packager performs the same verification on its staged copies before creating the image. This checks technical completeness and integrity; it does not grant a license or certify legal compliance.
+
 `package:verify` runs isolated service start, pause, stop, restart, resume, MCP stdio, and cleanup checks using the packaged runtime with no Node on PATH. It preserves failed-test state if service shutdown cannot be verified. Run it after moving the package outside the checkout to check relocation too.
 
 ## Use
