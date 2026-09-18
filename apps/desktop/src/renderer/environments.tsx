@@ -1,3 +1,4 @@
+import { PrepareLinux } from "./prepare-linux.js";
 import { useState, type FormEvent } from "react";
 import { Schema } from "effect";
 import { Environment } from "../../../../packages/protocol/src/index.js";
@@ -32,6 +33,7 @@ export function Environments() {
   return (
     <>
       <h1>Environments</h1>
+      <PrepareLinux />
       <p>Prepared guest images are the clean starting point for each virtual machine.</p>
       {snapshot?.environments.map((environment) => (
         <EnvironmentRow key={environment.id} environment={environment} />

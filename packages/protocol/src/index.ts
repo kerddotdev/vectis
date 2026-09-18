@@ -5,6 +5,30 @@ export const Identifier = Schema.String.check(
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$/),
 );
 export const GuestOS = Schema.Literals(["linux", "macos", "windows"]);
+export const LinuxPreparation = Schema.Struct({
+  id: Identifier,
+  name: Schema.NonEmptyString,
+  imageDirectory: Schema.NonEmptyString,
+  storagePath: Schema.NonEmptyString,
+  cpu: Schema.Int,
+  memoryMiB: Schema.Int,
+  diskGiB: Schema.Int,
+});
+export type LinuxPreparation = typeof LinuxPreparation.Type;
+export const Preparation = Schema.Struct({
+  id: Identifier,
+  configuration: LinuxPreparation,
+  phase: Schema.Literals([
+    "downloading",
+    "extracting",
+    "converting",
+    "provisioning",
+    "booting",
+    "prepared",
+    "interrupted",
+  ]),
+});
+export type Preparation = typeof Preparation.Type;
 export const Environment = Schema.Struct({
   id: Identifier,
   name: Schema.NonEmptyString,
@@ -83,6 +107,8 @@ export const RepositoryConnection = Schema.Struct({
 });
 export type RepositoryConnection = typeof RepositoryConnection.Type;
 export const Command = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("environment.prepare-linux"), ...LinuxPreparation.fields }),
+  Schema.Struct({ type: Schema.Literal("environment.resume"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("migration.analyze"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("migration.publish"), previewId: Identifier }),
   Schema.Struct({ type: Schema.Literal("job.scan"), bindingId: Identifier }),
@@ -146,6 +172,16 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "environment.prepare-linux",
+    description:
+      "Download and verify Ubuntu 24.04 ARM64, prepare guest SSH and Docker, and register the environment. Requires an idle Apple Silicon host, Apple helper and qemu-img.",
+  },
+  {
+    name: "environment.resume",
+    description:
+      "Resume an interrupted owned image preparation after verifying its prior guest stopped.",
+  },
   {
     name: "migration.analyze",
     description:

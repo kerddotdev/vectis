@@ -1,3 +1,6 @@
+import { preparationDirectory } from "../../../packages/runner/src/linux-preparation.js";
+import { startPreparation } from "./preparation-task.js";
+import { preparationStopped } from "../../../packages/runner/src/preparation-process.js";
 import type {
   MigrationAnalysis,
   MigrationPublication,
@@ -17,6 +20,7 @@ import { Schema } from "effect";
 import {
   Command,
   Environment,
+  Preparation,
   VectisError,
   type Operation,
 } from "../../../packages/protocol/src/index.js";
@@ -27,6 +31,7 @@ import { Store } from "./store.js";
 export class Service {
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
+  private preparing: string | undefined;
   private tasks = new Map<string, { abort: AbortController; done: Promise<void> }>();
   constructor(
     readonly store: Store,
@@ -46,6 +51,14 @@ export class Service {
     store.recover();
   }
   async initialize() {
+    for (const value of this.store.list("preparation")) {
+      const preparation = Schema.decodeUnknownSync(Preparation)(value);
+      if (
+        preparation.phase === "booting" &&
+        (await preparationStopped(preparationDirectory(preparation), preparation.id))
+      )
+        this.store.put("preparation", preparation.id, { ...preparation, phase: "interrupted" });
+    }
     for (const instance of this.store.snapshot().instances) {
       if (
         instance.status === "interrupted" &&
@@ -69,7 +82,34 @@ export class Service {
     try {
       let result: unknown;
       const snapshot = this.store.snapshot();
+      if (
+        this.preparing &&
+        [
+          "environment.register",
+          "environment.configure",
+          "environment.remove",
+          "environment.start",
+        ].includes(command.type)
+      )
+        throw new VectisError(
+          "preparation_active",
+          "Finish or cancel the active image preparation before changing environments or starting VMs.",
+        );
       switch (command.type) {
+        case "environment.prepare-linux":
+        case "environment.resume": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          if (this.preparing)
+            throw new VectisError("preparation_busy", "An image preparation is already active.");
+          const active = await startPreparation(this.store, this.runtime, operation, command);
+          this.preparing = active.setupId;
+          const done = active.done.finally(() => {
+            this.preparing = undefined;
+            this.tasks.delete(operation.id);
+          });
+          this.tasks.set(operation.id, { abort: active.abort, done });
+          return;
+        }
         case "migration.analyze":
         case "migration.publish": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
@@ -445,6 +485,15 @@ export class Service {
           this.store.remove("environment", command.id);
           break;
         case "environment.start": {
+          if (
+            this.store
+              .list("preparation")
+              .some((value) => Schema.decodeUnknownSync(Preparation)(value).phase === "booting")
+          )
+            throw new VectisError(
+              "reconciliation_required",
+              "A preparation guest needs exit verification before VM admission.",
+            );
           if (snapshot.machine.paused)
             throw new VectisError("machine_paused", "The machine is paused.", "Run vectis resume.");
           if (snapshot.instances.some((instance) => instance.status === "interrupted"))

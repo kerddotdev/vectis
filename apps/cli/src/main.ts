@@ -37,6 +37,9 @@ async function main() {
       cpu: { type: "string" },
       "job-id": { type: "string" },
       account: { type: "string" },
+      name: { type: "string" },
+      "disk-gib": { type: "string" },
+      "image-directory": { type: "string" },
       environment: { type: "string" },
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
@@ -77,6 +80,8 @@ Usage: vectis <command> [options]
   capabilities                  Discover supported commands and schemas
   doctor                        Inspect host and runtime prerequisites
   pause | resume                Control new instance admission
+  environment prepare-linux <id>  Prepare Ubuntu with --image-directory and --storage-path
+  environment resume <setup-id>   Continue an interrupted image preparation
   environment register --file   Register a prepared environment JSON file
   environment configure <id>    Set --cpu, --memory-mib or --storage-path for future VMs
   environment start <id>        Start a VM; optionally override --cpu, --memory-mib, --storage-path
@@ -93,6 +98,9 @@ Usage: vectis <command> [options]
 Options:
   --home <directory>             Isolated Vectis state directory
   --json                        Machine-readable JSON output
+  --name <text>                Prepared environment display name (default: Ubuntu 24.04 ARM64)
+  --image-directory <path>      Existing directory for prepared base images
+  --disk-gib <GiB>              Prepared Linux virtual capacity (default: 32)
   --job-id <number>             Require a matching queued GitHub job before runner admission
   --key <id>                    Idempotency key for a mutation
   --wait                        Wait for command completion
@@ -342,6 +350,19 @@ GitHub pairing require separately configured development services.
       repositoryName: id,
       environmentId: values.environment,
     });
+  else if (command === "environment" && subcommand === "prepare-linux" && id)
+    request = decodeCommand({
+      type: "environment.prepare-linux",
+      id,
+      name: values.name ?? "Ubuntu 24.04 ARM64",
+      imageDirectory: values["image-directory"],
+      storagePath: values["storage-path"],
+      cpu: Number(values.cpu ?? 2),
+      memoryMiB: Number(values["memory-mib"] ?? 4096),
+      diskGiB: Number(values["disk-gib"] ?? 32),
+    });
+  else if (command === "environment" && subcommand === "resume" && id)
+    request = decodeCommand({ type: "environment.resume", id });
   else if (command === "environment" && subcommand === "register" && values.file)
     request = {
       type: "environment.register",

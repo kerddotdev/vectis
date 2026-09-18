@@ -1,3 +1,4 @@
+import { PreparationResult } from "./preparation-result.js";
 import { MigrationResult } from "./migration-result.js";
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -116,6 +117,12 @@ function Overview() {
               <strong>{operation.command}</strong>
               <p>{operation.message}</p>
               <code>{operation.id}</code>
+              {["environment.prepare-linux", "environment.resume"].includes(operation.command) && (
+                <PreparationResult
+                  result={operation.result}
+                  resumable={operation.status === "action_required"}
+                />
+              )}
               {(operation.command === "migration.analyze" ||
                 operation.command === "migration.publish") &&
                 operation.status === "succeeded" && <MigrationResult result={operation.result} />}
@@ -129,7 +136,9 @@ function Overview() {
                 Reconcile runner
               </button>
             )}
-            {(operation.command === "runner.run" ||
+            {(operation.command === "environment.prepare-linux" ||
+              operation.command === "environment.resume" ||
+              operation.command === "runner.run" ||
               operation.command === "job.refresh" ||
               operation.command === "job.scan" ||
               operation.command === "migration.analyze" ||

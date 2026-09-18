@@ -12,6 +12,7 @@ export default defineConfig({
       sidebar: [
         { label: "Start here", slug: "index" },
         { label: "Local setup", slug: "guides/local-setup" },
+        { label: "Prepare Linux", slug: "guides/linux-setup" },
         { label: "Desktop", slug: "guides/desktop" },
         { label: "GitHub connections", slug: "guides/github" },
         { label: "Run a runner", slug: "guides/runners" },

@@ -35,6 +35,10 @@ After machine pairing and browser GitHub linking, use `vectis repository list --
 
 Use `operation cancel <operation-id>` to request runner cleanup or cancel waiting for a job refresh. Inspect the original operation afterward. For an interrupted runner, verify its VM has stopped before `runner reconcile <operation-id>`; never hide uncertain cleanup by submitting fresh runner requests.
 
+## Prepare Ubuntu
+
+On an idle Apple Silicon host with the Apple helper and qemu-img configured, use `environment prepare-linux <id> --image-directory <existing-path> --storage-path <existing-path> --cpu 2 --memory-mib 4096 --disk-gib 32 --json`. Follow its operation; download acceptance is not image readiness. Preparation blocks other VM admission until it finishes or stops. For `action_required`, inspect the reported image directory and use `environment resume <setup-id>` after fixing prerequisites. Never delete a setup directory to bypass missing process-exit evidence. Successful setup registers an environment; repository connection and a real verification job remain separate steps.
+
 ## Configure resources and storage
 
 Use `environment configure <id> --cpu <count> --memory-mib <MiB> --storage-path <absolute-directory> --wait --json`. Omit fields that should remain unchanged. Changes apply to future instances; running instances retain their original resource reservations and directory. The VM storage directory is independent of the service's `--home` state directory. Select an existing writable directory. Vectis does not recreate a missing selected directory, so reconnect an unavailable external drive before retrying.
