@@ -7,6 +7,7 @@ import { Schema } from "effect";
 import { inspectLocalArtifact } from "../packages/runner/src/artifact.js";
 import { notarizationArguments, notarizeBundle } from "./release/notarization.js";
 import { verifyPackageLinks } from "./release/package-links.js";
+import { verifyRuntimeSources } from "./release/verify-runtime-sources.js";
 
 const { values } = parseArgs({
   options: {
@@ -56,6 +57,11 @@ try {
       recursive: true,
       verbatimSymlinks: true,
     });
+  if (windows)
+    await verifyRuntimeSources(
+      join(staging, basename(app), "Contents/Resources/runtime/windows"),
+      join(staging, "Corresponding Sources"),
+    );
   await writeFile(
     join(staging, "Install.txt"),
     "Drag Vectis Dev.app to Applications, then open it and install the background service.\nKeep the app at its installed location while the service uses it.\nFor upgrades, place the new app in a separate permanent folder. Do not overwrite or move the previous app while its service uses it. Open the new app and use its runtime update control when idle; remove the old app only after success.\nThis development artifact does not grant GitHub access automatically.\nDocumentation: https://vectis.kerd.dev/docs/\n",
