@@ -6,7 +6,7 @@ struct HelperError: Error { let message: String }
 
 @MainActor
 func emit(_ event: String, message: String? = nil, macAddress: String? = nil) {
-    if (event == "vm.stopped" || event == "vm.error"),
+    if (event == "vm.stopped" || event == "vm.error" || event == "installation.action_required"),
        let path = ProcessInfo.processInfo.environment["VECTIS_EXIT_RECEIPT"],
        let id = ProcessInfo.processInfo.environment["VECTIS_INSTANCE_ID"],
        let receipt = try? JSONSerialization.data(withJSONObject: ["instanceId": id, "pid": getpid()]) {

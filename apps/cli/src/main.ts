@@ -40,6 +40,7 @@ async function main() {
       name: { type: "string" },
       "disk-gib": { type: "string" },
       "image-directory": { type: "string" },
+      "restore-path": { type: "string" },
       environment: { type: "string" },
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
@@ -80,6 +81,9 @@ Usage: vectis <command> [options]
   capabilities                  Discover supported commands and schemas
   doctor                        Inspect host and runtime prerequisites
   pause | resume                Control new instance admission
+  environment install-macos <id>  Install --restore-path <IPSW> with --image-directory and --storage-path
+  environment open-macos-setup <setup-id>  Open the local guest setup console
+  environment resume-macos <setup-id>  Inspect or retry an interrupted macOS installation
   environment prepare-linux <id>  Prepare Ubuntu with --image-directory and --storage-path
   environment resume <setup-id>   Continue an interrupted image preparation
   environment register --file   Register a prepared environment JSON file
@@ -350,6 +354,22 @@ GitHub pairing require separately configured development services.
       repositoryName: id,
       environmentId: values.environment,
     });
+  else if (command === "environment" && subcommand === "install-macos" && id)
+    request = decodeCommand({
+      type: "environment.install-macos",
+      id,
+      name: values.name ?? "macOS 26 ARM64",
+      restorePath: values["restore-path"],
+      imageDirectory: values["image-directory"],
+      storagePath: values["storage-path"],
+      cpu: Number(values.cpu ?? 2),
+      memoryMiB: Number(values["memory-mib"] ?? 4096),
+      diskGiB: Number(values["disk-gib"] ?? 64),
+    });
+  else if (command === "environment" && subcommand === "open-macos-setup" && id)
+    request = decodeCommand({ type: "environment.open-macos-setup", id });
+  else if (command === "environment" && subcommand === "resume-macos" && id)
+    request = decodeCommand({ type: "environment.resume-macos", id });
   else if (command === "environment" && subcommand === "prepare-linux" && id)
     request = decodeCommand({
       type: "environment.prepare-linux",

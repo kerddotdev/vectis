@@ -80,9 +80,15 @@ export function startCloudRelay(
             snapshot.instances.every((instance) => instance.status === "stopped") &&
             !snapshot.operations.some(
               (operation) =>
-                ["runner.run", "environment.prepare-linux", "environment.resume"].includes(
-                  operation.command,
-                ) && ["accepted", "running", "action_required"].includes(operation.status),
+                [
+                  "runner.run",
+                  "environment.prepare-linux",
+                  "environment.resume",
+                  "environment.install-macos",
+                  "environment.resume-macos",
+                  "environment.open-macos-setup",
+                ].includes(operation.command) &&
+                ["accepted", "running", "action_required"].includes(operation.status),
             ),
           environments: await Promise.all(
             snapshot.environments.slice(0, 100).map(async (environment) => {

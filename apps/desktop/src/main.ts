@@ -90,6 +90,14 @@ else {
             case "service.stop":
               data = await (await localClient(home)).shutdown();
               break;
+            case "chooseRestoreImage": {
+              const result = await dialog.showOpenDialog(window, {
+                properties: ["openFile"],
+                filters: [{ name: "Apple restore image", extensions: ["ipsw"] }],
+              });
+              data = result.canceled ? null : (result.filePaths[0] ?? null);
+              break;
+            }
             case "chooseDirectory": {
               const result = await dialog.showOpenDialog(window, {
                 properties: ["openDirectory", "createDirectory"],

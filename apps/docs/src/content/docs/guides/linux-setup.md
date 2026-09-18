@@ -15,7 +15,7 @@ vectis environment prepare-linux ubuntu-24-arm64 \
 vectis operation wait <operation-id> --timeout 3600000 --json
 ```
 
-Use **Environments > Prepare Ubuntu 24.04 ARM64** in the desktop. MCP accepts `environment.prepare-linux` with the same fields. Preparation currently reserves the host for one setup at a time: stop existing VMs and resolve interrupted runners first. Normal VM admission is blocked during preparation; pausing, diagnostics and cancellation remain available.
+Use **Environments > Prepare a guest image**, with **Ubuntu 24.04 ARM64** selected, in the desktop. MCP accepts `environment.prepare-linux` with the same fields. Preparation currently reserves the host for one setup at a time: stop existing VMs and resolve interrupted runners first. Normal VM admission is blocked during preparation; pausing, diagnostics and cancellation remain available.
 
 The service downloads a pinned official Ubuntu QCOW2 image, checks its exact size and SHA-256, converts it to a bootable raw disk, and performs guest configuration locally. The source revision is recorded beside the completed image. Installed package versions are available inside the guest at `/etc/vectis/toolchain-versions.txt`. No host home directory, Docker socket or GitHub App key is shared with the guest.
 
@@ -33,4 +33,4 @@ After a service crash, the previous guest must have verifiable process-exit evid
 
 Completed setup registers the environment automatically. It does not connect a repository or prove a GitHub job has run. Continue with [repository connections and runners](/docs/guides/runners/), then use a successful job and cleanup to verify the environment for [workflow migration](/docs/guides/migrations/).
 
-macOS and Windows guided image preparation are still being integrated. Their prepared images can already run through the shared runner lifecycle.
+[macOS restore installation and its setup console](/docs/guides/macos-setup/) are available, with manual guest SSH enrollment. Windows guided preparation is still being integrated. Prepared images for both systems already run through the shared runner lifecycle.

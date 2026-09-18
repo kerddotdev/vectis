@@ -31,25 +31,41 @@ export async function runPreparationGuest(
   },
   signal: AbortSignal,
 ) {
+  return runPreparationProcess(
+    {
+      ...input,
+      args: [
+        "run",
+        "linux",
+        join(input.directory, "disk.img"),
+        String(input.cpu),
+        String(input.memoryMiB),
+        join(input.directory, "efi.bin"),
+        join(input.directory, "seed.iso"),
+      ],
+      markerStream: "stderr",
+    },
+    signal,
+  );
+}
+export async function runPreparationProcess(
+  input: {
+    helper: string;
+    directory: string;
+    id: string;
+    args: readonly string[];
+    marker: string;
+    markerStream: "stdout" | "stderr";
+  },
+  signal: AbortSignal,
+) {
   signal.throwIfAborted();
   const { directory, id } = input;
   const receipt = join(directory, "exit-receipt.json");
-  const child = spawn(
-    input.helper,
-    [
-      "run",
-      "linux",
-      join(directory, "disk.img"),
-      String(input.cpu),
-      String(input.memoryMiB),
-      join(directory, "efi.bin"),
-      join(directory, "seed.iso"),
-    ],
-    {
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, VECTIS_EXIT_RECEIPT: receipt, VECTIS_INSTANCE_ID: id },
-    },
-  );
+  const child = spawn(input.helper, [...input.args], {
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, VECTIS_EXIT_RECEIPT: receipt, VECTIS_INSTANCE_ID: id },
+  });
   child.stdin.on("error", () => {});
   let failed = false;
   child.once("error", () => {
@@ -61,11 +77,12 @@ export async function runPreparationGuest(
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
     events = (events + chunk).slice(-16384);
+    if (input.markerStream === "stdout" && events.includes(input.marker)) prepared = true;
   });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
     serial = (serial + chunk).slice(-65536);
-    if (serial.includes(input.marker)) prepared = true;
+    if (input.markerStream === "stderr" && serial.includes(input.marker)) prepared = true;
   });
   const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
   let force: ReturnType<typeof setTimeout> | undefined;

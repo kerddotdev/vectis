@@ -2,7 +2,11 @@ import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
-import { preparationStopped, runPreparationGuest } from "./preparation-process.js";
+import {
+  preparationStopped,
+  runPreparationGuest,
+  runPreparationProcess,
+} from "./preparation-process.js";
 async function fixture(body: string, run: (helper: string, directory: string) => Promise<void>) {
   const directory = await mkdtemp(join(tmpdir(), "vectis-prepare-process-"));
   const helper = join(directory, "helper");
@@ -51,3 +55,22 @@ test("a clean process exit without completed guest setup is not success", () =>
       ),
     ).rejects.toMatchObject({ code: "guest_preparation_failed" });
   }));
+
+test("installer completion is observed on stdout without trusting exit zero alone", () =>
+  fixture(
+    'process.stdout.write(JSON.stringify({event:"installation.action_required"}));',
+    async (helper, directory) => {
+      await runPreparationProcess(
+        {
+          helper,
+          directory,
+          id: "install",
+          args: ["install-macos"],
+          marker: '"installation.action_required"',
+          markerStream: "stdout",
+        },
+        new AbortController().signal,
+      );
+      expect(await preparationStopped(directory, "install")).toBe(true);
+    },
+  ));

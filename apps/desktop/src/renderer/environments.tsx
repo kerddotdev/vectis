@@ -22,6 +22,10 @@ export function Environments() {
         memoryMiB: Number(data.get("memoryMiB")),
         state: "ready",
         ...(storage ? { storagePath: storage } : {}),
+        ...(data.get("sshUser") ? { sshUser: data.get("sshUser") } : {}),
+        ...(data.get("sshKeyPath") ? { sshKeyPath: data.get("sshKeyPath") } : {}),
+        ...(data.get("knownHostsPath") ? { knownHostsPath: data.get("knownHostsPath") } : {}),
+        ...(data.get("tpmStatePath") ? { tpmStatePath: data.get("tpmStatePath") } : {}),
         ...(data.get("firmwarePath") ? { firmwarePath: data.get("firmwarePath") } : {}),
         ...(data.get("firmwareVarsPath") ? { firmwareVarsPath: data.get("firmwareVarsPath") } : {}),
       });
@@ -102,7 +106,30 @@ export function Environments() {
             Choose storage folder
           </button>
           <details>
-            <summary>Windows firmware</summary>
+            <summary>Guest SSH access</summary>
+            <p>
+              Provide guest-only credentials. The pinned host key entry must use the environment ID
+              as its host alias. No host credentials are copied into the VM.
+            </p>
+            <label>
+              Guest username
+              <input name="sshUser" />
+            </label>
+            <label>
+              Guest SSH identity file
+              <input name="sshKeyPath" />
+            </label>
+            <label>
+              Pinned known_hosts file
+              <input name="knownHostsPath" />
+            </label>
+          </details>
+          <details>
+            <summary>Windows firmware and TPM</summary>
+            <label>
+              Prepared TPM state directory
+              <input name="tpmStatePath" />
+            </label>
             <label>
               UEFI code image
               <input name="firmwarePath" />
