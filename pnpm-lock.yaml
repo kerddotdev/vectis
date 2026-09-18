@@ -24,6 +24,9 @@ importers:
       '@types/node':
         specifier: 24.13.4
         version: 24.13.4
+      convex-test:
+        specifier: 0.0.58
+        version: 0.0.58(convex@1.45.0)
       oxfmt:
         specifier: 0.68.0
         version: 0.68.0
@@ -38,6 +41,8 @@ importers:
         version: 5.0.1(@types/node@24.13.4)(vite@8.3.0(@types/node@24.13.4)(esbuild@0.27.0)(yaml@2.9.1))
 
   apps/cli: {}
+
+  apps/mcp: {}
 
   apps/server: {}
 
@@ -755,6 +760,11 @@ packages:
   content-type@2.1.0:
     resolution: {integrity: sha512-mj7UPXE0jaqaOsukNZRUEfEi2AcL7C/vwmwcHV0O97eO1E1pxBZuyjlZrx5seTaNBg1U6+o35wpa35Qfcc+7ag==}
     engines: {node: '>=18'}
+
+  convex-test@0.0.58:
+    resolution: {integrity: sha512-VZ9VNrWZkdlWMmudnoOdiqTk8oc6r9pCcnxxPq1Kh/tt4dX9cyA7kJWFZ9LrAgEUxGcg2iPkiOb+bBvHfy3ihA==}
+    peerDependencies:
+      convex: ^1.43.0
 
   convex@1.45.0:
     resolution: {integrity: sha512-AV3B56Ptu/14d76g3urBJ50dwpiZa6uJaLT84OWox5aCwZIJiuAamdjv3lLHDzs8vv5kC31anEZohhUe3qJ2bA==}
@@ -1807,6 +1817,10 @@ snapshots:
   content-type@1.0.5: {}
 
   content-type@2.1.0: {}
+
+  convex-test@0.0.58(convex@1.45.0):
+    dependencies:
+      convex: 1.45.0
 
   convex@1.45.0:
     dependencies:

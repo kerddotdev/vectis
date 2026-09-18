@@ -219,9 +219,12 @@ export class Service {
           ? error
           : new VectisError("operation_failed", "The operation could not be completed.");
       this.store.update(operation, {
-        status: ["setup_required", "runtime_missing", "reconciliation_required"].includes(
-          issue.code,
-        )
+        status: [
+          "setup_required",
+          "runtime_missing",
+          "storage_unavailable",
+          "reconciliation_required",
+        ].includes(issue.code)
           ? "action_required"
           : "failed",
         message: issue.message,

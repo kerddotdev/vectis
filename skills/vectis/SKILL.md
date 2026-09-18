@@ -25,7 +25,7 @@ Pausing stops new admission and leaves existing work running. Stopping an instan
 
 ## Configure resources and storage
 
-Use `environment configure <id> --cpu <count> --memory-mib <MiB> --storage-path <absolute-directory> --wait --json`. Omit fields that should remain unchanged. Changes apply to future instances; running instances retain their original resource reservations and directory. The VM storage directory is independent of the service's `--home` state directory.
+Use `environment configure <id> --cpu <count> --memory-mib <MiB> --storage-path <absolute-directory> --wait --json`. Omit fields that should remain unchanged. Changes apply to future instances; running instances retain their original resource reservations and directory. The VM storage directory is independent of the service's `--home` state directory. Select an existing writable directory. Vectis does not recreate a missing selected directory, so reconnect an unavailable external drive before retrying.
 
 `vectis storage --json` or MCP `vectis_storage` reports base images and instances separately. Distinguish virtual disk capacity, file size, and allocated host blocks. Copy-on-write blocks may be shared across images, so summing allocated values can overstate exclusive physical usage. Host file breakdown is not a guest filesystem breakdown; check the reported availability.
 

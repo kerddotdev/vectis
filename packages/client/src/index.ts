@@ -44,9 +44,9 @@ export class VectisClient {
   async capabilities() {
     return this.request("/v1/capabilities");
   }
-  async submit(command: Command, key: string) {
+  async submit(command: Command, key: string, signal?: AbortSignal) {
     return Schema.decodeUnknownSync(Operation)(
-      await this.request("/v1/commands", { key, command }),
+      await this.request("/v1/commands", { key, command }, signal),
     );
   }
   async wait(id: string, signal: AbortSignal = AbortSignal.timeout(120000)): Promise<Operation> {

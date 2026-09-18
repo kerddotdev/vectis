@@ -58,12 +58,18 @@ export const Instance = Schema.Struct({
   createdAt: Schema.String,
 });
 export type Instance = typeof Instance.Type;
+export const CloudStatus = Schema.Struct({
+  state: Schema.Literals(["unconfigured", "connecting", "connected", "unavailable"]),
+  message: Schema.optional(Schema.String),
+});
+export type CloudStatus = typeof CloudStatus.Type;
 export const Snapshot = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   machine: Machine,
   environments: Schema.Array(Environment),
   instances: Schema.Array(Instance),
   operations: Schema.Array(Operation),
+  cloud: Schema.optional(CloudStatus),
 });
 export type Snapshot = typeof Snapshot.Type;
 export const Command = Schema.Union([

@@ -55,6 +55,22 @@ export class VmRuntime {
         "The prepared image is missing or has the wrong type.",
         "Provide an existing raw Linux disk, qcow2 Windows disk, or installed macOS bundle.",
       );
+    if (environment.storagePath) {
+      const storage = await stat(environment.storagePath).catch(() => undefined);
+      if (!storage?.isDirectory())
+        throw new VectisError(
+          "storage_unavailable",
+          "The selected VM storage directory is unavailable.",
+          "Connect the selected drive and create or select an existing VM directory.",
+        );
+      await access(environment.storagePath, constants.W_OK | constants.X_OK).catch(() => {
+        throw new VectisError(
+          "storage_unavailable",
+          "The selected VM storage directory is not writable.",
+          "Allow Vectis access to the selected directory or choose another location.",
+        );
+      });
+    }
   }
   async start(
     id: string,
@@ -87,7 +103,7 @@ export class VmRuntime {
       throw new VectisError("runtime_missing", "The configured VM runtime is not executable.");
     });
     const root = environment.storagePath ?? join(this.options.home, "instances");
-    await mkdir(root, { recursive: true, mode: 0o700 });
+    if (!environment.storagePath) await mkdir(root, { recursive: true, mode: 0o700 });
     const directory = this.directoryFor(id, environment);
     await mkdir(directory, { mode: 0o700 });
     try {

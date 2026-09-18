@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm, readFile, stat } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
@@ -71,11 +71,26 @@ hostTest(
       'process.stdout.write(\'{"event":"vm.running"}\\n\'); setInterval(() => {}, 1000);',
     );
     const storagePath = join(home, "selected-volume");
+    await mkdir(storagePath);
     const instance = await runtime.start("custom", { ...environment, storagePath }, () => {});
     expect(instance.directory).toBe(join(storagePath, "custom"));
     expect(await runtime.hasWorkDirectory("custom", instance.directory)).toBe(true);
     await runtime.stop(instance.id);
     expect(await runtime.hasWorkDirectory("custom", instance.directory)).toBe(false);
     expect((await stat(storagePath)).isDirectory()).toBe(true);
+  },
+);
+
+hostTest(
+  "missing selected storage never falls back to creating a directory on the host",
+  async () => {
+    const { home, runtime, environment } = await fixture("process.exit(99);");
+    const storagePath = join(home, "disconnected-volume", "vms");
+    await expect(
+      runtime.start("missing", { ...environment, storagePath }, () => {}),
+    ).rejects.toMatchObject({
+      code: "storage_unavailable",
+    });
+    await expect(stat(join(home, "disconnected-volume"))).rejects.toMatchObject({ code: "ENOENT" });
   },
 );

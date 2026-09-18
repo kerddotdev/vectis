@@ -9,7 +9,7 @@
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "lint": "oxlint --deny-warnings apps packages scripts",
+    "lint": "oxlint --deny-warnings apps packages scripts convex tests",
     "vectis": "node dist/apps/cli/src/main.js",
     "proof:linux": "node dist/scripts/prove-linux.js",
     "mcp": "node dist/apps/mcp/src/main.js"
@@ -22,6 +22,7 @@
   },
   "devDependencies": {
     "@types/node": "24.13.4",
+    "convex-test": "0.0.58",
     "oxfmt": "0.68.0",
     "oxlint": "1.83.0",
     "typescript": "7.0.2",
