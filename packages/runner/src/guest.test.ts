@@ -46,24 +46,27 @@ test("rejects SSH option injection and requires pinned guest host keys", () => {
   );
 });
 
-test("sends script through stdin and bounds retained guest output", async () => {
-  const process = child();
-  const script = "printf '%s' '$(host-command)'";
-  const result = executeGuest(connection, script, { signal: AbortSignal.timeout(5000) });
-  expect(processMock.spawn).toHaveBeenCalledWith(
-    "/usr/bin/ssh",
-    expect.not.arrayContaining([script]),
-    expect.anything(),
-  );
-  expect(process.stdin.read().toString()).toBe(script + "\n");
-  process.stdout.write("a".repeat(50000));
-  process.stdout.write("guest-end");
-  process.exitCode = 7;
-  process.emit("close");
-  await expect(result).resolves.toMatchObject({ exitCode: 7, truncated: true });
-  expect((await result).stdout).toHaveLength(32768);
-  expect((await result).stdout.endsWith("guest-end")).toBe(true);
-});
+test.each(["bash", "powershell"] as const)(
+  "%s sends scripts through stdin and bounds retained guest output",
+  async (shell) => {
+    const process = child();
+    const script = "printf '%s' '$(host-command)'";
+    const result = executeGuest(connection, script, { signal: AbortSignal.timeout(5000), shell });
+    expect(processMock.spawn).toHaveBeenCalledWith(
+      "/usr/bin/ssh",
+      expect.not.arrayContaining([script]),
+      expect.anything(),
+    );
+    expect(process.stdin.read().toString()).toBe(script + "\n");
+    process.stdout.write("a".repeat(50000));
+    process.stdout.write("guest-end");
+    process.exitCode = 7;
+    process.emit("close");
+    await expect(result).resolves.toMatchObject({ exitCode: 7, truncated: true });
+    expect((await result).stdout).toHaveLength(32768);
+    expect((await result).stdout.endsWith("guest-end")).toBe(true);
+  },
+);
 
 test("cancellation stops only the owned SSH process and does not report completion", async () => {
   const process = child();

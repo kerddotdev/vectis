@@ -29,6 +29,8 @@ export function runnerInstallScript(os: Environment["os"]) {
   const { url, sha256 } = runnerDistribution(os);
   if (os === "windows")
     return `$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
 $target = Join-Path $env:USERPROFILE 'vectis-actions-runner'
 if (Test-Path $target) { throw 'Runner directory already exists. Use a fresh setup image.' }
 New-Item -ItemType Directory -Path $target | Out-Null
@@ -60,7 +62,7 @@ export function runnerStartScript(os: Environment["os"], jitConfig: string) {
   if (os === "windows")
     return `$ErrorActionPreference = 'Stop'
 Set-Location (Join-Path $env:USERPROFILE 'vectis-actions-runner')
-& .\\run.cmd --jitconfig '${jitConfig}'
+& .\\bin\\Runner.Listener.exe run --jitconfig '${jitConfig}'
 exit $LASTEXITCODE
 `;
   return `set -eu
