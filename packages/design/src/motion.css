@@ -1,0 +1,32 @@
+:root {
+  --vectis-ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --vectis-ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --vectis-duration-press: 120ms;
+  --vectis-duration-fade: 140ms;
+  --vectis-duration-enter: 180ms;
+  --vectis-duration-drawer: 300ms;
+}
+
+@keyframes vectis-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes vectis-rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

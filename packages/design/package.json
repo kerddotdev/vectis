@@ -1,0 +1,20 @@
+{
+  "name": "@vectis/design",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./tokens.css": "./src/tokens.css",
+    "./fonts.css": "./src/fonts.css",
+    "./motion.css": "./src/motion.css",
+    "./tailwind.css": "./src/tailwind.css",
+    "./fonts/*": "./fonts/*",
+    "./components/*": "./src/components/*"
+  },
+  "scripts": {
+    "fonts": "node fetch-fonts.mjs"
+  },
+  "dependencies": {
+    "@fontsource/fragment-mono": "5.3.0"
+  }
+}
