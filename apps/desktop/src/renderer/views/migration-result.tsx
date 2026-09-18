@@ -41,7 +41,7 @@ export function MigrationResult({ result }: { result: unknown }) {
         <p className="text-muted-foreground">No workflow files found.</p>
       )}
       {result.files.map((file) => (
-        <Collapsible key={file.path} className="rounded-xl ring-1 ring-border">
+        <Collapsible key={file.path} className="rounded-xl ring-1 ring-border ring-inset">
           <CollapsibleTrigger className="group flex w-full items-center gap-2 px-3 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60">
             <ChevronRightIcon className="size-3.5 text-muted-foreground transition-transform group-data-panel-open:rotate-90" />
             <Mono className="flex-1 text-foreground">{file.path}</Mono>
@@ -50,27 +50,29 @@ export function MigrationResult({ result }: { result: unknown }) {
               label={file.changed ? "Changes proposed" : "Unchanged"}
             />
           </CollapsibleTrigger>
-          <CollapsibleContent className="flex flex-col gap-3 px-3 pb-3">
-            {file.findings.map((finding, index) => (
-              <p key={index} className="text-muted-foreground">
-                <span className="text-foreground">{finding.job}</span>: {finding.reason}
-              </p>
-            ))}
-            {file.changed && (
-              <div className="grid gap-3 lg:grid-cols-2">
-                {[
-                  ["Current workflow", file.before],
-                  ["Proposed workflow", file.after],
-                ].map(([label, source]) => (
-                  <div key={label} className="min-w-0">
-                    <p className="mb-1.5 text-xs font-medium text-muted-foreground">{label}</p>
-                    <pre className="max-h-80 overflow-auto rounded-lg bg-muted p-3 font-mono text-[12px] leading-relaxed">
-                      {source}
-                    </pre>
-                  </div>
-                ))}
-              </div>
-            )}
+          <CollapsibleContent>
+            <div className="flex flex-col gap-3 px-3 pb-3">
+              {file.findings.map((finding, index) => (
+                <p key={index} className="text-muted-foreground">
+                  <span className="text-foreground">{finding.job}</span>: {finding.reason}
+                </p>
+              ))}
+              {file.changed && (
+                <div className="grid gap-3 lg:grid-cols-2">
+                  {[
+                    ["Current workflow", file.before],
+                    ["Proposed workflow", file.after],
+                  ].map(([label, source]) => (
+                    <div key={label} className="min-w-0">
+                      <p className="mb-1.5 text-xs font-medium text-muted-foreground">{label}</p>
+                      <pre className="max-h-80 overflow-auto rounded-lg bg-muted p-3 font-mono text-[12px] leading-relaxed">
+                        {source}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </CollapsibleContent>
         </Collapsible>
       ))}

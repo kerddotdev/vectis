@@ -10,11 +10,8 @@ import {
   PlugIcon,
   type LucideIcon,
 } from "lucide-react";
-import { SidebarToggle } from "@/components/layout";
 import { useStateApi } from "@/state";
-import { cn } from "@/lib/utils";
 import { MachineSwitcher } from "./machine-switcher";
-import { useWindowChrome } from "./window-chrome";
 
 const widthKey = "vectis.sidebar-width";
 const defaultWidth = 232;
@@ -93,20 +90,12 @@ function NavLink({
 
 export function Sidebar() {
   const { snapshot, perform } = useStateApi();
-  const { fullscreen } = useWindowChrome();
   const active = snapshot?.operations.filter((operation) =>
     ["accepted", "running", "action_required"].includes(operation.status),
   ).length;
   return (
     <aside className="flex h-full min-w-0 flex-col" aria-label="Sidebar">
-      <div
-        className={cn(
-          "drag-region flex h-[46px] shrink-0 items-center",
-          fullscreen ? "pl-3" : "pl-[84px]",
-        )}
-      >
-        <SidebarToggle />
-      </div>
+      <div className="drag-region h-[46px] shrink-0" />
       <nav aria-label="Main navigation" className="flex flex-col gap-0.5 px-2.5 pt-1.5">
         {primary.map((item) => (
           <NavLink

@@ -39,7 +39,7 @@ createRoot(root).render(
   <StrictMode>
     <StateProvider>
       <WindowChromeProvider>
-        <TooltipProvider>
+        <TooltipProvider delay={300}>
           <RouterProvider router={router} />
         </TooltipProvider>
       </WindowChromeProvider>

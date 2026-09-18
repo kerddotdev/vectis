@@ -1,6 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { CircleCheckIcon, InfoIcon, PanelLeftIcon, TriangleAlertIcon } from "lucide-react";
+import {
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  CircleCheckIcon,
+  InfoIcon,
+  PanelLeftIcon,
+  TriangleAlertIcon,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { useWindowChrome } from "@/shell/window-chrome";
 import { useStateApi } from "@/state";
@@ -50,25 +58,27 @@ export function Page({
     <div className="view-enter flex h-full min-w-0 flex-col">
       <header
         className={cn(
-          "drag-region flex h-[46px] shrink-0 items-center gap-2 border-b pr-3 transition-colors duration-150",
+          "drag-region flex h-[46px] shrink-0 items-center gap-2 border-b pr-3 pl-4 transition-colors duration-150",
           condensed ? "border-border" : "border-transparent",
-          collapsed && !fullscreen ? "pl-[84px]" : "pl-4",
         )}
       >
-        {collapsed && <SidebarToggle />}
         <span
           aria-hidden
           className={cn(
-            "truncate text-sm font-semibold transition-opacity duration-150",
+            "truncate text-sm font-semibold transition-[opacity,transform] duration-300 ease-drawer",
             condensed ? "opacity-100" : "opacity-0",
           )}
+          style={{ transform: `translateX(${collapsed ? (fullscreen ? 36 : 108) : 0}px)` }}
         >
           {title}
         </span>
         <div className="ml-auto flex items-center gap-1.5">{actions}</div>
       </header>
-      <div ref={scroller} className="min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-[880px] px-8 pt-4 pb-20">
+      <div
+        ref={scroller}
+        className="min-h-0 flex-1 overflow-y-auto [scrollbar-gutter:stable_both-edges]"
+      >
+        <div className="@container mx-auto max-w-[1120px] px-8 pt-4 pb-20">
           <h1
             ref={heading}
             className="font-heading text-[26px] leading-tight font-medium tracking-[-0.02em]"
@@ -113,19 +123,26 @@ export function Page({
 export function Section({
   title,
   description,
+  hint,
   actions,
   children,
+  className,
 }: {
   title: string;
   description?: ReactNode;
+  hint?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
+  className?: string;
 }) {
   return (
-    <section className="flex flex-col gap-3">
-      <div className="flex items-end justify-between gap-4">
+    <section className={cn("flex min-w-0 flex-col gap-3", className)}>
+      <div className="flex min-h-7 items-end justify-between gap-4">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold">{title}</h2>
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+            {title}
+            {hint}
+          </h2>
           {description && (
             <p className="mt-0.5 max-w-[62ch] text-muted-foreground">{description}</p>
           )}
@@ -238,4 +255,135 @@ export function EmptyState({ children }: { children: ReactNode }) {
       {children}
     </p>
   );
+}
+
+export function ExpandableRow({
+  leading,
+  title,
+  summary,
+  aside,
+  actions,
+  defaultOpen = false,
+  children,
+}: {
+  leading?: ReactNode;
+  title: ReactNode;
+  summary?: ReactNode;
+  aside?: ReactNode;
+  actions?: ReactNode;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <Collapsible defaultOpen={defaultOpen} className="rise-in">
+      <div className="flex items-center gap-2 pr-3">
+        <CollapsibleTrigger className="group/trigger flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset">
+          <ChevronRightIcon
+            className="size-3.5 shrink-0 text-muted-foreground transition-transform duration-150 group-data-panel-open/trigger:rotate-90"
+            aria-hidden
+          />
+          {leading}
+          <span className="min-w-0 flex-1">
+            <span className="block truncate font-medium">{title}</span>
+            {summary && (
+              <span className="mt-0.5 block truncate text-xs text-muted-foreground group-data-panel-open/trigger:hidden">
+                {summary}
+              </span>
+            )}
+          </span>
+          {aside && <span className="flex shrink-0 items-center gap-3">{aside}</span>}
+        </CollapsibleTrigger>
+        {actions && <div className="flex shrink-0 items-center gap-1.5">{actions}</div>}
+      </div>
+      <CollapsibleContent>
+        <div className="flex flex-col gap-4 pr-4 pb-4 pl-[46px]">{children}</div>
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+export function Details({ items }: { items: ReadonlyArray<readonly [string, ReactNode]> }) {
+  const visible = items.filter(
+    ([, value]) => value !== undefined && value !== null && value !== false && value !== "",
+  );
+  if (!visible.length) return null;
+  return (
+    <dl className="grid grid-cols-[minmax(7rem,max-content)_1fr] gap-x-6 gap-y-1.5 text-xs">
+      {visible.map(([label, value]) => (
+        <div key={label} className="contents">
+          <dt className="text-muted-foreground">{label}</dt>
+          <dd className="min-w-0 break-words" data-selectable>
+            {value}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function StatCard({
+  label,
+  value,
+  detail,
+  tone,
+}: {
+  label: string;
+  value: ReactNode;
+  detail?: ReactNode;
+  tone?: "attention" | "success" | "running" | undefined;
+}) {
+  return (
+    <div className="rise-in flex min-w-0 flex-col gap-1 rounded-2xl bg-card px-4 py-3.5 ring-1 ring-border">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p
+        className={cn(
+          "font-heading text-[22px] leading-tight font-medium tracking-[-0.01em] tabular-nums",
+          tone === "attention" && "text-attention",
+          tone === "success" && "text-success",
+          tone === "running" && "text-running",
+        )}
+      >
+        {value}
+      </p>
+      {detail && <p className="truncate text-xs text-muted-foreground">{detail}</p>}
+    </div>
+  );
+}
+
+export function usePages<T>(items: readonly T[], size: number) {
+  const [page, setPage] = useState(0);
+  const pages = Math.max(1, Math.ceil(items.length / size));
+  const current = Math.min(page, pages - 1);
+  return {
+    items: items.slice(current * size, current * size + size),
+    pager:
+      items.length > size ? (
+        <div className="flex items-center justify-between gap-3 px-4 py-2 text-xs text-muted-foreground">
+          <span className="tabular-nums">
+            {current * size + 1}-{Math.min(items.length, (current + 1) * size)} of {items.length}
+          </span>
+          <span className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Previous page"
+              disabled={current === 0}
+              onClick={() => setPage(current - 1)}
+            >
+              <ChevronLeftIcon />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              aria-label="Next page"
+              disabled={current >= pages - 1}
+              onClick={() => setPage(current + 1)}
+            >
+              <ChevronRightIcon />
+            </Button>
+          </span>
+        </div>
+      ) : null,
+    reset: () => setPage(0),
+  };
 }

@@ -1,7 +1,22 @@
-import { EllipsisIcon, PauseIcon, PlayIcon } from "lucide-react";
-import type { Operation } from "../../../../../packages/protocol/src/index.js";
-import { EmptyState, List, Mono, Page, Row, Section } from "@/components/layout";
-import { InstanceStatus, OperationStatus, StatusBadge } from "@/components/status";
+import { useState } from "react";
+import { CircleStopIcon, EllipsisIcon, PauseIcon, PlayIcon } from "lucide-react";
+import type { Instance, Operation } from "../../../../../packages/protocol/src/index.js";
+import {
+  Details,
+  EmptyState,
+  ExpandableRow,
+  List,
+  Mono,
+  Notice,
+  Page,
+  Row,
+  Section,
+  StatCard,
+  usePages,
+} from "@/components/layout";
+import { Reason } from "@/components/hint";
+import { OsTile } from "@/components/os-icon";
+import { InstanceStatus, OperationStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,86 +25,60 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { formatDateTime, formatRelative } from "@/lib/format";
+import { cancellableCommands, commandLabels, preparationCommands } from "@/lib/operations";
 import { MigrationResult } from "@/views/migration-result";
 import { PreparationResult } from "@/views/preparation-result";
 import { useStateApi } from "@/state";
 
-const preparationCommands = [
-  "environment.prepare-linux",
-  "environment.resume",
-  "environment.install-macos",
-  "environment.resume-macos",
-  "environment.open-macos-setup",
-  "environment.connect-macos-guest",
-  "environment.verify-macos-guest",
-  "environment.finish-macos-setup",
-  "environment.install-windows",
-  "environment.resume-windows",
-];
-const cancellableCommands = [
-  "environment.install-macos",
-  "environment.resume-macos",
-  "environment.open-macos-setup",
-  "environment.connect-macos-guest",
-  "environment.verify-macos-guest",
-  "environment.install-windows",
-  "environment.resume-windows",
-  "environment.prepare-linux",
-  "environment.resume",
-  "runner.run",
-  "job.refresh",
-  "job.scan",
-  "migration.analyze",
-  "migration.publish",
-  "repository.connect",
-];
-const commandLabels: Record<string, string> = {
-  "environment.prepare-linux": "Prepare Linux image",
-  "environment.resume": "Resume Linux preparation",
-  "environment.install-macos": "Install macOS",
-  "environment.resume-macos": "Resume macOS installation",
-  "environment.open-macos-setup": "Open macOS setup console",
-  "environment.connect-macos-guest": "Connect macOS guest SSH",
-  "environment.verify-macos-guest": "Verify macOS guest SSH",
-  "environment.finish-macos-setup": "Finish macOS setup",
-  "environment.discard-macos": "Discard macOS setup",
-  "environment.install-windows": "Install Windows",
-  "environment.resume-windows": "Resume Windows installation",
-  "environment.register": "Register environment",
-  "environment.configure": "Configure environment",
-  "environment.start": "Start clean VM",
-  "instance.stop": "Stop VM",
-  "instance.reconcile": "Reconcile VM",
-  "runner.run": "Run runner",
-  "runner.reconcile": "Reconcile runner",
-  "repository.connect": "Connect repository",
-  "repository.disconnect": "Disconnect repository",
-  "repository.automatic": "Change automatic runners",
-  "job.refresh": "Recover GitHub job",
-  "job.scan": "Discover missing jobs",
-  "migration.analyze": "Analyze workflow migration",
-  "migration.publish": "Publish migration pull request",
-  "machine.pause": "Change VM intake",
-};
+const filters = {
+  all: () => true,
+  active: (operation: Operation) => ["accepted", "running"].includes(operation.status),
+  failed: (operation: Operation) => ["failed", "cancelled"].includes(operation.status),
+} as const;
+
+const cloudLabels = {
+  connected: "Cloud connected",
+  connecting: "Connecting to cloud",
+  unavailable: "Cloud unavailable",
+  unconfigured: "Local only",
+} as const;
 
 export function Overview() {
   const { snapshot, submit, perform, machineId } = useStateApi();
+  const [filter, setFilter] = useState<keyof typeof filters>("all");
   const paused = snapshot?.machine.paused;
+  const operations = snapshot?.operations ?? [];
+  const attention = operations.filter((operation) => operation.status === "action_required");
+  const active = operations.filter(filters.active);
+  const history = operations.filter(
+    (operation) => operation.status !== "action_required" && filters[filter](operation),
+  );
+  const { items, pager, reset } = usePages(history, 8);
+  const instances = snapshot?.instances ?? [];
+  const running = instances.filter((instance) => instance.status === "running");
+  const interrupted = instances.filter((instance) => instance.status === "interrupted");
+  const environments = snapshot?.environments ?? [];
+  const ready = environments.filter((environment) => environment.state === "ready");
   return (
     <Page
       title="Overview"
-      description="Virtual machines and recent operations on the selected machine."
+      description="What this machine is running, and anything that needs you."
       actions={
         <>
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={!snapshot}
-            onClick={() => void submit({ type: "machine.pause", paused: !paused })}
-          >
-            {paused ? <PlayIcon /> : <PauseIcon />}
-            {paused ? "Resume new VMs" : "Pause new VMs"}
-          </Button>
+          <Reason reason={!snapshot && "Start the service to change VM intake."}>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={!snapshot}
+              onClick={() => void submit({ type: "machine.pause", paused: !paused })}
+            >
+              {paused ? <PlayIcon /> : <PauseIcon />}
+              {paused ? "Resume new VMs" : "Pause new VMs"}
+            </Button>
+          </Reason>
           {!machineId && (
             <DropdownMenu>
               <DropdownMenuTrigger
@@ -124,141 +113,210 @@ export function Overview() {
         </>
       }
     >
-      {paused && (
-        <p className="-mt-4 text-muted-foreground">
-          New VMs are paused. Running work continues until it finishes.
-        </p>
+      <div className="grid grid-cols-2 gap-3 @3xl:grid-cols-4">
+        <StatCard
+          label="Service"
+          value={!snapshot ? "Offline" : paused ? "Paused" : "Running"}
+          tone={!snapshot || paused ? "attention" : "success"}
+          detail={
+            !snapshot
+              ? "Not reachable"
+              : paused
+                ? "New VMs are paused"
+                : cloudLabels[snapshot.cloud?.state ?? "unconfigured"]
+          }
+        />
+        <StatCard
+          label="Virtual machines"
+          value={running.length}
+          tone={running.length ? "running" : undefined}
+          detail={
+            interrupted.length
+              ? `${interrupted.length} need cleanup`
+              : running.length
+                ? "Running now"
+                : "None running"
+          }
+        />
+        <StatCard
+          label="Operations"
+          value={active.length + attention.length}
+          tone={attention.length ? "attention" : active.length ? "running" : undefined}
+          detail={
+            attention.length
+              ? `${attention.length} waiting for you`
+              : active.length
+                ? "In progress"
+                : "Nothing in progress"
+          }
+        />
+        <StatCard
+          label="Environments"
+          value={ready.length}
+          detail={
+            environments.length ? `Ready, of ${environments.length} prepared` : "None prepared yet"
+          }
+        />
+      </div>
+      {snapshot?.cloud?.state === "unavailable" && snapshot.cloud.message && (
+        <Notice tone="attention" title="The Vectis cloud is unavailable">
+          {snapshot.cloud.message}
+        </Notice>
       )}
-      <Section title="Virtual machines">
-        {!snapshot?.instances.length ? (
-          <EmptyState>No virtual machines are running or waiting for cleanup.</EmptyState>
-        ) : (
+      {attention.length > 0 && (
+        <Section
+          title="Needs you"
+          description="These operations are paused until you finish a step."
+        >
           <List>
-            {snapshot.instances.map((instance) => (
-              <Row
-                key={instance.id}
-                title={
-                  snapshot.environments.find(
-                    (environment) => environment.id === instance.environmentId,
-                  )?.name ?? instance.environmentId
-                }
-                detail={
-                  <>
-                    {instance.cpu ?? "?"} cores · {instance.memoryMiB ?? "?"} MiB ·{" "}
-                    <Mono>{instance.id}</Mono>
-                  </>
-                }
-                trailing={
-                  <>
-                    <InstanceStatus status={instance.status} />
-                    {instance.status === "running" && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => void submit({ type: "instance.stop", id: instance.id })}
-                      >
-                        Stop VM
-                      </Button>
-                    )}
-                    {instance.status === "interrupted" && (
-                      <Button
-                        size="sm"
-                        onClick={() => void submit({ type: "instance.reconcile", id: instance.id })}
-                      >
-                        Reconcile
-                      </Button>
-                    )}
-                  </>
-                }
-              />
+            {attention.map((operation) => (
+              <OperationRow key={operation.id} operation={operation} defaultOpen />
             ))}
           </List>
-        )}
-      </Section>
-      <Section title="Recent operations">
-        {!snapshot?.operations.length ? (
-          <EmptyState>Operations you start appear here with their progress.</EmptyState>
-        ) : (
-          <List>
-            {snapshot.operations.map((operation) => (
-              <OperationRow key={operation.id} operation={operation} />
-            ))}
-          </List>
-        )}
-      </Section>
-      {snapshot?.cloud && (
-        <Section title="Cloud connection">
-          <div className="flex items-center gap-3">
-            <StatusBadge
-              tone={
-                snapshot.cloud.state === "connected"
-                  ? "success"
-                  : snapshot.cloud.state === "connecting"
-                    ? "running"
-                    : snapshot.cloud.state === "unavailable"
-                      ? "danger"
-                      : "idle"
-              }
-              label={
-                {
-                  connected: "Connected",
-                  connecting: "Connecting",
-                  unavailable: "Unavailable",
-                  unconfigured: "Local only",
-                }[snapshot.cloud.state]
-              }
-            />
-            {snapshot.cloud.message && (
-              <span className="text-muted-foreground">{snapshot.cloud.message}</span>
-            )}
-          </div>
         </Section>
       )}
+      <div className="grid items-start gap-10 @4xl:grid-cols-[minmax(0,1fr)_320px] @4xl:gap-8">
+        <Section
+          title="Operations"
+          actions={
+            <Tabs
+              value={filter}
+              onValueChange={(value: keyof typeof filters) => {
+                setFilter(value);
+                reset();
+              }}
+            >
+              <TabsList className="group-data-horizontal/tabs:h-7">
+                <TabsTrigger value="all" className="px-2.5 text-xs">
+                  All
+                </TabsTrigger>
+                <TabsTrigger value="active" className="px-2.5 text-xs">
+                  Active
+                </TabsTrigger>
+                <TabsTrigger value="failed" className="px-2.5 text-xs">
+                  Failed
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          }
+        >
+          {!history.length ? (
+            <EmptyState>
+              {operations.length
+                ? "No operations match this filter."
+                : "Operations you start appear here with their progress."}
+            </EmptyState>
+          ) : (
+            <List>
+              {items.map((operation) => (
+                <OperationRow key={operation.id} operation={operation} />
+              ))}
+              {pager}
+            </List>
+          )}
+        </Section>
+        <Section title="Virtual machines">
+          {!instances.length ? (
+            <EmptyState>No virtual machines are running.</EmptyState>
+          ) : (
+            <List>
+              {instances.map((instance) => (
+                <InstanceRow key={instance.id} instance={instance} />
+              ))}
+            </List>
+          )}
+        </Section>
+      </div>
     </Page>
   );
 }
 
-function OperationRow({ operation }: { operation: Operation }) {
+function InstanceRow({ instance }: { instance: Instance }) {
+  const { snapshot, submit } = useStateApi();
+  const environment = snapshot?.environments.find((item) => item.id === instance.environmentId);
+  return (
+    <Row
+      leading={environment && <OsTile os={environment.os} />}
+      title={environment?.name ?? instance.environmentId}
+      detail={
+        <span className="inline-flex items-center gap-1.5">
+          <InstanceStatus status={instance.status} inline />
+          <span>· {formatRelative(instance.createdAt)}</span>
+        </span>
+      }
+      trailing={
+        instance.status === "running" ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Stop VM"
+                  onClick={() => void submit({ type: "instance.stop", id: instance.id })}
+                />
+              }
+            >
+              <CircleStopIcon />
+            </TooltipTrigger>
+            <TooltipContent>Stop VM</TooltipContent>
+          </Tooltip>
+        ) : instance.status === "interrupted" ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void submit({ type: "instance.reconcile", id: instance.id })}
+                />
+              }
+            >
+              Reconcile
+            </TooltipTrigger>
+            <TooltipContent className="max-w-60">
+              The service lost track of this VM. Reconciling checks whether it still runs and cleans
+              it up.
+            </TooltipContent>
+          </Tooltip>
+        ) : undefined
+      }
+    />
+  );
+}
+
+function OperationRow({
+  operation,
+  defaultOpen = false,
+}: {
+  operation: Operation;
+  defaultOpen?: boolean;
+}) {
   const { submit } = useStateApi();
   const preparation = preparationCommands.includes(operation.command);
   const migration =
     (operation.command === "migration.analyze" || operation.command === "migration.publish") &&
     operation.status === "succeeded";
+  const cancellable =
+    cancellableCommands.includes(operation.command) && operation.status === "running";
+  const reconcilable = operation.command === "runner.run" && operation.status === "action_required";
   return (
-    <Row
+    <ExpandableRow
+      defaultOpen={defaultOpen}
       title={commandLabels[operation.command] ?? operation.command}
-      detail={
+      summary={operation.message}
+      aside={
         <>
-          <span className="text-foreground/80" data-selectable>
-            {operation.message}
+          <span className="hidden text-xs text-muted-foreground tabular-nums @2xl:inline">
+            {formatRelative(operation.updatedAt)}
           </span>
-          <Mono className="ml-2">{operation.id}</Mono>
-        </>
-      }
-      trailing={
-        <>
           <OperationStatus status={operation.status} />
-          {operation.command === "runner.run" && operation.status === "action_required" && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void submit({ type: "runner.reconcile", id: operation.id })}
-            >
-              Reconcile runner
-            </Button>
-          )}
-          {cancellableCommands.includes(operation.command) && operation.status === "running" && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => void submit({ type: "operation.cancel", id: operation.id })}
-            >
-              Cancel
-            </Button>
-          )}
         </>
       }
     >
+      <p className="max-w-[72ch] text-foreground/85" data-selectable>
+        {operation.message}
+      </p>
       {preparation && (
         <PreparationResult
           result={operation.result}
@@ -268,6 +326,34 @@ function OperationRow({ operation }: { operation: Operation }) {
         />
       )}
       {migration && <MigrationResult result={operation.result} />}
-    </Row>
+      <Details
+        items={[
+          ["Started", formatDateTime(operation.createdAt)],
+          ["Last update", formatDateTime(operation.updatedAt)],
+          ["Operation ID", <Mono key="id">{operation.id}</Mono>],
+        ]}
+      />
+      {(cancellable || reconcilable) && (
+        <div className="flex flex-wrap gap-2">
+          {reconcilable && (
+            <Button
+              size="sm"
+              onClick={() => void submit({ type: "runner.reconcile", id: operation.id })}
+            >
+              Reconcile runner
+            </Button>
+          )}
+          {cancellable && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void submit({ type: "operation.cancel", id: operation.id })}
+            >
+              Cancel operation
+            </Button>
+          )}
+        </div>
+      )}
+    </ExpandableRow>
   );
 }

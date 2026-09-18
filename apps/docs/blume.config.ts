@@ -25,7 +25,7 @@ export default defineConfig({
   logo: "/icon.svg",
   content: { root: "docs" },
   feedback: false,
-  github: { owner: "kerddev", repo: "vectis", branch: "main", dir: "apps/docs" },
+  github: { owner: "kerddotdev", repo: "vectis", branch: "main", dir: "apps/docs" },
   theme: {
     mode: "system",
     radius: "lg",

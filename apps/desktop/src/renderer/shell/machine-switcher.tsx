@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { BrandMark } from "@/components/brand-mark";
+import { formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { request, useStateApi } from "@/state";
 
@@ -30,12 +31,23 @@ export function MachineSwitcher() {
   const { machineId, selectMachine, snapshot, ready } = useStateApi();
   const [machines, setMachines] = useState<typeof Machines.Type | null>(null);
   const [issue, setIssue] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [refreshed, setRefreshed] = useState<number | null>(null);
   async function load() {
+    setLoading(true);
+    const started = Date.now();
     try {
       setMachines(Schema.decodeUnknownSync(Machines)(await request("machines.list")));
       setIssue("");
+      setRefreshed(Date.now());
     } catch {
-      setIssue("Sign in under Connections to control other machines.");
+      setMachines(null);
+      setIssue("Sign in under Connections to control your other Macs.");
+    } finally {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, 400 - (Date.now() - started))),
+      );
+      setLoading(false);
     }
   }
   const status = !ready
@@ -74,9 +86,14 @@ export function MachineSwitcher() {
         </span>
         <ChevronsUpDownIcon className="size-3.5 text-muted-foreground" aria-hidden />
       </DropdownMenuTrigger>
-      <DropdownMenuContent side="top" align="start" className="w-64">
+      <DropdownMenuContent side="top" align="start" className="w-72">
         <DropdownMenuGroup>
-          <DropdownMenuLabel>Control machine</DropdownMenuLabel>
+          <DropdownMenuLabel className="flex flex-col gap-0.5 pb-2">
+            <span className="text-xs font-semibold text-foreground">Control machine</span>
+            <span className="text-xs font-normal text-muted-foreground">
+              {issue || "Choose which Mac this window manages."}
+            </span>
+          </DropdownMenuLabel>
           <DropdownMenuRadioGroup
             value={machineId ?? ""}
             onValueChange={(value: string) => selectMachine(value || undefined)}
@@ -90,19 +107,34 @@ export function MachineSwitcher() {
             {machines?.map((machine) => (
               <DropdownMenuRadioItem key={machine.id} value={machine.id} disabled={machine.revoked}>
                 <span className="flex-1 truncate">{machine.name}</span>
-                <span className="text-xs text-muted-foreground">
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <span
+                    className={cn(
+                      "size-1.5 rounded-full",
+                      machine.online && !machine.revoked ? "bg-success" : "bg-neutral",
+                    )}
+                    aria-hidden
+                  />
                   {machine.revoked ? "Revoked" : machine.online ? "Online" : "Offline"}
                 </span>
               </DropdownMenuRadioItem>
             ))}
           </DropdownMenuRadioGroup>
-          {issue && <DropdownMenuLabel>{issue}</DropdownMenuLabel>}
         </DropdownMenuGroup>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem closeOnClick={false} onClick={() => void load()}>
-          <RefreshCwIcon />
-          Refresh machines
-        </DropdownMenuItem>
+        {!issue && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem closeOnClick={false} disabled={loading} onClick={() => void load()}>
+              <RefreshCwIcon className={cn(loading && "animate-spin")} />
+              {loading ? "Refreshing" : "Refresh machines"}
+              {!loading && refreshed && (
+                <span className="ml-auto text-xs text-muted-foreground">
+                  {formatRelative(refreshed)}
+                </span>
+              )}
+            </DropdownMenuItem>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

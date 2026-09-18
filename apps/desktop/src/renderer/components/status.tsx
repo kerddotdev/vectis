@@ -61,9 +61,34 @@ const instanceStates = {
   interrupted: ["attention", "Interrupted"],
 } as const satisfies Record<string, readonly [Tone, string]>;
 
-export function InstanceStatus({ status }: { status: keyof typeof instanceStates }) {
+export function InstanceStatus({
+  status,
+  inline = false,
+}: {
+  status: keyof typeof instanceStates;
+  inline?: boolean;
+}) {
   const [tone, label] = instanceStates[status];
-  return <StatusBadge tone={tone} label={label} />;
+  return inline ? (
+    <StatusText tone={tone} label={label} />
+  ) : (
+    <StatusBadge tone={tone} label={label} />
+  );
+}
+
+export function StatusText({ tone, label }: { tone: Tone; label: string }) {
+  const { icon: Icon, className } = tones[tone];
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center gap-1 font-medium",
+        className.split(" ").filter((name) => name.startsWith("text-")),
+      )}
+    >
+      <Icon className="size-3" aria-hidden />
+      {label}
+    </span>
+  );
 }
 
 export function JobStatus({ status, conclusion }: { status: string; conclusion: string | null }) {

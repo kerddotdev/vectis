@@ -3,11 +3,19 @@ import { Schema } from "effect";
 import { Snapshot, type Command } from "../../../../packages/protocol/src/index.js";
 import type { DesktopAction } from "../bridge.js";
 
+export class RequestError extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
 export async function request(action: DesktopAction, input?: unknown, machineId?: string) {
   if (!window.vectis)
     throw new Error("Open this interface through the Vectis desktop application.");
   const reply = await window.vectis.request(action, input, machineId);
-  if (!reply.ok) throw new Error(`${reply.error.message} ${reply.error.nextStep}`);
+  if (!reply.ok)
+    throw new RequestError(reply.error.code, `${reply.error.message} ${reply.error.nextStep}`);
   return reply.data;
 }
 const State = createContext<{
