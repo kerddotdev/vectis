@@ -1,4 +1,17 @@
 {
-  "extends": "../web/tsconfig.json",
-  "include": ["src/renderer", "src/bridge.ts", "vite.config.ts"]
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["vite/client", "node"],
+    "paths": { "@/*": ["./src/renderer/*"] }
+  },
+  "include": ["src/renderer", "src/bridge.ts", "src/chrome.ts", "vite.config.ts"]
 }

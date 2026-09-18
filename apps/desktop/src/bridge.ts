@@ -1,3 +1,4 @@
+import type { WindowEvent } from "./chrome.js";
 export type DesktopAction =
   | "controller.login"
   | "controller.finish"
@@ -31,6 +32,7 @@ declare global {
   interface Window {
     vectis: {
       request(action: DesktopAction, input?: unknown, machineId?: string): Promise<DesktopReply>;
+      onWindowEvent(listener: (event: WindowEvent) => void): () => void;
     };
   }
 }

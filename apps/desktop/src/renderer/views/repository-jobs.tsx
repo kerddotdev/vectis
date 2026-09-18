@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { Schema } from "effect";
-import { Jobs } from "../../../../packages/protocol/src/jobs.js";
-import { useStateApi } from "./state.js";
+import { RefreshCwIcon } from "lucide-react";
+import { Jobs } from "../../../../../packages/protocol/src/jobs.js";
+import { Mono, Notice } from "@/components/layout";
+import { JobStatus } from "@/components/status";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { useStateApi } from "@/state";
 
 export function RepositoryJobs({ bindingId }: { bindingId: string }) {
   const { perform, submit } = useStateApi();
@@ -23,66 +28,86 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
     }
   }
   return (
-    <div>
-      <button className="secondary" disabled={pending} onClick={() => void refresh()}>
-        {pending ? "Reading jobs" : "Refresh GitHub jobs"}
-      </button>
-      <button
-        className="secondary"
-        onClick={() => {
-          void submit({ type: "job.scan", bindingId }).then((value) =>
-            setRequested(value !== undefined),
-          );
-        }}
-      >
-        Discover missing jobs
-      </button>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          const id = Number(jobId);
-          if (!Number.isSafeInteger(id) || id <= 0) {
-            setError("Enter a positive GitHub job ID.");
-            return;
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant="secondary" size="sm" disabled={pending} onClick={() => void refresh()}>
+          <RefreshCwIcon />
+          {pending ? "Reading jobs" : "Refresh GitHub jobs"}
+        </Button>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() =>
+            void submit({ type: "job.scan", bindingId }).then((value) =>
+              setRequested(value !== undefined),
+            )
           }
-          setError("");
-          void submit({ type: "job.refresh", bindingId, jobId: id }).then((value) =>
-            setRequested(value !== undefined),
-          );
-        }}
-      >
-        <label>
-          GitHub job ID{" "}
-          <input
+        >
+          Discover missing jobs
+        </Button>
+        <form
+          className="ml-auto flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const id = Number(jobId);
+            if (!Number.isSafeInteger(id) || id <= 0) {
+              setError("Enter a positive GitHub job ID.");
+              return;
+            }
+            setError("");
+            void submit({ type: "job.refresh", bindingId, jobId: id }).then((value) =>
+              setRequested(value !== undefined),
+            );
+          }}
+        >
+          <Input
+            aria-label="GitHub job ID"
+            placeholder="GitHub job ID"
+            className="h-7 w-36"
             value={jobId}
             inputMode="numeric"
             required
             onChange={(event) => setJobId(event.target.value)}
           />
-        </label>
-        <button type="submit">Recover job from GitHub</button>
-      </form>
+          <Button type="submit" variant="ghost" size="sm">
+            Recover job
+          </Button>
+        </form>
+      </div>
       {requested && (
-        <p role="status">
+        <Notice>
           Refresh requested. Follow its operation in Overview, then refresh this list.
+        </Notice>
+      )}
+      {error && (
+        <Notice tone="danger" role="alert">
+          {error}
+        </Notice>
+      )}
+      {jobs?.length === 0 && (
+        <p className="text-muted-foreground">
+          No GitHub jobs have been observed for this repository yet.
         </p>
       )}
-      {error && <p role="alert">{error}</p>}
-      {jobs?.length === 0 && <p>No GitHub jobs have been observed for this repository yet.</p>}
       {jobs && jobs.length > 0 && (
-        <p>Latest observed GitHub results. Runner cleanup is tracked separately in Overview.</p>
-      )}
-      {jobs?.map((job) => (
-        <div className="record" key={job.jobId}>
-          <div>
-            <strong>{job.name}</strong>
-            <p>
-              Run {job.runId} / job {job.jobId}
-            </p>
-          </div>
-          <span className="status">{job.conclusion ?? job.status}</span>
+        <div className="flex flex-col">
+          <p className="pb-2 text-xs text-muted-foreground">
+            Latest observed GitHub results. Runner cleanup is tracked separately in Overview.
+          </p>
+          {jobs.map((job) => (
+            <div
+              key={job.jobId}
+              className="flex items-center gap-3 border-t border-border py-2 first:border-t-0"
+            >
+              <span className="min-w-0 flex-1 truncate">{job.name}</span>
+              <Mono>
+                run {job.runId} · job {job.jobId}
+              </Mono>
+              <JobStatus status={job.status} conclusion={job.conclusion} />
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }

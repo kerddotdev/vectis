@@ -1,117 +1,136 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Schema } from "effect";
-import { GitHubAccounts } from "../../../../packages/protocol/src/repositories.js";
-import { useStateApi } from "./state.js";
+import { GitHubAccounts } from "../../../../../packages/protocol/src/repositories.js";
+import { Notice } from "@/components/layout";
+import { Button } from "@/components/ui/button";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useStateApi } from "@/state";
 
-export function ConnectRepository() {
+export function ConnectRepository({ onDone }: { onDone: () => void }) {
   const { snapshot, perform, submit } = useStateApi();
-  const [accounts, setAccounts] = useState<GitHubAccounts>([]);
+  const [accounts, setAccounts] = useState<GitHubAccounts | null>(null);
   const [accountId, setAccountId] = useState("");
   const [environmentId, setEnvironmentId] = useState("");
   const [repositoryName, setRepositoryName] = useState("");
   const [repositoryOwner, setRepositoryOwner] = useState("");
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState("");
-  async function load() {
-    setPending(true);
-    try {
-      const result = await perform("github.accounts");
-      if (result !== undefined) {
+  useEffect(() => {
+    void perform("github.accounts")
+      .then((result) => {
+        if (result === undefined) return;
         const available = Schema.decodeUnknownSync(GitHubAccounts)(result);
         setAccounts(available);
-        setMessage(available.length ? "" : "Connect a GitHub account in the browser first.");
-      }
-    } catch {
-      setMessage("GitHub accounts could not be read.");
-    } finally {
-      setPending(false);
-    }
-  }
-  async function connect() {
-    setPending(true);
-    try {
-      const result = await submit({
-        type: "repository.connect",
-        accountId,
-        repositoryName,
-        ...(repositoryOwner ? { repositoryOwner } : {}),
-        environmentId,
-      });
-      if (result !== undefined)
-        setMessage(
-          "Connection requested. Follow its operation in Overview, then refresh repositories.",
-        );
-    } finally {
-      setPending(false);
-    }
-  }
+        if (!available.length) setMessage("Connect a GitHub account in the browser first.");
+      })
+      .catch(() => setMessage("GitHub accounts could not be read."));
+  }, []);
+  const environments =
+    snapshot?.environments.filter((environment) => environment.state === "ready") ?? [];
   return (
-    <section className="section">
-      <h2>Connect a repository</h2>
-      <button disabled={pending} onClick={() => void load()}>
-        Load verified GitHub accounts
-      </button>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void connect();
-        }}
-      >
-        <fieldset disabled={pending}>
-          <label>
-            GitHub account
-            <select
-              required
-              value={accountId}
-              onChange={(event) => setAccountId(event.target.value)}
+    <form
+      className="flex flex-col gap-5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setPending(true);
+        void submit({
+          type: "repository.connect",
+          accountId,
+          repositoryName,
+          ...(repositoryOwner ? { repositoryOwner } : {}),
+          environmentId,
+        })
+          .then((result) => result !== undefined && onDone())
+          .finally(() => setPending(false));
+      }}
+    >
+      <fieldset disabled={pending} className="contents">
+        <FieldGroup className="gap-4">
+          <Field>
+            <FieldLabel>GitHub account</FieldLabel>
+            <Select
+              value={accountId || null}
+              onValueChange={(value: string | null) => setAccountId(value ?? "")}
+              items={(accounts ?? []).map((account) => ({
+                value: account.id,
+                label: account.login,
+              }))}
             >
-              <option value="">Select an account</option>
-              {accounts.map((account) => (
-                <option key={account.id} value={account.id}>
-                  {account.login}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Repository owner (optional organization)
-            <input
-              value={repositoryOwner}
-              pattern="[A-Za-z0-9-]+"
-              onChange={(event) => setRepositoryOwner(event.target.value)}
-              placeholder="Selected GitHub account"
-            />
-          </label>
-          <label>
-            Repository name
-            <input
-              required
-              pattern="[A-Za-z0-9_.-]+"
-              value={repositoryName}
-              onChange={(event) => setRepositoryName(event.target.value)}
-            />
-          </label>
-          <label>
-            Prepared environment
-            <select
-              required
-              value={environmentId}
-              onChange={(event) => setEnvironmentId(event.target.value)}
-            >
-              <option value="">Select an environment</option>
-              {snapshot?.environments
-                .filter((environment) => environment.state === "ready")
-                .map((environment) => (
-                  <option key={environment.id} value={environment.id}>
-                    {environment.name}
-                  </option>
+              <SelectTrigger className="w-full">
+                <SelectValue
+                  placeholder={accounts ? "Select an account" : "Loading verified accounts"}
+                />
+              </SelectTrigger>
+              <SelectContent>
+                {accounts?.map((account) => (
+                  <SelectItem key={account.id} value={account.id}>
+                    {account.login}
+                  </SelectItem>
                 ))}
-            </select>
-          </label>
-          <button type="submit">Connect repository</button>
-        </fieldset>
-      </form>
-      {message && <p role="status">{message}</p>}
-    </section>
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field>
+              <FieldLabel htmlFor="repository-owner">Owner</FieldLabel>
+              <Input
+                id="repository-owner"
+                value={repositoryOwner}
+                pattern="[A-Za-z0-9-]+"
+                onChange={(event) => setRepositoryOwner(event.target.value)}
+                placeholder="Selected account"
+              />
+              <FieldDescription>Only for an organization repository.</FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="repository-name">Repository</FieldLabel>
+              <Input
+                id="repository-name"
+                required
+                pattern="[A-Za-z0-9_.-]+"
+                value={repositoryName}
+                onChange={(event) => setRepositoryName(event.target.value)}
+              />
+            </Field>
+          </div>
+          <Field>
+            <FieldLabel>Prepared environment</FieldLabel>
+            <Select
+              value={environmentId || null}
+              onValueChange={(value: string | null) => setEnvironmentId(value ?? "")}
+              items={environments.map((environment) => ({
+                value: environment.id,
+                label: environment.name,
+              }))}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Select an environment" />
+              </SelectTrigger>
+              <SelectContent>
+                {environments.map((environment) => (
+                  <SelectItem key={environment.id} value={environment.id}>
+                    {environment.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+        </FieldGroup>
+        {message && <Notice>{message}</Notice>}
+        <div className="flex justify-end">
+          <Button type="submit" disabled={!accountId || !environmentId}>
+            Connect repository
+          </Button>
+        </div>
+      </fieldset>
+    </form>
   );
 }

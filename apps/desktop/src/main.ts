@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { app, BrowserWindow, dialog, ipcMain, shell, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell, session } from "electron";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -17,6 +17,7 @@ import {
 } from "../../../packages/client/src/controller-login.js";
 import { RemoteClient } from "../../../packages/client/src/remote.js";
 import { desktopTarget } from "./target.js";
+import { trafficLightPosition, type WindowEvent } from "./chrome.js";
 import type { DesktopReply } from "./bridge.js";
 if (app.isPackaged) {
   const runtime = join(process.resourcesPath, "runtime");
@@ -233,20 +234,70 @@ else {
         }
       },
     );
+    function send(event: WindowEvent) {
+      window?.webContents.send("vectis:window", event);
+    }
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate([
+        { role: "appMenu" },
+        { role: "editMenu" },
+        {
+          label: "View",
+          submenu: [
+            {
+              label: "Toggle Sidebar",
+              accelerator: "CmdOrCtrl+B",
+              click: () => send("toggle-sidebar"),
+            },
+            { type: "separator" },
+            { role: "togglefullscreen" },
+            ...(app.isPackaged
+              ? []
+              : [
+                  { type: "separator" as const },
+                  { role: "reload" as const },
+                  { role: "toggleDevTools" as const },
+                ]),
+          ],
+        },
+        { role: "windowMenu" },
+        {
+          role: "help",
+          submenu: [
+            {
+              label: "Vectis Documentation",
+              click: () => void shell.openExternal("https://vectis.kerd.dev/docs/"),
+            },
+          ],
+        },
+      ]),
+    );
     function open() {
       window = new BrowserWindow({
         width: 1120,
         height: 780,
         minWidth: 800,
         minHeight: 580,
-        backgroundColor: "#15191e",
+        show: false,
         title: "Vectis",
+        titleBarStyle: "hiddenInset",
+        trafficLightPosition,
+        vibrancy: "sidebar",
+        visualEffectState: "followWindow",
+        backgroundColor: "#00000000",
         webPreferences: {
           preload: fileURLToPath(new URL("../../../../apps/desktop/preload.cjs", import.meta.url)),
           sandbox: true,
           contextIsolation: true,
           nodeIntegration: false,
         },
+      });
+      window.once("ready-to-show", () => window?.show());
+      window.on("enter-full-screen", () => send("fullscreen-enter"));
+      window.on("leave-full-screen", () => send("fullscreen-leave"));
+      window.webContents.on("did-finish-load", () => {
+        void window?.webContents.setVisualZoomLevelLimits(1, 1);
+        if (window?.isFullScreen()) send("fullscreen-enter");
       });
       window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
       window.webContents.on("will-navigate", (event) => event.preventDefault());

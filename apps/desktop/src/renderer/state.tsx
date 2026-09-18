@@ -14,7 +14,9 @@ const State = createContext<{
   machineId: string | undefined;
   selectMachine: (id: string | undefined) => void;
   snapshot: Snapshot | null;
+  ready: boolean;
   error: string;
+  dismissError: () => void;
   perform: (action: DesktopAction, input?: unknown) => Promise<unknown>;
   submit: (command: Command) => Promise<unknown>;
 } | null>(null);
@@ -22,6 +24,7 @@ export function StateProvider({ children }: { children: ReactNode }) {
   const [machineId, setMachineId] = useState<string>();
   const selected = useRef(machineId);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {
     let stopped = false;
@@ -36,6 +39,7 @@ export function StateProvider({ children }: { children: ReactNode }) {
         } catch {
           if (!stopped) setSnapshot(null);
         }
+        if (!stopped) setReady(true);
       }
       if (!stopped) timer = setTimeout(() => void refresh(), machineId ? 5000 : 2000);
     }
@@ -64,10 +68,13 @@ export function StateProvider({ children }: { children: ReactNode }) {
           selected.current = id;
           setMachineId(id);
           setSnapshot(null);
+          setReady(false);
           setError("");
         },
         snapshot,
+        ready,
         error,
+        dismissError: () => setError(""),
         perform,
         submit: (command) => perform("command", { key: crypto.randomUUID(), command }),
       }}

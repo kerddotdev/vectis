@@ -1,168 +1,145 @@
 @import "tailwindcss";
+@import "@vectis/design/tailwind.css";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+@theme inline {
+  --font-sans: var(--vectis-font-ui);
+  --font-heading: var(--vectis-font-sans);
+  --text-xs: 0.6875rem;
+  --text-xs--line-height: 1rem;
+  --text-sm: 0.8125rem;
+  --text-sm--line-height: 1.25rem;
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
 :root {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background: #15191e;
-  color: #e6e9ee;
-  color-scheme: dark;
-  font-synthesis: none;
+  --background: var(--vectis-surface);
+  --foreground: var(--vectis-foreground);
+  --card: var(--vectis-raised);
+  --card-foreground: var(--vectis-foreground);
+  --popover: var(--vectis-raised);
+  --popover-foreground: var(--vectis-foreground);
+  --primary: var(--vectis-brand-fill);
+  --primary-foreground: var(--vectis-on-brand);
+  --secondary: var(--vectis-hairline);
+  --secondary-foreground: var(--vectis-foreground);
+  --muted: var(--vectis-hairline);
+  --muted-foreground: var(--vectis-muted);
+  --accent: var(--vectis-hairline);
+  --accent-foreground: var(--vectis-foreground);
+  --destructive: var(--vectis-danger);
+  --border: var(--vectis-hairline);
+  --input: var(--vectis-hairline-strong);
+  --ring: var(--vectis-brand);
+  --radius: 0.875rem;
+  --sidebar: transparent;
+  --sidebar-foreground: var(--vectis-foreground);
+  --sidebar-primary: var(--vectis-brand);
+  --sidebar-primary-foreground: var(--vectis-on-brand);
+  --sidebar-accent: var(--vectis-hairline-strong);
+  --sidebar-accent-foreground: var(--vectis-foreground);
+  --sidebar-border: var(--vectis-hairline);
+  --sidebar-ring: var(--vectis-brand);
 }
-* {
-  box-sizing: border-box;
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+  html {
+    @apply font-sans;
+    letter-spacing: normal;
+    -webkit-font-smoothing: antialiased;
+  }
+  body {
+    @apply text-foreground text-sm;
+    background: transparent;
+    cursor: default;
+    user-select: none;
+  }
+  input,
+  textarea,
+  code,
+  pre,
+  [data-selectable] {
+    user-select: text;
+  }
+  button,
+  a,
+  [role="button"],
+  [role="menuitem"],
+  [role="option"] {
+    cursor: default;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+    background-color: var(--vectis-hairline-strong);
+  }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
 }
-body {
-  margin: 0;
+
+@utility drag-region {
+  -webkit-app-region: drag;
+  & :where(button, a, input, select, textarea, [role="button"], [data-no-drag]) {
+    -webkit-app-region: no-drag;
+  }
 }
-.layout {
-  display: grid;
-  grid-template-columns: 210px 1fr;
-  min-height: 100vh;
+
+@utility view-enter {
+  animation: vectis-fade-in var(--vectis-duration-fade) var(--vectis-ease-out);
 }
-aside {
-  background: #1b2027;
-  padding: 32px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 40px;
-}
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 25px;
-  font-weight: 650;
-}
-.brand span,
-.status {
-  color: #a1c8fc;
-}
-nav {
-  display: grid;
-  gap: 12px;
-}
-nav a {
-  padding: 10px 0;
-  color: #acb8c9;
-  text-decoration: none;
-}
-nav a.active {
-  color: #e6e9ee;
-  font-weight: 600;
-}
-main {
-  padding: 30px 48px 70px;
-  min-width: 0;
-}
-header,
-.row,
-.record {
-  display: flex;
-  align-items: center;
-  gap: 20px;
-}
-header,
-.spread,
-.record {
-  justify-content: space-between;
-}
-header {
-  color: #9aabc0;
-  font-size: 14px;
-  margin-bottom: 45px;
-}
-h1 {
-  font-size: 42px;
-  line-height: 1.1;
-  letter-spacing: -0.04em;
-  margin: 24px 0;
-  font-weight: 550;
-}
-h2 {
-  font-size: 23px;
-  font-weight: 550;
-  margin: 12px 0;
-}
-p {
-  color: #acb8c9;
-  line-height: 1.65;
-  margin: 12px 0;
-}
-button {
-  background: #b9d7fe;
-  color: #182638;
-  padding: 12px 18px;
-  border: 0;
-  border-radius: 8px;
-  font: inherit;
-  cursor: pointer;
-  min-height: 44px;
-  margin: 12px 12px 12px 0;
-}
-button.secondary {
-  background: transparent;
-  color: #b9d7fe;
-  padding-left: 0;
-}
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-:is(a, button, input, select, summary, pre):focus-visible {
-  outline: 3px solid #86b8ff;
-  outline-offset: 4px;
-}
-.section {
-  border-top: 1px solid #35404e;
-  padding-top: 24px;
-  margin-top: 30px;
-}
-.record {
-  border-bottom: 1px solid #28313c;
-  padding: 18px 0;
-  align-items: start;
-}
-.muted,
-code {
-  font-size: 13px;
-  color: #9aabc0;
-}
-.path,
-code,
-pre {
-  overflow-wrap: anywhere;
-}
-summary {
-  cursor: pointer;
-  padding: 12px 0;
-}
-form {
-  max-width: 620px;
-}
-label {
-  display: grid;
-  gap: 8px;
-  margin: 16px 0;
-  font-size: 14px;
-  flex: 1;
-}
-input,
-select {
-  font: inherit;
-  background: #1f2731;
-  color: #e6e9ee;
-  border: 1px solid #465263;
-  border-radius: 6px;
-  padding: 11px;
-  width: 100%;
-}
-pre {
-  white-space: pre-wrap;
-  font-size: 13px;
-  line-height: 1.6;
-}
-[role="alert"] {
-  color: #ffc2b9;
-}
-.notice {
-  border-left: 3px solid #a1c8fc;
-  padding-left: 20px;
+
+@utility rise-in {
+  animation: vectis-rise-in var(--vectis-duration-enter) var(--vectis-ease-out) backwards;
 }

@@ -1,236 +1,226 @@
-import { PrepareLinux } from "./prepare-linux.js";
-import { useState, type FormEvent } from "react";
-import { Schema } from "effect";
-import { Environment } from "../../../../packages/protocol/src/index.js";
-import { useStateApi } from "./state.js";
+import { useState } from "react";
+import { EllipsisIcon, PlayIcon, PlusIcon } from "lucide-react";
+import type { Environment } from "../../../../../packages/protocol/src/index.js";
+import { EmptyState, List, Mono, Notice, Page, Row, Section } from "@/components/layout";
+import { PathField } from "@/components/path-field";
+import { StatusBadge } from "@/components/status";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useStateApi } from "@/state";
+import { PrepareEnvironment, RegisterEnvironment } from "./prepare-environment";
+
+const osLabels = { linux: "lnx", macos: "mac", windows: "win" } as const;
 
 export function Environments() {
-  const { snapshot, submit, perform, machineId } = useStateApi();
-  const [storage, setStorage] = useState("");
-  const [issue, setIssue] = useState("");
-  async function register(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setIssue("");
-    const data = new FormData(event.currentTarget);
-    try {
-      const environment = Schema.decodeUnknownSync(Environment)({
-        id: data.get("id"),
-        name: data.get("name"),
-        os: data.get("os"),
-        basePath: data.get("basePath"),
-        cpu: Number(data.get("cpu")),
-        memoryMiB: Number(data.get("memoryMiB")),
-        state: "ready",
-        ...(storage ? { storagePath: storage } : {}),
-        ...(data.get("sshUser") ? { sshUser: data.get("sshUser") } : {}),
-        ...(data.get("sshKeyPath") ? { sshKeyPath: data.get("sshKeyPath") } : {}),
-        ...(data.get("knownHostsPath") ? { knownHostsPath: data.get("knownHostsPath") } : {}),
-        ...(data.get("tpmStatePath") ? { tpmStatePath: data.get("tpmStatePath") } : {}),
-        ...(data.get("firmwarePath") ? { firmwarePath: data.get("firmwarePath") } : {}),
-        ...(data.get("firmwareVarsPath") ? { firmwareVarsPath: data.get("firmwareVarsPath") } : {}),
-      });
-      await submit({ type: "environment.register", environment });
-    } catch {
-      setIssue("Check the environment identifier, OS, paths and resource values.");
-    }
-  }
+  const { snapshot, machineId } = useStateApi();
+  const [adding, setAdding] = useState(false);
+  const [message, setMessage] = useState("");
   return (
-    <>
-      <h1>Environments</h1>
-      <PrepareLinux />
-      <p>Prepared guest images are the clean starting point for each virtual machine.</p>
-      {snapshot?.environments.map((environment) => (
-        <EnvironmentRow key={environment.id} environment={environment} />
-      ))}
-      <details className="section">
-        <summary>Register a prepared image</summary>
-        <p>
-          Use an existing Linux disk, macOS bundle or Windows image. Guided image preparation is
-          still being integrated.
-        </p>
-        <form onSubmit={(event) => void register(event)}>
-          <label>
-            Identifier
-            <input required name="id" pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}" />
-          </label>
-          <label>
-            Name
-            <input required name="name" />
-          </label>
-          <label>
-            Operating system
-            <select name="os">
-              <option value="linux">Ubuntu Linux ARM64</option>
-              <option value="macos">macOS ARM64</option>
-              <option value="windows">Windows ARM64</option>
-            </select>
-          </label>
-          <label>
-            Base image or bundle path
-            <input required name="basePath" />
-          </label>
-          <div className="row">
-            <label>
-              CPU cores
-              <input name="cpu" type="number" min="1" defaultValue="2" required />
-            </label>
-            <label>
-              Memory (MiB)
-              <input
-                name="memoryMiB"
-                type="number"
-                min="512"
-                step="512"
-                defaultValue="4096"
-                required
+    <Page
+      title="Environments"
+      description="Prepared guest images. Every job starts from a clean copy of one."
+      actions={
+        <Button variant="secondary" size="sm" onClick={() => setAdding(true)}>
+          <PlusIcon />
+          Add environment
+        </Button>
+      }
+    >
+      {machineId && <Notice>File paths refer to the selected remote machine.</Notice>}
+      {message && <Notice tone="success">{message}</Notice>}
+      <Section title="Guest images">
+        {!snapshot?.environments.length ? (
+          <EmptyState>
+            No environments yet. Add one to prepare Ubuntu, macOS or Windows for your jobs.
+          </EmptyState>
+        ) : (
+          <List>
+            {snapshot.environments.map((environment) => (
+              <EnvironmentRow key={environment.id} environment={environment} />
+            ))}
+          </List>
+        )}
+      </Section>
+      <Dialog open={adding} onOpenChange={setAdding}>
+        <DialogContent className="max-h-[calc(100vh-4rem)] overflow-y-auto sm:max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Add environment</DialogTitle>
+            <DialogDescription>
+              Prepare a new guest image, or register one you already have.
+            </DialogDescription>
+          </DialogHeader>
+          <Tabs defaultValue="prepare">
+            <TabsList variant="line" className="mb-4">
+              <TabsTrigger value="prepare">Prepare new</TabsTrigger>
+              <TabsTrigger value="register">Register existing</TabsTrigger>
+            </TabsList>
+            <TabsContent value="prepare">
+              <PrepareEnvironment
+                onDone={() => {
+                  setAdding(false);
+                  setMessage("Preparation requested. Follow, cancel or resume it in Overview.");
+                }}
               />
-            </label>
-          </div>
-          <label>
-            VM storage directory
-            <input
-              value={storage}
-              onChange={(e) => setStorage(e.target.value)}
-              placeholder="Service default"
-            />
-          </label>
-          <button
-            type="button"
-            disabled={!!machineId}
-            className="secondary"
-            onClick={() =>
-              void perform("chooseDirectory").then((value) => {
-                if (typeof value === "string") setStorage(value);
-              })
-            }
-          >
-            Choose storage folder
-          </button>
-          <details>
-            <summary>Guest SSH access</summary>
-            <p>
-              Provide guest-only credentials. The pinned host key entry must use the environment ID
-              as its host alias. No host credentials are copied into the VM.
-            </p>
-            <label>
-              Guest username
-              <input name="sshUser" />
-            </label>
-            <label>
-              Guest SSH identity file
-              <input name="sshKeyPath" />
-            </label>
-            <label>
-              Pinned known_hosts file
-              <input name="knownHostsPath" />
-            </label>
-          </details>
-          <details>
-            <summary>Windows firmware and TPM</summary>
-            <label>
-              Prepared TPM state directory
-              <input name="tpmStatePath" />
-            </label>
-            <label>
-              UEFI code image
-              <input name="firmwarePath" />
-            </label>
-            <label>
-              UEFI variable template
-              <input name="firmwareVarsPath" />
-            </label>
-          </details>
-          <button disabled={!snapshot} type="submit">
-            Register image
-          </button>
-          {issue && <p role="alert">{issue}</p>}
-        </form>
-      </details>
-    </>
+            </TabsContent>
+            <TabsContent value="register">
+              <RegisterEnvironment
+                onDone={() => {
+                  setAdding(false);
+                  setMessage("Registration requested. The environment appears here when ready.");
+                }}
+              />
+            </TabsContent>
+          </Tabs>
+        </DialogContent>
+      </Dialog>
+    </Page>
   );
 }
+
 function EnvironmentRow({ environment }: { environment: Environment }) {
-  const { submit, perform, machineId } = useStateApi();
+  const { submit } = useStateApi();
+  const [configuring, setConfiguring] = useState(false);
+  return (
+    <Row
+      leading={
+        <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted font-mono text-[11px] text-muted-foreground">
+          {osLabels[environment.os]}
+        </span>
+      }
+      title={environment.name}
+      detail={
+        <>
+          {environment.cpu} cores · {environment.memoryMiB} MiB ·{" "}
+          <Mono>{environment.basePath}</Mono>
+        </>
+      }
+      trailing={
+        <>
+          <StatusBadge
+            tone={environment.state === "ready" ? "success" : "attention"}
+            label={environment.state === "ready" ? "Ready" : "Action required"}
+          />
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={environment.state !== "ready"}
+            onClick={() => void submit({ type: "environment.start", id: environment.id })}
+          >
+            <PlayIcon />
+            Start clean VM
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="icon-sm" aria-label={`${environment.name} actions`} />
+              }
+            >
+              <EllipsisIcon />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuItem onClick={() => setConfiguring(true)}>
+                Resources and storage…
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <ConfigureEnvironment
+            environment={environment}
+            open={configuring}
+            onOpenChange={setConfiguring}
+          />
+        </>
+      }
+    />
+  );
+}
+
+function ConfigureEnvironment({
+  environment,
+  open,
+  onOpenChange,
+}: {
+  environment: Environment;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { submit } = useStateApi();
   const [cpu, setCpu] = useState(environment.cpu);
   const [memoryMiB, setMemory] = useState(environment.memoryMiB);
   const [storagePath, setStorage] = useState(environment.storagePath ?? "");
   return (
-    <section className="section">
-      <div className="row spread">
-        <div>
-          <h2>{environment.name}</h2>
-          <span className="status">
-            {environment.os} / {environment.state}
-          </span>
-        </div>
-        <button
-          disabled={environment.state !== "ready"}
-          onClick={() => void submit({ type: "environment.start", id: environment.id })}
-        >
-          Start clean VM
-        </button>
-      </div>
-      <p className="path">{environment.basePath}</p>
-      <details>
-        <summary>Resources and storage</summary>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{environment.name}</DialogTitle>
+          <DialogDescription>Changes apply to VMs started from now on.</DialogDescription>
+        </DialogHeader>
         <form
-          onSubmit={(e) => {
-            e.preventDefault();
+          className="flex flex-col gap-5"
+          onSubmit={(event) => {
+            event.preventDefault();
             void submit({
               type: "environment.configure",
               id: environment.id,
               cpu,
               memoryMiB,
               ...(storagePath ? { storagePath } : {}),
-            });
+            }).then((value) => value !== undefined && onOpenChange(false));
           }}
         >
-          <div className="row">
-            <label>
-              CPU cores
-              <input
-                type="number"
-                required
-                min="1"
-                value={cpu}
-                onChange={(e) => setCpu(e.target.valueAsNumber)}
-              />
-            </label>
-            <label>
-              Memory (MiB)
-              <input
-                type="number"
-                required
-                min="512"
-                step="512"
-                value={memoryMiB}
-                onChange={(e) => setMemory(e.target.valueAsNumber)}
-              />
-            </label>
-          </div>
-          <label>
-            VM directory
-            <input
+          <FieldGroup className="gap-4">
+            <div className="grid grid-cols-2 gap-4">
+              <Field>
+                <FieldLabel htmlFor={`${environment.id}-cpu`}>CPU cores</FieldLabel>
+                <Input
+                  id={`${environment.id}-cpu`}
+                  type="number"
+                  required
+                  min="1"
+                  value={cpu}
+                  onChange={(event) => setCpu(event.target.valueAsNumber)}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor={`${environment.id}-memory`}>Memory (MiB)</FieldLabel>
+                <Input
+                  id={`${environment.id}-memory`}
+                  type="number"
+                  required
+                  min="512"
+                  step="512"
+                  value={memoryMiB}
+                  onChange={(event) => setMemory(event.target.valueAsNumber)}
+                />
+              </Field>
+            </div>
+            <PathField
+              label="VM directory"
+              chooser="chooseDirectory"
               value={storagePath}
-              onChange={(e) => setStorage(e.target.value)}
+              onChange={setStorage}
               placeholder="Service default"
             />
-          </label>
-          <button
-            type="button"
-            disabled={!!machineId}
-            className="secondary"
-            onClick={() =>
-              void perform("chooseDirectory").then((value) => {
-                if (typeof value === "string") setStorage(value);
-              })
-            }
-          >
-            Choose folder
-          </button>
-          <button type="submit">Save for future VMs</button>
+          </FieldGroup>
+          <div className="flex justify-end">
+            <Button type="submit">Save for future VMs</Button>
+          </div>
         </form>
-      </details>
-    </section>
+      </DialogContent>
+    </Dialog>
   );
 }
