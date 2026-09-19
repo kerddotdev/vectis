@@ -62,7 +62,7 @@ const paths = await packager({
   dir: join(source, "application"),
   out: output,
   name: "Vectis Dev",
-  appBundleId: "dev.kerd.vectis.desktop",
+  appBundleId: "com.kerddotdev.vectis",
   appVersion: packaged.version,
   buildVersion: "1",
   platform: "darwin",

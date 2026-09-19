@@ -7,7 +7,7 @@ func fail(_ message: String) -> Never {
 }
 
 guard let resources = Bundle.main.resourceURL,
-      Bundle.main.bundleIdentifier == "dev.kerd.vectis.runtime" else {
+      Bundle.main.bundleIdentifier == "com.kerddotdev.vectis.runtime" else {
     fail("Run Vectis from its complete runtime application bundle.")
 }
 

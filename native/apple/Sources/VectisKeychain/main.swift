@@ -11,7 +11,7 @@ let authenticationContext = LAContext()
 authenticationContext.interactionNotAllowed = true
 let query: [String: Any] = [
     kSecClass as String: kSecClassGenericPassword,
-    kSecAttrService as String: "sh.vectis.machine",
+    kSecAttrService as String: "com.kerddotdev.vectis.machine",
     kSecAttrAccount as String: arguments[2],
     kSecAttrSynchronizable as String: false,
     kSecUseAuthenticationContext as String: authenticationContext,

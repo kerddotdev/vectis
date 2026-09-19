@@ -56,7 +56,7 @@ export class LaunchAgent {
       throw new VectisError("unsupported_host", "Login services require a non-root macOS user.");
     const absolute = resolve(home);
     const canonical = await canonicalPath(absolute);
-    const label = `dev.kerd.vectis.${createHash("sha256").update(canonical).digest("hex").slice(0, 24)}`;
+    const label = `com.kerddotdev.vectis.${createHash("sha256").update(canonical).digest("hex").slice(0, 24)}`;
     return new LaunchAgent(
       canonical,
       label,

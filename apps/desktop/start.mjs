@@ -59,7 +59,7 @@ async function developmentBundle() {
   const info = {
     CFBundleName: "Vectis Dev",
     CFBundleDisplayName: "Vectis Dev",
-    CFBundleIdentifier: "dev.kerd.vectis.desktop.local",
+    CFBundleIdentifier: "com.kerddotdev.vectis.dev.local",
   };
   try {
     const icons = await brandIcons(join(runtime, "brand"));
