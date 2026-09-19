@@ -1,0 +1,8 @@
+{
+  "name": "Vectis",
+  "short_name": "Vectis",
+  "icons": [{ "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }],
+  "theme_color": "#1d1a17",
+  "background_color": "#1d1a17",
+  "display": "browser"
+}
