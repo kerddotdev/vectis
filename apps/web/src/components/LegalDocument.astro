@@ -1,0 +1,115 @@
+---
+import type { MarkdownInstance } from "astro";
+import PageHero from "./PageHero.astro";
+import Base from "../layouts/Base.astro";
+
+interface Props {
+  document: MarkdownInstance<{
+    title: string;
+    description: string;
+    summary: string;
+    effective: string;
+  }>;
+}
+const { document } = Astro.props;
+const { frontmatter, Content } = document;
+const sections = document.getHeadings().filter((heading) => heading.depth === 2);
+---
+
+<Base title={frontmatter.title} description={frontmatter.description}>
+  <PageHero title={frontmatter.title}>
+    <p>{frontmatter.summary}</p>
+    <p class="eyebrow mt-6">Effective {frontmatter.effective}</p>
+  </PageHero>
+  <div
+    class="shell grid grid-cols-1 gap-12 border-t border-hairline pt-14 pb-28 lg:grid-cols-[15rem_1fr] lg:gap-16"
+  >
+    <nav aria-label="Sections" class="lg:sticky lg:top-24 lg:self-start">
+      <ol class="flex flex-col gap-2 text-[15px] text-muted">
+        {
+          sections.map((section) => (
+            <li>
+              <a class="transition-colors hover:text-foreground" href={`#${section.slug}`}>
+                {section.text}
+              </a>
+            </li>
+          ))
+        }
+      </ol>
+    </nav>
+    <article class="legal flex max-w-[68ch] min-w-0 flex-col">
+      <Content />
+    </article>
+  </div>
+</Base>
+
+<style>
+  .legal :global(h2) {
+    margin-top: 3.5rem;
+    margin-bottom: 1rem;
+    font-size: 1.5rem;
+    font-weight: 500;
+    scroll-margin-top: 6rem;
+  }
+  .legal :global(h2:first-child) {
+    margin-top: 0;
+  }
+  .legal :global(h3) {
+    margin-top: 2rem;
+    margin-bottom: 0.75rem;
+    font-size: 1.125rem;
+    font-weight: 500;
+    scroll-margin-top: 6rem;
+  }
+  .legal :global(p),
+  .legal :global(li) {
+    color: var(--vectis-muted);
+    line-height: 1.7;
+  }
+  .legal :global(p) {
+    margin-bottom: 1rem;
+  }
+  .legal :global(ul) {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+    padding-left: 1.25rem;
+    list-style: disc;
+  }
+  .legal :global(strong) {
+    color: var(--vectis-foreground);
+    font-weight: 500;
+  }
+  .legal :global(a) {
+    color: var(--vectis-brand);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in oklch, var(--vectis-brand) 35%, transparent);
+    text-underline-offset: 4px;
+  }
+  .legal :global(code) {
+    font-family: var(--vectis-font-mono);
+    font-size: 0.9em;
+  }
+  .legal :global(table) {
+    display: block;
+    overflow-x: auto;
+    margin-bottom: 1.5rem;
+    border-collapse: collapse;
+    font-size: 15px;
+  }
+  .legal :global(th),
+  .legal :global(td) {
+    padding: 0.75rem 1rem 0.75rem 0;
+    border-bottom: 1px solid var(--vectis-hairline);
+    text-align: left;
+    vertical-align: top;
+  }
+  .legal :global(th) {
+    color: var(--vectis-foreground);
+    font-weight: 500;
+  }
+  .legal :global(td) {
+    color: var(--vectis-muted);
+  }
+</style>
