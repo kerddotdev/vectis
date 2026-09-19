@@ -19,6 +19,7 @@ import { RemoteClient } from "../../../packages/client/src/remote.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
 import { cloudDeployment, resolveHome } from "../../../packages/client/src/deployment.js";
 import { desktopTarget } from "./target.js";
+import { commandLineStatus, installCommandLine, shellPath } from "./command-line.js";
 import { trafficLightPosition, type Route, type WindowEvent } from "./chrome.js";
 import type { DesktopReply } from "./bridge.js";
 if (app.isPackaged) {
@@ -216,6 +217,18 @@ else {
               await shell.openExternal(input);
               data = null;
               break;
+            case "cli.status":
+            case "cli.install": {
+              if (!app.isPackaged)
+                throw new VectisError(
+                  "unsupported_in_development",
+                  "Command line tools install from the packaged app.",
+                  "From a source checkout, run pnpm vectis and pnpm mcp.",
+                );
+              if (action === "cli.install") await installCommandLine(process.resourcesPath);
+              data = await commandLineStatus(process.resourcesPath, undefined, await shellPath());
+              break;
+            }
             case "open.docs":
               await shell.openExternal("https://vectis.kerd.dev/docs");
               data = null;

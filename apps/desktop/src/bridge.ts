@@ -24,7 +24,9 @@ export type DesktopAction =
   | "cloud.finish"
   | "open.pull"
   | "open.docs"
-  | "open.github";
+  | "open.github"
+  | "cli.status"
+  | "cli.install";
 export type DesktopReply =
   | { ok: true; data: unknown }
   | { ok: false; error: { code: string; message: string; nextStep: string } };

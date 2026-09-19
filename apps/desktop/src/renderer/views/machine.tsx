@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatBytes, formatMemory, formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { useStateApi } from "@/state";
+import { request, useStateApi } from "@/state";
 
 function useMeasurement<T>(
   cache: Map<string, T>,
@@ -245,8 +245,63 @@ const components = [
   },
 ] as const;
 
+const CommandLine = Schema.Struct({
+  directory: Schema.String,
+  installed: Schema.Boolean,
+  onPath: Schema.optional(Schema.Boolean),
+});
+
+function CommandLineTools() {
+  const [status, setStatus] = useState<typeof CommandLine.Type | null>(null);
+  const [message, setMessage] = useState("");
+  const [pending, setPending] = useState(false);
+  async function load(action: "cli.status" | "cli.install") {
+    setPending(true);
+    try {
+      setStatus(Schema.decodeUnknownSync(CommandLine)(await request(action)));
+      setMessage("");
+    } catch (issue) {
+      setMessage(issue instanceof Error ? issue.message : "The request failed.");
+    } finally {
+      setPending(false);
+    }
+  }
+  useEffect(() => {
+    void load("cli.status");
+  }, []);
+  return (
+    <Section
+      title="Command line tools"
+      description="Run vectis and vectis-mcp from any terminal or agent. The tools run from this app and update with it."
+    >
+      {message && <Notice tone="attention">{message}</Notice>}
+      {status && (
+        <List>
+          <Row
+            title={<Mono>{`${status.directory}/vectis`}</Mono>}
+            detail={
+              status.installed && status.onPath === false
+                ? `Add ${status.directory} to PATH in your shell profile to run vectis by name.`
+                : "Also installs vectis-mcp for agent integrations."
+            }
+            trailing={
+              status.installed ? (
+                <StatusBadge tone="success" label="Installed" />
+              ) : (
+                <Button size="sm" disabled={pending} onClick={() => void load("cli.install")}>
+                  Install
+                </Button>
+              )
+            }
+          />
+        </List>
+      )}
+    </Section>
+  );
+}
+
 export function Diagnostics() {
-  const { perform } = useStateApi();
+  const { perform, machineId } = useStateApi();
   const [help, setHelp] = useState(false);
   const { report, pending, error, measure } = useMeasurement(
     diagnosticsCache,
@@ -325,6 +380,7 @@ export function Diagnostics() {
               </Button>
             )}
           </Section>
+          {!machineId && <CommandLineTools />}
           <Section title="Service data">
             <Details items={[["State directory", <Mono key="home">{report.home}</Mono>]]} />
           </Section>
