@@ -226,6 +226,7 @@ export default function Connect() {
       <ClerkProvider
         publishableKey={publishableKey}
         afterSignOutUrl="/connect"
+        telemetry={false}
         appearance={{
           variables: {
             colorBackground: resolveColor("--vectis-raised"),
