@@ -1,5 +1,6 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation, internalQuery } from "./_generated/server.js";
+import { internalMutation, internalQuery, query } from "./_generated/server.js";
+import { human } from "./auth.js";
 
 export const create = internalMutation({
   args: {
@@ -90,5 +91,14 @@ export const runnerProbeCredentials = internalQuery({
     if (!linked || !app)
       throw new Error("Link the GitHub account before preparing a runner probe.");
     return { appId: app.appId, clientId: app.clientId, privateKey: app.privateKey };
+  },
+});
+
+export const installation = query({
+  args: {},
+  handler: async (ctx) => {
+    await human(ctx);
+    const app = await ctx.db.query("githubApps").first();
+    return app ? { url: `https://github.com/apps/${app.slug}/installations/new` } : null;
   },
 });

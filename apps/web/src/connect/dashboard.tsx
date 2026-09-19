@@ -174,6 +174,7 @@ function Overview({
   onOpen: (tab: Tab) => void;
 }) {
   const link = useLinkGitHub();
+  const installation = useQuery(api.githubAppSetup.installation, {});
   if (!machines || !identity || !bindings) return <Pending>Loading your account</Pending>;
   const steps = {
     mac: machines.length > 0,
@@ -224,11 +225,23 @@ function Overview({
             index={3}
             title="Install the Vectis GitHub App"
             action={
-              steps.github && (
-                <Button small variant="secondary" disabled={link.working} onClick={link.start}>
-                  Link again to refresh
-                </Button>
-              )
+              <span className="flex flex-wrap justify-end gap-2">
+                {installation && (
+                  <a
+                    className={buttonClass(steps.app ? "secondary" : "primary", true)}
+                    href={installation.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Install App
+                  </a>
+                )}
+                {steps.github && (
+                  <Button small variant="secondary" disabled={link.working} onClick={link.start}>
+                    Link again to refresh
+                  </Button>
+                )}
+              </span>
             }
           >
             Install it on the account or organization that owns your repositories, then link the
