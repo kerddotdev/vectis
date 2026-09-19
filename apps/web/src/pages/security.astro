@@ -44,9 +44,9 @@ const sections = [
   {
     title: "In the Vectis cloud",
     points: [
-      "The cloud coordinates identity, GitHub access and remote commands. It stores machine names, environment summaries, repository connections, job states and operation results.",
+      "The cloud coordinates identity, GitHub access and remote commands. It stores your account ID, linked GitHub logins and installations, machine names, environment summaries, repository connections, job states and operation results. Workflow files read for a migration preview are kept for 24 hours, and answers to remote queries for about a minute.",
       "Machine and controller credentials stay in Keychain on each device. The cloud keeps only their fingerprints, and GitHub user tokens are used during verification and never saved.",
-      "The GitHub App private key lives only in the cloud. The single-use runner configuration it creates is held for at most 15 minutes and cleared once the runner is released.",
+      "The GitHub App private key and webhook secret live only in the cloud. The single-use runner configuration it creates is deleted once the runner is released, and after 15 minutes at the latest.",
     ],
   },
   {
@@ -131,11 +131,18 @@ const sections = [
       <div class="flex max-w-[60ch] flex-col items-start gap-6 text-lede text-muted">
         <p>
           Please report security issues privately through a GitHub security advisory rather than a
-          public issue. Include the version, what you observed and how to reproduce it.
+          public issue, or email <a class="prose-link" href="mailto:security@kerd.dev"
+            >security@kerd.dev</a
+          >. Include the version, what you observed and how to reproduce it.
         </p>
-        <a class="button button-secondary" href={`${site.repository}/security/advisories/new`}>
-          Report a vulnerability
-        </a>
+        <div class="flex flex-wrap gap-3">
+          <a class="button button-secondary" href={`${site.repository}/security/advisories/new`}>
+            Report a vulnerability
+          </a>
+          <a class="button button-secondary" href={`${site.repository}/blob/main/SECURITY.md`}>
+            Security policy
+          </a>
+        </div>
       </div>
     </section>
   </div>

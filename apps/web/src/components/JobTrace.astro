@@ -1,9 +1,9 @@
 ---
 const steps = [
-  ["push", "kerddotdev/vectis@main"],
+  ["push", "your-org/app@main"],
   ["queued", "runs-on: vectis-macos-26-arm64"],
   ["running", "fresh macOS 26 VM, 6 CPU, 12 GB"],
-  ["succeeded", "4m 12s"],
+  ["succeeded", "job finished"],
   ["cleaned up", "VM deleted, runner removed"],
 ] as const;
 ---
@@ -12,7 +12,7 @@ const steps = [
   <svg
     viewBox="0 0 1152 200"
     role="img"
-    aria-label="A push to kerddotdev/vectis is queued for vectis-macos-26-arm64, runs in a fresh macOS 26 virtual machine, succeeds, and the VM and runner registration are removed."
+    aria-label="A push to a repository is queued for vectis-macos-26-arm64, runs in a fresh macOS 26 virtual machine, succeeds, and the VM and runner registration are removed."
   >
     <path class="rail" d="M8 100H860"></path>
     <path class="hot a" pathLength="1" d="M8 100H370"></path>
@@ -28,12 +28,12 @@ const steps = [
     <circle class="node end" cx="940" cy="150" r="5"></circle>
     <g class="labels">
       <text class="strong l1" x="8" y="72">push</text>
-      <text class="l1" x="8" y="136">kerddotdev/vectis@main</text>
+      <text class="l1" x="8" y="136">your-org/app@main</text>
       <text class="strong l2" x="370" y="72" text-anchor="middle">queued</text>
       <text class="l2" x="370" y="136" text-anchor="middle">runs-on: vectis-macos-26-arm64</text>
       <text class="l3" x="660" y="52" text-anchor="middle">fresh VM · 6 CPU · 12 GB</text>
       <text class="strong l3" x="660" y="160" text-anchor="middle">running · macOS 26</text>
-      <text class="strong l4" x="958" y="55">succeeded · 4m 12s</text>
+      <text class="strong l4" x="958" y="55">succeeded</text>
       <text class="l4" x="958" y="155">VM deleted · runner removed</text>
     </g>
   </svg>

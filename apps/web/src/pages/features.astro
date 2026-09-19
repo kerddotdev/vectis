@@ -28,6 +28,8 @@ const mcpTools = [
   "vectis_capabilities",
   "vectis_command",
   "vectis_wait",
+  "vectis_operation",
+  "vectis_logs",
   "vectis_jobs",
   "vectis_repositories",
   "vectis_storage",
@@ -36,17 +38,18 @@ const mcpTools = [
   "vectis_github_connect",
   "vectis_service",
   "vectis_cloud",
+  "vectis_machines",
 ];
 const remote = `<span class="p">$</span> vectis login
 <span class="p">$</span> vectis machine list <span class="k">--json</span>
 <span class="p">$</span> vectis status <span class="k">--machine</span> studio <span class="k">--json</span>
 <span class="p">$</span> vectis runner run bind_app <span class="k">--machine</span> studio <span class="k">--json</span>`;
-const migration = `<span class="p">$</span> vectis migration analyze bind_app <span class="k">--wait --json</span>
-<span class="p">$</span> vectis migration publish prev_19c3 <span class="k">--wait --json</span>
+const migration = `<span class="p">$</span> vectis migration preview .github/workflows/test.yml \\
+    <span class="k">--map</span> ubuntu-24.04-arm=vectis-ubuntu <span class="k">--wait --json</span>
+<span class="dim">{"status":</span> <span class="k">"succeeded"</span><span class="dim">, "result": {"changed":</span> true<span class="dim">, "findings": [], ...}}</span>
 
-<span class="dim">branch</span>   vectis/migrate-workflows
-<span class="dim">changed</span>  runs-on: macos-latest <span class="dim">-&gt;</span> vectis-macos-26-arm64
-<span class="dim">skipped</span>  runs-on: ubuntu-latest <span class="dim">(x64, left as is)</span>`;
+<span class="p">$</span> vectis migration analyze bind_app <span class="k">--wait --json</span>
+<span class="p">$</span> vectis migration publish prev_19c3 <span class="k">--wait --json</span>`;
 ---
 
 <Base
@@ -103,8 +106,9 @@ const migration = `<span class="p">$</span> vectis migration analyze bind_app <s
       <Feature id="guests" title="Prepare a guest once.">
         <p>
           Vectis downloads macOS 26 from Apple and Ubuntu 24.04 from Canonical and checks each image
-          against a pinned SHA-256 before using it. Windows 11 installs from your own ISO, drivers
-          and license, with UEFI Secure Boot and a TPM.
+          against a pinned SHA-256 before using it. Windows 11 support is experimental: it installs
+          from your own ISO, drivers, firmware and license, with a software TPM, and needs QEMU
+          installed separately.
         </p>
         <p>
           You decide the CPU, memory and disk for each environment, and where images and VM disks
