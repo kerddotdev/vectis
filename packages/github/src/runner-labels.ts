@@ -1,5 +1,8 @@
 import type { Environment } from "../../protocol/src/index.js";
 
+// The only label a workflow needs in runs-on to reach this environment.
+export const workflowLabel = (environmentId: string) => `vectis-${environmentId}`;
+
 export function runnerLabels(os: Environment["os"], environmentId: string) {
   return [
     "self-hosted",

@@ -6,6 +6,7 @@ export const MachineRepositories = Schema.Array(
     repositoryId: Schema.Int,
     repositoryName: Schema.NonEmptyString,
     environmentId: Identifier,
+    runsOn: Schema.optional(Schema.String),
     automatic: Schema.optional(Schema.Boolean),
   }),
 );

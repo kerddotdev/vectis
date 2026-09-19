@@ -5,7 +5,7 @@ import { EllipsisIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { MachineRepositories } from "../../../../../packages/protocol/src/repositories.js";
 import { GitHubIcon } from "@/components/github-icon";
 import { Hint, Reason } from "@/components/hint";
-import { EmptyState, ExpandableRow, List, Notice, Page, Section } from "@/components/layout";
+import { EmptyState, ExpandableRow, List, Mono, Notice, Page, Section } from "@/components/layout";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import {
@@ -136,6 +136,12 @@ export function Repositories() {
                     <span className="inline-flex items-center gap-1.5">
                       {environment && <OsIcon os={environment.os} className="size-3" />}
                       Runs in {environment?.name ?? repository.environmentId}
+                      {repository.runsOn && (
+                        <>
+                          {" · runs-on: "}
+                          <Mono>{repository.runsOn}</Mono>
+                        </>
+                      )}
                     </span>
                   }
                   actions={

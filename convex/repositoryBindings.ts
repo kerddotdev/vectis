@@ -3,6 +3,7 @@ import { internalMutation, internalQuery, mutation, query } from "./_generated/s
 import type { QueryCtx, MutationCtx } from "./_generated/server.js";
 import type { Id } from "./_generated/dataModel.js";
 import { human, machine } from "./auth.js";
+import { workflowLabel } from "../packages/github/src/runner-labels.js";
 
 const authority = {
   owner: v.string(),
@@ -87,10 +88,14 @@ export const list = query({
   args: {},
   handler: async (ctx) => {
     const owner = await human(ctx);
-    return ctx.db
+    const bindings = await ctx.db
       .query("repositoryBindings")
       .withIndex("by_owner", (q) => q.eq("owner", owner))
       .take(100);
+    return bindings.map((binding) => ({
+      ...binding,
+      runsOn: workflowLabel(binding.environmentId),
+    }));
   },
 });
 export const forMachine = query({
@@ -111,6 +116,7 @@ export const forMachine = query({
           repositoryId: binding.repositoryId,
           repositoryName: `${binding.repositoryOwner ?? account.login}/${binding.repositoryName}`,
           environmentId: binding.environmentId,
+          runsOn: workflowLabel(binding.environmentId),
           automatic: binding.automatic ?? false,
         });
     }

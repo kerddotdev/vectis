@@ -57,6 +57,7 @@ test("bindings deduplicate and disappear from machine admission when disabled", 
       repositoryId: 42,
       repositoryName: "owner/sandbox",
       environmentId: "linux",
+      runsOn: "vectis-linux",
       automatic: false,
     },
   ]);

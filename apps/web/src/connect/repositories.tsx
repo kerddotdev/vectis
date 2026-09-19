@@ -8,6 +8,7 @@ import { Header, online, type Bindings, type Identity, type Machines } from "./d
 import {
   ActionMenu,
   Button,
+  Code,
   cx,
   Dialog,
   Empty,
@@ -170,6 +171,12 @@ export function RepositoriesTab({
                                       <span className="block truncate text-[13px] text-muted">
                                         {machine?.name ?? "A removed Mac"}
                                         {machine && !online(machine) && ", offline"}
+                                        {binding.enabled && (
+                                          <>
+                                            {" · runs-on: "}
+                                            <Code>{binding.runsOn}</Code>
+                                          </>
+                                        )}
                                       </span>
                                     </span>
                                     {binding.enabled ? (
