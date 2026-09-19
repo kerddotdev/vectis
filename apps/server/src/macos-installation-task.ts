@@ -107,7 +107,11 @@ export async function startMacInstallation(
   await recoverMacInstallations(store);
   const snapshot = store.snapshot();
   if (snapshot.machine.paused)
-    throw new VectisError("machine_paused", "Resume this machine before installing macOS.");
+    throw new VectisError(
+      "machine_paused",
+      "Resume this machine before installing macOS.",
+      "Run vectis resume, then retry.",
+    );
   if (
     snapshot.instances.some((item) => item.status !== "stopped") ||
     snapshot.operations.some(

@@ -57,7 +57,11 @@ export async function startWindowsInstallation(
   await recoverWindowsInstallations(store);
   const snapshot = store.snapshot();
   if (snapshot.machine.paused)
-    throw new VectisError("machine_paused", "Resume the machine before installing Windows.");
+    throw new VectisError(
+      "machine_paused",
+      "Resume the machine before installing Windows.",
+      "Run vectis resume, then retry.",
+    );
   if (
     snapshot.preparationBusy ||
     snapshot.instances.some((item) => item.status !== "stopped") ||

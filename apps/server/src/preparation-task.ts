@@ -36,7 +36,11 @@ export async function startPreparation(
       "Image preparation requires an idle machine with no unresolved runners.",
     );
   if (snapshot.machine.paused)
-    throw new VectisError("machine_paused", "Resume the machine before preparing a guest.");
+    throw new VectisError(
+      "machine_paused",
+      "Resume the machine before preparing a guest.",
+      "Run vectis resume, then retry.",
+    );
   let preparation: Preparation;
   if (command.type === "environment.resume") {
     preparation = Schema.decodeUnknownSync(Preparation)(store.get("preparation", command.id));
