@@ -7,6 +7,7 @@ export type DesktopAction =
   | "status"
   | "storage"
   | "doctor"
+  | "logs"
   | "repositories"
   | "github.accounts"
   | "jobs"

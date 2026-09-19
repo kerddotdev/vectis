@@ -31,6 +31,8 @@ export async function answerInspection(
           return local.jobs(query.bindingId);
         case "operation":
           return local.operation(query.id, signal);
+        case "logs":
+          return local.logs(query.lines);
       }
     })();
     signal.throwIfAborted();

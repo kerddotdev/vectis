@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { ServiceLog } from "../../protocol/src/logs.js";
 import { Snapshot, Operation as OperationSchema } from "../../protocol/src/index.js";
 import { LocalQuery } from "../../protocol/src/controller.js";
 import { Diagnostics } from "../../protocol/src/diagnostics.js";
@@ -186,6 +187,11 @@ export class RemoteClient {
   }
   async capabilities() {
     return this.inspect({ name: "capabilities" });
+  }
+  async logs(lines?: number) {
+    return Schema.decodeUnknownSync(ServiceLog)(
+      await this.inspect(lines === undefined ? { name: "logs" } : { name: "logs", lines }),
+    );
   }
   async localOperation(id: string, signal?: AbortSignal) {
     return Schema.decodeUnknownSync(OperationSchema)(

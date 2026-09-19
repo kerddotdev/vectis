@@ -3,6 +3,7 @@ import { Schema } from "effect";
 import { CircleHelpIcon, RefreshCwIcon } from "lucide-react";
 import { Diagnostics as DiagnosticsReport } from "../../../../../packages/protocol/src/diagnostics.js";
 import { StorageReport, type StorageUsage } from "../../../../../packages/protocol/src/storage.js";
+import { ServiceLog } from "../../../../../packages/protocol/src/logs.js";
 import {
   Details,
   EmptyState,
@@ -300,6 +301,49 @@ function CommandLineTools() {
   );
 }
 
+function ServiceLogSection() {
+  const { perform, machineId } = useStateApi();
+  const [log, setLog] = useState<ServiceLog | null>(null);
+  const [pending, setPending] = useState(false);
+  async function load() {
+    setPending(true);
+    const value = await perform("logs");
+    setPending(false);
+    if (value !== undefined) setLog(Schema.decodeUnknownSync(ServiceLog)(value));
+  }
+  useEffect(() => {
+    setLog(null);
+    void load();
+  }, [machineId]);
+  return (
+    <Section
+      title="Service log"
+      description="The newest lines the background service wrote. Include them when reporting a problem."
+      actions={
+        <RefreshButton
+          pending={pending}
+          onClick={() => void load()}
+          label="Reload"
+          pendingLabel="Loading"
+        />
+      }
+    >
+      {!log ? (
+        <EmptyState>{pending ? "Loading the service log" : "The log is unavailable."}</EmptyState>
+      ) : log.lines.length === 0 ? (
+        <EmptyState>The service has not written anything yet.</EmptyState>
+      ) : (
+        <pre
+          data-selectable
+          className="max-h-80 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-xs leading-relaxed whitespace-pre-wrap"
+        >
+          {log.lines.join("\n")}
+        </pre>
+      )}
+    </Section>
+  );
+}
+
 export function Diagnostics() {
   const { perform, machineId } = useStateApi();
   const [help, setHelp] = useState(false);
@@ -380,6 +424,7 @@ export function Diagnostics() {
               </Button>
             )}
           </Section>
+          <ServiceLogSection />
           {!machineId && <CommandLineTools />}
           <Section title="Service data">
             <Details items={[["State directory", <Mono key="home">{report.home}</Mono>]]} />

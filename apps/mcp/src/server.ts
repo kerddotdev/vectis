@@ -18,6 +18,7 @@ import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import type { VectisClient } from "../../../packages/client/src/index.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
 import { cloudDeployment } from "../../../packages/client/src/deployment.js";
+import { LogRequest } from "../../../packages/protocol/src/logs.js";
 
 const commandSchema = Schema.toJsonSchemaDocument(Request);
 const waitInput = Schema.Struct({ id: Identifier, timeoutMs: Schema.optional(Schema.Int) });
@@ -25,6 +26,9 @@ const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
 const jobInput = Schema.Struct({ bindingId: Identifier });
 const jobSchema = Schema.toJsonSchemaDocument(jobInput);
+const operationInput = Schema.Struct({ id: Identifier });
+const operationSchema = Schema.toJsonSchemaDocument(operationInput);
+const logSchema = Schema.toJsonSchemaDocument(LogRequest);
 const tools = [
   {
     name: "vectis_github_accounts",
@@ -90,9 +94,23 @@ const tools = [
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
   },
   {
+    name: "vectis_operation",
+    description:
+      "Read one operation's current status, message, next step and result without waiting.",
+    inputSchema: { ...operationSchema.schema, $defs: operationSchema.definitions },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "vectis_logs",
+    description:
+      "Read the newest lines of the Vectis service log (default 200, at most 1000) to diagnose failed or stuck operations.",
+    inputSchema: { ...logSchema.schema, $defs: logSchema.definitions },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "vectis_wait",
     description:
-      "Wait for an operation for up to 120000 ms. Cancelling the wait does not cancel the operation.",
+      "Wait for an operation to finish, for timeoutMs (default 30000, at most 120000). If time runs out, returns the operation as it is now with timedOut: true; call again to keep waiting. Cancelling the wait does not cancel the operation.",
     inputSchema: { ...waitSchema.schema, $defs: waitSchema.definitions },
     annotations: { readOnlyHint: true },
   },
@@ -128,11 +146,14 @@ export function createMcpServer(
       | "wait"
       | "shutdown"
       | "capabilities"
+      | "operation"
+      | "logs"
     >
   >,
   loginService?: () => Promise<LaunchAgent>,
   pairing?: { home: string; credentials: KeychainCredentials },
   machineId?: string,
+  machines?: () => Promise<unknown>,
 ) {
   const availableTools = loginService
     ? [
@@ -156,12 +177,22 @@ export function createMcpServer(
         annotations: { readOnlyHint: false, destructiveHint: false },
       }),
     );
+  if (machines)
+    availableTools.push(
+      ToolSchema.parse({
+        name: "vectis_machines",
+        description:
+          "List the machines owned by the signed-in account, with last-seen presence. Start vectis-mcp with --machine <id> to control one remotely.",
+        inputSchema: emptyInput,
+        annotations: { readOnlyHint: true },
+      }),
+    );
   const server = new Server(
     { name: "vectis", version: buildInfo().version },
     {
       capabilities: { tools: {} },
       instructions:
-        "Start with vectis_capabilities and vectis_status. Only advertised commands are supported. Reuse an idempotency key only for the same command. Inspect failed and action_required outcomes; never report an accepted operation as completed.",
+        "Start with vectis_capabilities and vectis_status. Submit only capabilities of kind command through vectis_command; the rest have their own read tools. Reuse an idempotency key only for the same command. Inspect failed and action_required outcomes with vectis_operation and vectis_logs; never report an accepted operation as completed. Documentation for agents: https://vectis.kerd.dev/llms.txt",
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: availableTools }));
@@ -228,6 +259,29 @@ export function createMcpServer(
         case "vectis_status":
           result = await (await connect()).status();
           break;
+        case "vectis_operation": {
+          const input = Schema.decodeUnknownSync(operationInput, { onExcessProperty: "error" })(
+            request.params.arguments,
+          );
+          result = await (await connect()).operation(input.id);
+          break;
+        }
+        case "vectis_logs": {
+          const input = Schema.decodeUnknownSync(LogRequest, { onExcessProperty: "error" })(
+            request.params.arguments ?? {},
+          );
+          result = await (await connect()).logs(input.lines);
+          break;
+        }
+        case "vectis_machines":
+          if (!machines)
+            throw new VectisError(
+              "setup_required",
+              "Listing machines requires a remote control login.",
+              "Run vectis login and vectis login finish.",
+            );
+          result = await machines();
+          break;
         case "vectis_capabilities":
           result = {
             protocolVersion: 1,
@@ -252,9 +306,20 @@ export function createMcpServer(
           const timeout = input.timeoutMs ?? 30000;
           if (timeout < 1 || timeout > 120000)
             throw new VectisError("invalid_timeout", "Timeout must be between 1 and 120000 ms.");
-          result = await (
-            await connect()
-          ).wait(input.id, AbortSignal.any([context.signal, AbortSignal.timeout(timeout)]));
+          const client = await connect();
+          try {
+            result = await client.wait(
+              input.id,
+              AbortSignal.any([context.signal, AbortSignal.timeout(timeout)]),
+            );
+          } catch (error) {
+            if (
+              context.signal.aborted ||
+              !(error instanceof VectisError && error.code === "wait_cancelled")
+            )
+              throw error;
+            result = { ...(await client.operation(input.id)), timedOut: true };
+          }
           break;
         }
         default:

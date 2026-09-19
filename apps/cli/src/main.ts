@@ -64,6 +64,7 @@ async function main() {
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
       map: { type: "string", multiple: true },
+      lines: { type: "string" },
     },
   });
   const home = resolveHome(values.home);
@@ -108,6 +109,7 @@ Service
   status                        Inspect the machine and recent operations
   storage                       Inspect image and VM disk usage
   doctor                        Inspect host and runtime prerequisites
+  logs [--lines <count>]        Read the newest service log lines (default 200, at most 1000)
   capabilities                  List supported commands and queries with the command schema
   pause | resume                Stop or allow admission of new VMs
 
@@ -159,7 +161,7 @@ Environments
 
 Operations
   operation get <id>            Inspect an operation
-  operation wait <id>           Wait for an operation's terminal state, up to --timeout
+  operation wait <id>           Wait for an operation's terminal state; on --timeout, print it as it is
   operation cancel <id>         Cancel an active operation and release what it owns
   command --file <path>         Submit any protocol command as JSON
   version                       Print the Vectis version
@@ -403,6 +405,15 @@ Documentation: https://vectis.kerd.dev/docs
   )
     throw new VectisError("unknown_command", "Use operation get, wait or cancel.");
   const api = await client();
+  // A wait that runs out of time reports the operation as it is now, with exit code 3.
+  const waitFor = async (id: string) => {
+    try {
+      return await api.wait(id, AbortSignal.timeout(Number(values.timeout ?? 120000)));
+    } catch (error) {
+      if (error instanceof VectisError && error.code === "wait_cancelled") return api.operation(id);
+      throw error;
+    }
+  };
   if (command === "service" && subcommand === "stop") {
     await api.shutdown({ ifIdle: values["if-idle"] ?? false });
     output({ stopping: true });
@@ -430,14 +441,15 @@ Documentation: https://vectis.kerd.dev/docs
   }
   if (command === "operation" && subcommand !== "cancel") {
     if (!id) throw new VectisError("missing_argument", "An operation ID is required.");
-    const operation =
-      subcommand === "wait"
-        ? await api.wait(id, AbortSignal.timeout(Number(values.timeout ?? 120000)))
-        : await api.operation(id);
+    const operation = subcommand === "wait" ? await waitFor(id) : await api.operation(id);
     if (!operation) throw new VectisError("operation_missing", "Operation not found.");
     output(operation);
     if (operation.status === "failed" || operation.status === "cancelled") process.exitCode = 1;
-    if (operation.status === "action_required") process.exitCode = 3;
+    if (["action_required", "accepted", "running"].includes(operation.status)) process.exitCode = 3;
+    return;
+  }
+  if (command === "logs") {
+    output(await api.logs(values.lines === undefined ? undefined : Number(values.lines)));
     return;
   }
   let request: Command;
@@ -598,12 +610,17 @@ Documentation: https://vectis.kerd.dev/docs
       "Run vectis --help.",
     );
   const accepted = await api.submit(request, values.key ?? randomUUID());
-  const result = values.wait
-    ? await api.wait(accepted.id, AbortSignal.timeout(Number(values.timeout ?? 120000)))
-    : accepted;
+  const result = values.wait ? await waitFor(accepted.id) : accepted;
   output(result);
   if (result.status === "failed" || result.status === "cancelled") process.exitCode = 1;
-  if (result.status === "action_required") process.exitCode = 3;
+  if (
+    result.status === "action_required" ||
+    (values.wait &&
+      result.status !== "succeeded" &&
+      result.status !== "failed" &&
+      result.status !== "cancelled")
+  )
+    process.exitCode = 3;
 }
 main().catch((error) => {
   const issue =

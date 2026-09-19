@@ -19,6 +19,8 @@ import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
+import { LogRequest } from "../../../packages/protocol/src/logs.js";
+import { readServiceLog } from "./logs.js";
 import { configuredRelay } from "./cloud.js";
 
 function reply(response: ServerResponse, status: number, body: unknown) {
@@ -185,6 +187,11 @@ export async function startService(
             "Run vectis cloud pair and complete browser approval.",
           );
         return reply(response, 200, await relay.repositories());
+      }
+      if (request.method === "GET" && request.url?.startsWith("/v1/logs")) {
+        const lines = new URL(request.url, "http://127.0.0.1").searchParams.get("lines");
+        const input = Schema.decodeUnknownSync(LogRequest)(lines ? { lines: Number(lines) } : {});
+        return reply(response, 200, await readServiceLog(options.home, input.lines ?? 200));
       }
       if (request.method === "GET" && request.url === "/v1/doctor")
         return reply(response, 200, runtimeDiagnostics(options, "service"));

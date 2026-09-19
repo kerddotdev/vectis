@@ -205,6 +205,9 @@ else {
             case "storage":
               data = await (await client()).storage();
               break;
+            case "logs":
+              data = await (await client()).logs();
+              break;
             case "command": {
               const request = Schema.decodeUnknownSync(Request, { onExcessProperty: "error" })(
                 input,

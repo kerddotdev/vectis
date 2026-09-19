@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { Command, Identifier } from "./index.js";
+import { LogRequest } from "./logs.js";
 
 export const ControllerApproval = Schema.Struct({
   deploymentUrl: Schema.String.check(Schema.isPattern(/^https:\/\/[a-z0-9-]+\.convex\.cloud$/)),
@@ -23,6 +24,7 @@ export const LocalQuery = Schema.Union([
   }),
   Schema.Struct({ name: Schema.Literal("jobs"), bindingId: Identifier }),
   Schema.Struct({ name: Schema.Literal("operation"), id: Identifier }),
+  Schema.Struct({ name: Schema.Literal("logs"), ...LogRequest.fields }),
 ]);
 export type LocalQuery = typeof LocalQuery.Type;
 export const ControllerRequest = Schema.Union([

@@ -3,6 +3,7 @@ import { Schema } from "effect";
 import { GitHubAccounts, MachineRepositories } from "../../protocol/src/repositories.js";
 import { Diagnostics } from "../../protocol/src/diagnostics.js";
 import { StorageReport } from "../../protocol/src/storage.js";
+import { ServiceLog } from "../../protocol/src/logs.js";
 import {
   ApiError,
   Operation,
@@ -67,6 +68,11 @@ export class VectisClient {
   }
   async capabilities() {
     return this.request("/v1/capabilities");
+  }
+  async logs(lines?: number) {
+    return Schema.decodeUnknownSync(ServiceLog)(
+      await this.request(lines === undefined ? "/v1/logs" : `/v1/logs?lines=${lines}`),
+    );
   }
   async submit(command: Command, key: string, signal?: AbortSignal) {
     return Schema.decodeUnknownSync(Operation)(
