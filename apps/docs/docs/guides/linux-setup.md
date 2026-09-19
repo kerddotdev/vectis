@@ -3,7 +3,7 @@ title: Prepare a Linux environment
 description: Download and prepare Ubuntu on an Apple Silicon Mac with resumable local setup.
 ---
 
-The guided Linux path creates an Ubuntu 24.04 ARM64 base image with a local `vectis` user, pinned SSH access, Git, Docker and the official runner's dependencies. It runs through the same local service from desktop, CLI and MCP. It requires an Apple Silicon Mac, the configured Apple helper and `qemu-img`. The helper runs the VM through Apple Virtualization; `qemu-img` only converts the downloaded disk format.
+The guided Linux path creates an Ubuntu 24.04 ARM64 base image with a local `vectis` user, pinned SSH access, Git, Docker and the official runner's dependencies. It runs through the same local service from desktop, CLI and MCP. It requires an Apple Silicon Mac and the configured Apple helper, which runs the VM through Apple Virtualization. The service converts the downloaded disk itself; `qemu-img` is not needed.
 
 Choose existing writable directories for base images and disposable VMs. They may be on an external drive. The image volume needs at least 8 GiB free; actual usage grows as software is installed. Virtual disk capacity is separate from allocated host storage.
 

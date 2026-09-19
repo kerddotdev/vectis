@@ -1,18 +1,7 @@
 import type { RuntimeOptions } from "./runtime.js";
 import { Schema } from "effect";
 import { constants } from "node:fs";
-import {
-  access,
-  chmod,
-  copyFile,
-  mkdir,
-  open,
-  readFile,
-  rm,
-  stat,
-  statfs,
-  writeFile,
-} from "node:fs/promises";
+import { access, mkdir, open, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { cpus, totalmem } from "node:os";
 import {
@@ -26,6 +15,7 @@ import { availableHostMemory } from "./memory.js";
 import { runProcess } from "./process.js";
 import { preparationStopped, runPreparationGuest } from "./preparation-process.js";
 import { linuxSeed, ubuntuImage } from "./linux-seed.js";
+import { convertQcow2ToRaw } from "./qcow2.js";
 
 export function preparationDirectory(preparation: Preparation) {
   return join(
@@ -35,17 +25,16 @@ export function preparationDirectory(preparation: Preparation) {
 }
 export async function validatePreparation(
   input: LinuxPreparation,
-  options: Pick<RuntimeOptions, "appleHelper" | "qemuImg">,
+  options: Pick<RuntimeOptions, "appleHelper">,
 ) {
   if (process.platform !== "darwin" || process.arch !== "arm64")
     throw new VectisError("unsupported_host", "Guest preparation requires an Apple Silicon Mac.");
-  if (!options.appleHelper || !options.qemuImg)
+  if (!options.appleHelper)
     throw new VectisError(
       "runtime_missing",
-      "Configure the Apple virtualization helper and qemu-img before preparing a guest.",
+      "Configure the Apple virtualization helper before preparing a guest.",
     );
   await access(options.appleHelper, constants.X_OK);
-  await access(options.qemuImg, constants.X_OK);
   if (
     !Number.isInteger(input.cpu) ||
     input.cpu < 1 ||
@@ -78,14 +67,14 @@ export async function validatePreparation(
 }
 export async function prepareLinux(
   preparation: Preparation,
-  options: Pick<RuntimeOptions, "appleHelper" | "qemuImg">,
+  options: Pick<RuntimeOptions, "appleHelper">,
   signal: AbortSignal,
   progress: (phase: Preparation["phase"], received?: number) => void,
 ): Promise<Environment> {
   const input = preparation.configuration;
   await validatePreparation(input, options);
-  if (!options.appleHelper || !options.qemuImg)
-    throw new VectisError("runtime_missing", "The Apple helper and qemu-img are required.");
+  if (!options.appleHelper)
+    throw new VectisError("runtime_missing", "The Apple helper is required.");
   const directory = preparationDirectory(preparation);
   const marker = join(directory, "setup.json");
   const owner = JSON.stringify({ id: preparation.id, configuration: input });
@@ -131,20 +120,11 @@ export async function prepareLinux(
     progress("downloading", received),
   );
   progress("converting");
-  const raw = join(directory, "source.raw");
-  await rm(raw, { force: true });
-  await runProcess(options.qemuImg, ["convert", "-f", "qcow2", "-O", "raw", archive, raw], signal);
   const base = join(directory, "disk.img");
   await rm(base, { force: true });
-  await copyFile(raw, base, constants.COPYFILE_FICLONE);
-  await chmod(base, 0o600);
+  await convertQcow2ToRaw(archive, base, input.diskGiB * 1024 ** 3, signal);
   const disk = await open(base, "r+");
   try {
-    if ((await disk.stat()).size > input.diskGiB * 1024 ** 3)
-      throw new VectisError(
-        "invalid_disk_size",
-        "The target disk is smaller than the source image.",
-      );
     await disk.truncate(input.diskGiB * 1024 ** 3);
   } finally {
     await disk.close();
@@ -226,7 +206,13 @@ export async function prepareLinux(
     }),
     { mode: 0o600 },
   );
-  for (const path of [raw, archive, join(directory, "seed.iso"), host.path, host.path + ".pub"])
+  for (const path of [
+    archive,
+    join(directory, "source.raw"),
+    join(directory, "seed.iso"),
+    host.path,
+    host.path + ".pub",
+  ])
     await rm(path, { force: true });
   await rm(seedDirectory, { recursive: true, force: true });
   progress("prepared");

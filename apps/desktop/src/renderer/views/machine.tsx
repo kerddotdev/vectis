@@ -237,7 +237,7 @@ const components = [
   {
     key: "qemuImg",
     name: "QEMU Disk Tool",
-    purpose: "Converts and clones disk images for Ubuntu and Windows guests.",
+    purpose: "Creates disk images for Windows guests.",
   },
   {
     key: "swtpm",
@@ -464,7 +464,7 @@ export function Diagnostics() {
               </li>
               <li>
                 <span className="text-foreground">Ubuntu guests</span> need the Apple Virtualization
-                Helper and the QEMU Disk Tool.
+                Helper.
               </li>
               <li>
                 <span className="text-foreground">Windows guests</span> need QEMU, the QEMU Disk

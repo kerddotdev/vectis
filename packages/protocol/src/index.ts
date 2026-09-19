@@ -276,7 +276,7 @@ export const capabilities = [
     name: "environment.prepare-linux",
     kind: "command",
     description:
-      "Download and verify Ubuntu 24.04 ARM64, prepare guest SSH and Docker, and register the environment. Requires an idle Apple Silicon host, Apple helper and qemu-img.",
+      "Download and verify Ubuntu 24.04 ARM64, prepare guest SSH and Docker, and register the environment. Requires an idle Apple Silicon host and the Apple helper.",
   },
   {
     name: "environment.resume",
