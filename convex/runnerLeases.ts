@@ -2,6 +2,9 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server.js";
 import type { QueryCtx } from "./_generated/server.js";
 import { machine } from "./auth.js";
+import { internal } from "./_generated/api.js";
+
+const configLifetime = 15 * 60 * 1000;
 
 export async function bindingAuthority(ctx: QueryCtx, bindingId: string, preparing: boolean) {
   const target = await machine(ctx);
@@ -112,9 +115,24 @@ export const ready = internalMutation({
       phase: "ready",
       runnerId: args.runnerId,
       encodedConfig: args.encodedConfig,
-      configExpiresAt: Date.now() + 15 * 60 * 1000,
+      configExpiresAt: Date.now() + configLifetime,
       updatedAt: Date.now(),
     });
+    await ctx.scheduler.runAfter(configLifetime, internal.runnerLeases.expireConfig, {
+      id: args.id,
+    });
+  },
+});
+// Runner registration configs are credentials; they are never kept past their lifetime.
+export const expireConfig = internalMutation({
+  args: { id: v.id("runnerLeases") },
+  handler: async (ctx, args) => {
+    const lease = await ctx.db.get("runnerLeases", args.id);
+    if (lease?.configExpiresAt !== undefined && lease.configExpiresAt <= Date.now())
+      await ctx.db.patch("runnerLeases", args.id, {
+        encodedConfig: undefined,
+        configExpiresAt: undefined,
+      });
   },
 });
 export const attention = internalMutation({
