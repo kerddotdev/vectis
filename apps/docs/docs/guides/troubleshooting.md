@@ -27,6 +27,15 @@ vectis logs --lines 200 --json
 
 The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means Vectis stopped safely and is waiting for the step it describes.
 
+## The Mac says it was removed from its account
+
+`vectis status --json` reports `cloud.state` as `removed`, and the app shows "Removed from account". Someone deleted this Mac on the account page, so its credential no longer works and Vectis stops retrying. Nothing local is lost.
+
+1. Clear the saved connection with `vectis cloud disconnect`, or use **Disconnect** in the app's Connections view.
+2. Connect again with `vectis cloud pair` or **Connect in browser** when you want the Mac back on an account.
+
+Repository connections are not restored automatically; connect the repositories again afterwards.
+
 ## A VM does not start
 
 - **Diagnostics** or `vectis doctor --json` lists the runtime components the service found. The app configures its own; from a source checkout, set them as described in [Build from source](/docs/self-hosting/build-from-source).

@@ -44,8 +44,8 @@ const sections = [
   {
     title: "In the Vectis cloud",
     points: [
-      "The cloud coordinates identity, GitHub access and remote commands. It stores your account ID, linked GitHub logins and installations, machine names, environment summaries, repository connections, job states and operation results. Workflow files read for a migration preview are kept for 24 hours. Answers to remote queries, such as status or recent service log lines you ask a Mac for, pass through the cloud and are kept for about a minute.",
-      "Machine and controller credentials stay in Keychain on each device. The cloud keeps only their fingerprints, and GitHub user tokens are used during verification and never saved.",
+      "The cloud coordinates identity, GitHub access and remote commands. It stores your account ID, linked GitHub logins and installations, machine names, environment summaries, repository connections, job states and operation results. Workflow files read for a migration preview are kept for 24 hours. Answers to remote queries, such as status or recent service log lines you ask a Mac for, pass through the cloud and are kept for about a minute. A daily sweep deletes finished jobs and operations after 90 days, and runner and webhook records after 30.",
+      "Machine and controller credentials stay in Keychain on each device. The cloud keeps only their fingerprints, and GitHub user tokens are used during verification and never saved. Removing a Mac, unlinking a GitHub account or deleting your account deletes the records behind them.",
       "The GitHub App private key, client secret and webhook secret, and the key that signs short-lived machine tokens, live only in the cloud. The single-use runner configuration it creates is deleted once the runner is released, and after 15 minutes at the latest.",
     ],
   },

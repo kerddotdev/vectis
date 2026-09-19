@@ -154,18 +154,29 @@ Our providers are based in the United States and may store and process data outs
 
 ## 11. How long we keep data
 
-| Data                                                                                                                            | How long                                                                                                                                                           |
-| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Answers to remote information requests                                                                                          | About one minute                                                                                                                                                   |
-| Single-use runner registrations                                                                                                 | Deleted when the runner starts, finishes or fails, and at the latest after 15 minutes                                                                              |
-| Pending pairing, controller and GitHub link requests                                                                            | 10 minutes, then no longer usable                                                                                                                                  |
-| Workflow migration previews, including workflow contents                                                                        | 24 hours                                                                                                                                                           |
-| Controller authorizations                                                                                                       | Valid for 90 days or until you revoke them; the revoked record is kept with your account                                                                           |
-| Account, linked GitHub accounts, Macs, repository connections, runner records, operations, job records and notification records | While your account exists. Disconnected repositories and removed Macs and controllers stop being used immediately, and their records are deleted with your account |
-| Sign-in data at Clerk                                                                                                           | While your account exists                                                                                                                                          |
-| Emails                                                                                                                          | As long as needed to handle your request, and no longer than two years after it is resolved                                                                        |
+| Data                                                             | How long                                                                                    |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Answers to remote information requests                           | About one minute                                                                            |
+| Single-use runner registrations                                  | Deleted when the runner starts, finishes or fails, and at the latest after 15 minutes       |
+| Pending pairing, controller and GitHub link requests             | Usable for 10 minutes, deleted within a day                                                 |
+| Workflow migration previews, including workflow contents         | 24 hours                                                                                    |
+| Runner records                                                   | 30 days after the runner is released                                                        |
+| Controller authorizations                                        | Valid for 90 days or until you revoke them; the record is deleted 30 days after it ends     |
+| Operations, including the commands they carry                    | 90 days after they finish                                                                   |
+| Job records from GitHub                                          | 90 days after a job finishes; unfinished jobs are kept until they do                        |
+| Webhook delivery records                                         | 30 days                                                                                     |
+| Account, linked GitHub accounts, Macs and repository connections | While your account exists, or until you remove them                                         |
+| Sign-in data at Clerk                                            | While your account exists                                                                   |
+| Emails                                                           | As long as needed to handle your request, and no longer than two years after it is resolved |
 
-To delete your account and everything linked to it, email [kerd@kerd.dev](mailto:kerd@kerd.dev) from the address you sign in with. We delete the data within 30 days, both from our backend and from Clerk. Uninstalling the Vectis GitHub App from your GitHub account or organization stops future notifications for it; to delete job records of repositories you never connected, ask us at the same address.
+You can delete most of this yourself, and deletion is immediate:
+
+- **A Mac:** remove it on the account page. Everything it owns, including its repository connections and runner records, goes with it, and the Mac can be connected again later.
+- **A GitHub account:** unlink it on the account page. The repository connections that rely on it are deleted too.
+- **A repository connection:** disconnect it on the account page or in the app.
+- **Your whole account:** use **Delete account** on the account page. This deletes everything above and your sign-in at Clerk. Deleting your account directly at Clerk has the same effect: Clerk tells us, and we delete the rest.
+
+If you would rather we did it, email [kerd@kerd.dev](mailto:kerd@kerd.dev) from the address you sign in with, and we delete your data within 30 days. Uninstalling the Vectis GitHub App on GitHub stops future notifications for that account or organization.
 
 Our providers may keep backup copies for a limited time under their own retention schedules.
 
@@ -182,7 +193,7 @@ Under the GDPR, you have the right to:
 
 To use these rights, email [kerd@kerd.dev](mailto:kerd@kerd.dev). We may ask you to confirm the request from your sign-in address so we can verify it is you. We answer within one month. If a request is complex, we may extend this by up to two more months and will tell you why. Using your rights is free unless a request is clearly unfounded or excessive.
 
-You can change some of your data yourself: revoke controllers and disconnect repositories on the account page or in the app, and manage your email and sign-in methods in your account settings. To remove a Mac or unlink a GitHub account, email us.
+You can do much of this yourself on the account page: remove a Mac, unlink a GitHub account, disconnect a repository, revoke remote access, or delete the whole account. Your email address and sign-in methods live in your Clerk account settings.
 
 You also have the right to lodge a complaint with a data protection authority, in particular where you live or work or where you think the law was broken. In Hungary this is the Nemzeti Adatvédelmi és Információszabadság Hatóság (NAIH), 1055 Budapest, Falk Miksa utca 9-11, [ugyfelszolgalat@naih.hu](mailto:ugyfelszolgalat@naih.hu), [naih.hu](https://naih.hu). You can also go to court. We would appreciate the chance to address your concern first.
 

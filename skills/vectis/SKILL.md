@@ -21,6 +21,7 @@ Full documentation for agents: https://vectis.kerd.dev/llms.txt
 - Never type, store or ask for a guest OS password. macOS and Windows setup steps that need a person at the VM console belong to the user.
 - Never report accepted or running work as done. Report what the operation says, including `action_required` and its `nextStep`.
 - Do not install, uninstall or update the login service, pause the machine, or enable automatic runners unless the user asked for it.
+- Never remove a Mac from an account, unlink a GitHub account, delete an account or run `cloud disconnect` unless the user asked for that exact step.
 - Approving pull request runs from forks is a GitHub maintainer decision. Never work around it.
 
 ## Operations
@@ -38,11 +39,12 @@ Every change is an operation: `accepted`, `running`, `action_required`, `succeed
 - `vectis status --json` shows the machine, environments, VMs, recent operations, cloud connection and service version. MCP: `vectis_status`.
 - `vectis service install|start|stop [--if-idle]|status|uninstall`. MCP: `vectis_service`. `--if-idle` refuses to interrupt VMs or operations.
 - `vectis pause` stops new VMs; running work continues. `vectis resume` allows them again.
+- `cloud.state` in `status` is `unconfigured`, `connecting`, `connected`, `unavailable` or `removed`. `removed` means the account deleted this Mac: report it, and only disconnect when the user asks.
 - The default home is `~/.vectis` (`~/.vectis-dev` for development builds). Pass `--home` only to work with an isolated state directory.
 
 ## Cloud, GitHub and remote control
 
-1. Pair this Mac: `vectis cloud pair --json` (MCP `vectis_cloud` with `action: "pair"`). The user opens the link, compares the code and approves. Then `vectis cloud finish`.
+1. Pair this Mac: `vectis cloud pair --json` (MCP `vectis_cloud` with `action: "pair"`). The user opens the link, compares the code and approves. Then `vectis cloud finish`. `vectis cloud disconnect` clears the saved connection and credential; the account record itself is removed by its owner on the connect page.
 2. Link GitHub and install the App: `vectis github connect --json` returns the page. The user links their GitHub account there and installs the Vectis GitHub App on the account or organization that owns the repositories.
 3. `vectis github accounts --json` lists verified accounts for `repository connect`.
 
