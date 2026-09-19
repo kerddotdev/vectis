@@ -69,6 +69,16 @@ export default defineConfig({
           { label: "Agent integration", root: "guides/agents" },
         ],
       },
+      {
+        label: "Self-hosting",
+        items: [
+          { label: "Run your own cloud", root: "self-hosting/cloud" },
+          {
+            label: "Private development environment",
+            root: "self-hosting/development-environment",
+          },
+        ],
+      },
       { label: "Reference", items: [{ label: "CLI reference", root: "reference/cli" }] },
     ],
   },
