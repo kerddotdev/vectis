@@ -141,6 +141,19 @@ test("preview reads and writes recheck ownership, expiry and machine revocation"
   await expect(device.mutation(internal.migrationPreviews.save, args)).rejects.toThrow();
 });
 
+test("previews and their workflow files are deleted after a day", async () => {
+  vi.useFakeTimers();
+  const { t, device, bindingId } = await fixture();
+  const previewId = await device.mutation(internal.migrationPreviews.save, {
+    bindingId,
+    reportJson: JSON.stringify(report),
+  });
+  vi.advanceTimersByTime(24 * 60 * 60 * 1000);
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await t.run((ctx) => ctx.db.get("migrationPreviews", previewId))).toBeNull();
+  vi.useRealTimers();
+});
+
 test("changing the prepared environment invalidates retained previews", async () => {
   const { t, device, machineId, bindingId } = await fixture();
   const previewId = await device.mutation(internal.migrationPreviews.save, {

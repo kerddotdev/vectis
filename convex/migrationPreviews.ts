@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
 import { RepositoryMigration } from "../packages/protocol/src/migrations.js";
+import { internal } from "./_generated/api.js";
 import { internalMutation, internalQuery } from "./_generated/server.js";
 import { bindingAuthority } from "./runnerLeases.js";
 import { machine } from "./auth.js";
@@ -37,6 +38,7 @@ export const verified = internalQuery({
     );
   },
 });
+const previewLifetime = 24 * 60 * 60 * 1000;
 export const save = internalMutation({
   args: { bindingId: v.string(), reportJson: v.string() },
   handler: async (ctx, args) => {
@@ -52,15 +54,24 @@ export const save = internalMutation({
       if (preview.expiresAt < Date.now()) await ctx.db.delete("migrationPreviews", preview._id);
     if (previews.filter((item) => item.expiresAt >= Date.now()).length >= 100)
       throw new ConvexError({ code: "migration_preview_limit" });
-    return ctx.db.insert("migrationPreviews", {
+    const id = await ctx.db.insert("migrationPreviews", {
       owner: target.owner,
       machineId: target._id,
       bindingId: binding._id,
       reportJson: JSON.stringify(report),
       ...(environment?.revision ? { environmentRevision: environment.revision } : {}),
       createdAt: Date.now(),
-      expiresAt: Date.now() + 86400000,
+      expiresAt: Date.now() + previewLifetime,
     });
+    await ctx.scheduler.runAfter(previewLifetime, internal.migrationPreviews.expire, { id });
+    return id;
+  },
+});
+export const expire = internalMutation({
+  args: { id: v.id("migrationPreviews") },
+  handler: async (ctx, args) => {
+    if (await ctx.db.get("migrationPreviews", args.id))
+      await ctx.db.delete("migrationPreviews", args.id);
   },
 });
 export const owned = internalQuery({
