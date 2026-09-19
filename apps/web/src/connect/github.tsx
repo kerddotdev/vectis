@@ -1,9 +1,21 @@
 import { useState } from "react";
 import { useAction, useMutation } from "convex/react";
+import { EllipsisIcon } from "lucide-react";
 import { api } from "../../../../convex/_generated/api.js";
 import { errorCode } from "./Connect.js";
-import { Header, type Identity } from "./dashboard.js";
-import { Button, cx, Empty, Notice, Panel, Pending, relative, Status } from "./ui.js";
+import { Header, type Bindings, type Identity } from "./dashboard.js";
+import {
+  ActionMenu,
+  Button,
+  Confirm,
+  cx,
+  Empty,
+  Notice,
+  Panel,
+  Pending,
+  relative,
+  Status,
+} from "./ui.js";
 
 export function GitHubMark({ className }: { className?: string }) {
   return (
@@ -35,10 +47,18 @@ export function useLinkGitHub() {
   };
 }
 
-export function GitHubTab({ identity }: { identity: Identity | undefined }) {
+export function GitHubTab({
+  identity,
+  bindings,
+}: {
+  identity: Identity | undefined;
+  bindings: Bindings | undefined;
+}) {
   const link = useLinkGitHub();
   const confirm = useMutation(api.githubIdentity.confirm);
   const discard = useMutation(api.githubIdentity.discard);
+  const unlink = useMutation(api.githubIdentity.unlink);
+  const [unlinking, setUnlinking] = useState<Identity["accounts"][number] | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   async function perform(work: () => Promise<unknown>) {
@@ -143,6 +163,17 @@ export function GitHubTab({ identity }: { identity: Identity | undefined }) {
                     ) : (
                       <Status tone="attention">App not installed</Status>
                     )}
+                    <ActionMenu
+                      label={`Actions for ${account.login}`}
+                      trigger={<EllipsisIcon className="size-4" />}
+                      items={[
+                        {
+                          label: "Unlink this account",
+                          danger: true,
+                          onSelect: () => setUnlinking(account),
+                        },
+                      ]}
+                    />
                   </li>
                 ))}
               </ul>
@@ -150,6 +181,27 @@ export function GitHubTab({ identity }: { identity: Identity | undefined }) {
           )}
         </>
       )}
+      <Confirm
+        open={unlinking !== null}
+        onOpenChange={(open) => setUnlinking(open ? unlinking : null)}
+        title={unlinking ? `Unlink ${unlinking.login}?` : "Unlink this account"}
+        description={unlinkDescription(
+          bindings?.filter((binding) => binding.accountId === unlinking?.id).length ?? 0,
+        )}
+        phrase="unlink"
+        label="Unlink account"
+        onConfirm={async () => {
+          if (unlinking) await unlink({ id: unlinking.id });
+        }}
+      />
     </>
   );
+}
+
+function unlinkDescription(connections: number) {
+  return `Vectis forgets this GitHub identity${
+    connections
+      ? ` and disconnects ${connections} repository ${connections === 1 ? "connection" : "connections"} that rely on it`
+      : ""
+  }. The Vectis GitHub App stays installed until you remove it on GitHub.`;
 }

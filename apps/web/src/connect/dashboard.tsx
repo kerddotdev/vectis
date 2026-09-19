@@ -117,7 +117,7 @@ export function Dashboard() {
           <Overview machines={machines} identity={identity} bindings={bindings} onOpen={setTab} />
         )}
         {tab === "machines" && <MachinesTab machines={machines} />}
-        {tab === "github" && <GitHubTab identity={identity} />}
+        {tab === "github" && <GitHubTab identity={identity} bindings={bindings} />}
         {tab === "repositories" && (
           <RepositoriesTab bindings={bindings} identity={identity} machines={machines} />
         )}

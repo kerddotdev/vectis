@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { internal } from "./_generated/api.js";
 import { internalMutation, mutation, query } from "./_generated/server.js";
 import { human, machine } from "./auth.js";
 
@@ -113,6 +114,25 @@ export const confirm = mutation({
     if (existing) await ctx.db.replace("githubAccounts", existing._id, data);
     else await ctx.db.insert("githubAccounts", data);
     await ctx.db.delete("githubLinks", id);
+  },
+});
+// Unlinking takes the repository connections with it: without a verified account behind them they
+// can neither register runners nor be re-authorized.
+export const unlink = mutation({
+  args: { id: v.id("githubAccounts") },
+  handler: async (ctx, { id }) => {
+    const owner = await human(ctx);
+    const account = await ctx.db.get("githubAccounts", id);
+    if (!account || account.owner !== owner)
+      throw new ConvexError({ code: "github_account_unavailable" });
+    const bindings = await ctx.db
+      .query("repositoryBindings")
+      .withIndex("by_owner", (q) => q.eq("owner", owner))
+      .take(100);
+    for (const binding of bindings)
+      if (binding.accountId === id)
+        await ctx.scheduler.runAfter(0, internal.purge.binding, { bindingId: binding._id });
+    await ctx.db.delete("githubAccounts", id);
   },
 });
 export const discard = mutation({

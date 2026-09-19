@@ -5,6 +5,7 @@ import schema from "../../convex/schema.js";
 import { api } from "../../convex/_generated/api.js";
 
 const modules = {
+  "../../convex/githubIdentity.ts": () => import("../../convex/githubIdentity.js"),
   "../../convex/machines.ts": () => import("../../convex/machines.js"),
   "../../convex/pairings.ts": () => import("../../convex/pairings.js"),
   "../../convex/purge.ts": () => import("../../convex/purge.js"),
@@ -139,5 +140,25 @@ test("removing a machine deletes everything it owns and frees the local identity
   const again = await owner.mutation(api.pairings.approve, pairing());
   expect(again.machineId).not.toBe(machineId);
   expect(await owner.query(api.machines.list, {})).toHaveLength(1);
+  vi.useRealTimers();
+});
+
+test("unlinking a GitHub account disconnects the repositories that depend on it", async () => {
+  vi.useFakeTimers();
+  const t = convexTest(schema, modules);
+  const owner = t.withIdentity(identity);
+  const { machineId } = await owner.mutation(api.pairings.approve, pairing());
+  await connected(t, machineId);
+  const account = (await owner.query(api.githubIdentity.list, {})).accounts[0];
+  if (!account) throw new Error("Missing linked account");
+  await expect(
+    t
+      .withIdentity({ ...identity, subject: "other", tokenIdentifier: "https://clerk.test|other" })
+      .mutation(api.githubIdentity.unlink, { id: account.id }),
+  ).rejects.toThrow();
+  await owner.mutation(api.githubIdentity.unlink, { id: account.id });
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect(await counts(t)).toMatchObject({ machines: 1, bindings: 0, leases: 0, demands: 0 });
+  expect((await owner.query(api.githubIdentity.list, {})).accounts).toHaveLength(0);
   vi.useRealTimers();
 });
