@@ -1,56 +1,87 @@
 ---
 name: vectis
-description: Configure and diagnose local GitHub Actions runner environments through Vectis CLI or MCP. Use when managing Vectis machines, environments, operations, or workflow migration previews.
+description: Operate Vectis, which runs GitHub Actions jobs in disposable VMs on the user's Mac, through its CLI or MCP server. Use for preparing Ubuntu, macOS or Windows environments, connecting repositories, choosing runs-on labels, running and diagnosing runners and jobs, remote control of other Macs, and workflow migration.
 ---
 
 # Vectis
 
-Vectis runs CI workloads on the user's machines. Discover the installed build before selecting commands: release capabilities can differ from the documentation or intended roadmap.
+Vectis runs each GitHub Actions job in a fresh VM on the user's Apple silicon Mac. A local background service owns the VMs; the desktop app, the `vectis` CLI and the `vectis-mcp` server are clients of that service. A hosted account at https://vectis.kerd.dev/connect links the Mac, GitHub and repositories.
 
-## Discover
+Full documentation for agents: https://vectis.kerd.dev/llms.txt
 
-Run `vectis --help`, `vectis capabilities --json`, and `vectis doctor --json`. In a source checkout, use `pnpm build` followed by `pnpm vectis` instead of an installed `vectis` binary.
+## Find the tools
 
-With MCP, list tools and call `vectis_capabilities`. Discovery works without a running service; state and mutations require one. `vectis_status` reads the same state as the CLI.
+- Installed app: `vectis` and `vectis-mcp` are on PATH after the user chooses Diagnostics > Command line tools > Install. Otherwise run `/Applications/Vectis.app/Contents/Resources/bin/vectis`.
+- Source checkout: `pnpm build`, then `pnpm vectis` and `pnpm mcp`.
+- Check the build with `vectis --version`, `vectis capabilities --json` and `vectis doctor --json`. Only use commands that capability discovery lists. Capabilities of kind `query` have their own CLI commands and MCP tools; submit only kind `command` through `vectis_command` or `command --file`.
 
-## Work with the local service
+## Rules that are never negotiable
 
-Use one consistent `--home <directory>` for every CLI command in an isolated task. Start with `vectis service start --home <directory> --json`, then inspect `vectis status --home <directory> --json`. MCP accepts the same `--home` directory when its server starts. Never copy the local connection token into tool arguments or conversation text.
+- Never approve a pairing, login or GitHub link on the user's behalf, and never share those links. Give the link and verification code to the user and wait.
+- Never type, store or ask for a guest OS password. macOS and Windows setup steps that need a person at the VM console belong to the user.
+- Never report accepted or running work as done. Report what the operation says, including `action_required` and its `nextStep`.
+- Do not install, uninstall or update the login service, pause the machine, or enable automatic runners unless the user asked for it.
+- Approving pull request runs from forks is a GitHub maintainer decision. Never work around it.
 
-For mutations, use a stable `--key` or MCP `key`. Reuse it only when retrying the exact same command. `accepted` and `running` do not mean the requested work completed. Inspect the operation ID with `vectis operation get <id> --json` or wait with `vectis operation wait <id> --json`. CLI `--wait` observes completion directly.
+## Operations
 
-All CLI commands are non-interactive. Use `--json` for parsing. `action_required` needs the reported next step; do not invent a successful setup or repeatedly submit new operations. Cancelling a wait does not cancel its operation. The generic `command --file <path>` and MCP `vectis_command` accept the discovered command schema.
+Every change is an operation: `accepted`, `running`, `action_required`, `succeeded`, `failed` or `cancelled`.
 
-Pausing stops new admission and leaves existing work running. Stopping an instance is a separate mutation. After a crash, use `instance reconcile <id>` only for interrupted instances; Vectis requires process-exit evidence before cleanup.
+- Pass a stable `--key` (MCP: `key`) and reuse it only to retry the exact same command. A repeated key never repeats work.
+- `--wait` waits up to `--timeout` (default 120000 ms). When time runs out, the CLI prints the operation as it is now and exits with 3. MCP `vectis_wait` returns it with `timedOut: true`; call it again to keep waiting.
+- Read one operation with `vectis operation get <id> --json` or MCP `vectis_operation`. Cancel with `vectis operation cancel <id>`; cancelling a wait does not cancel the operation.
+- Output is always JSON. Exit codes: 0 success, 1 failed or cancelled, 3 action required or still pending. Errors look like `{"error":{"code","message","nextStep"}}`; follow `nextStep`.
+- When something fails or hangs, read `vectis logs --lines 200 --json` or MCP `vectis_logs` before retrying.
 
-## Discover repository connections
+## Service
 
-After machine pairing and browser GitHub linking, use `vectis repository list --json` or MCP `vectis_repositories`. The response identifies repositories currently connected to this machine and their environment IDs. Cloud or account authorization failures are errors; do not interpret them as an empty repository list. A binding does not prove that an image is ready to run a job. Discover verified identities with `github accounts --json`, then connect a prepared local environment with `repository connect <name> --account <id> --environment <id> --wait --json`. Never infer account ownership from a display name.
+- `vectis status --json` shows the machine, environments, VMs, recent operations, cloud connection and service version. MCP: `vectis_status`.
+- `vectis service install|start|stop [--if-idle]|status|uninstall`. MCP: `vectis_service`. `--if-idle` refuses to interrupt VMs or operations.
+- `vectis pause` stops new VMs; running work continues. `vectis resume` allows them again.
+- The default home is `~/.vectis` (`~/.vectis-dev` for development builds). Pass `--home` only to work with an isolated state directory.
 
-## Run and observe jobs
+## Cloud, GitHub and remote control
 
-`runner run <binding-id> --key <stable-key> --json` starts one disposable runner. Add `--job-id <job-id>` when admission should require that specific job to remain queued with matching labels; GitHub still decides which compatible job reaches the runner. Runner lifecycle success confirms cleanup, not the GitHub job's conclusion. Read `job list <binding-id> --json` or MCP `vectis_jobs` for observed GitHub results. Use `job scan <binding-id> --wait --json` to discover missing queued and running jobs. Periodic scans also run for automatic bindings; an incomplete scan is `action_required`, not proof that the entire queue was recovered. Recover a known missing or stale job with `job refresh <binding-id> <job-id> --wait --json`.
+1. Pair this Mac: `vectis cloud pair --json` (MCP `vectis_cloud` with `action: "pair"`). The user opens the link, compares the code and approves. Then `vectis cloud finish`.
+2. Link GitHub and install the App: `vectis github connect --json` returns the page. The user links their GitHub account there and installs the Vectis GitHub App on the account or organization that owns the repositories.
+3. `vectis github accounts --json` lists verified accounts for `repository connect`.
 
-`repository enable-auto <binding-id> --wait --json` authorizes future matching queued work on the machine. `repository disable-auto` disables that admission; it does not stop running work. The current scheduler admits one automatic runner per idle machine and does not blindly retry failed or interrupted attempts. Only enable it within the user's authorized repository and workload scope.
+Remote control of another Mac: `vectis login`, user approval, `vectis login finish`, then `vectis machine list --json`. Add `--machine <id>` to commands, or start `vectis-mcp --machine <id>`; MCP `vectis_machines` lists machines when logged in. A remote session never falls back to the local machine. Service lifecycle and cloud pairing only work on the host itself.
 
-Use `operation cancel <operation-id>` to request runner cleanup or cancel waiting for a job refresh. Inspect the original operation afterward. For an interrupted runner, verify its VM has stopped before `runner reconcile <operation-id>`; never hide uncertain cleanup by submitting fresh runner requests.
+## Environments
 
-## Prepare Ubuntu
+An environment is a prepared guest image. Its ID becomes the runner label.
 
-On an idle Apple Silicon host with the Apple helper and qemu-img configured, use `environment prepare-linux <id> --image-directory <existing-path> --storage-path <existing-path> --cpu 2 --memory-mib 4096 --disk-gib 32 --json`. Follow its operation; download acceptance is not image readiness. Preparation blocks other VM admission until it finishes or stops. For `action_required`, inspect the reported image directory and use `environment resume <setup-id>` after fixing prerequisites. Never delete a setup directory to bypass missing process-exit evidence. Successful setup registers an environment; repository connection and a real verification job remain separate steps.
+- Ubuntu 24.04: `vectis environment prepare-linux <id> --image-directory <dir> --storage-path <dir> --wait --json`. Needs about 8 GiB free. Resume an interrupted preparation with `environment resume <setup-id>`.
+- macOS 26: `environment install-macos <id> --image-directory <dir> --storage-path <dir>` downloads Apple's large restore image unless `--restore-path` points at a local one, and needs 40 to 60 GiB. It stops at `action_required`: the user completes Setup Assistant in `environment open-macos-setup`, then `connect-macos-guest`, `verify-macos-guest`, shuts the guest down and `finish-macos-setup`. `discard-macos` deletes an unregistered attempt only with the user's confirmation.
+- Windows 11 (experimental): `environment install-windows` needs the user's own ISO, VirtIO drivers ISO, ARM64 UEFI firmware and license acceptance, plus QEMU, qemu-img and swtpm that the user installs.
+- `environment configure <id> --cpu --memory-mib --storage-path` changes defaults for future VMs; a VM may use at most 75% of host memory. `vectis storage --json` separates image and VM disk usage.
+- Downloading or preparing images uses many gigabytes. Only start it when the user asked.
 
-## Configure resources and storage
+## Repositories and labels
 
-Use `environment configure <id> --cpu <count> --memory-mib <MiB> --storage-path <absolute-directory> --wait --json`. Omit fields that should remain unchanged. Changes apply to future instances; running instances retain their original resource reservations and directory. The VM storage directory is independent of the service's `--home` state directory. Select an existing writable directory. Vectis does not recreate a missing selected directory, so reconnect an unavailable external drive before retrying.
+- `vectis repository connect <name> --account <id> --environment <id> [--owner <org>] --wait --json` connects a repository to this Mac. The linked GitHub account needs admin permission on organization repositories. Public repositories require the GitHub setting that makes all external contributors wait for approval.
+- `vectis repository list --json` (MCP `vectis_repositories`) shows each connection with its `runsOn` label.
+- A workflow reaches an environment with `runs-on: vectis-<environment-id>`. It may also list `self-hosted`, the OS label (`Linux`, `macOS` or `Windows`) and `ARM64`, and nothing else. Any other label keeps the job away from Vectis.
+- `repository enable-auto <binding-id>` starts runners automatically for matching queued jobs; `disable-auto` stops that. `repository disconnect <binding-id>` stops future runners and lets running jobs finish.
 
-Use the same optional resource flags on `environment start <id>` to override settings for a single VM without changing environment defaults. The service validates both the individual VM and the combined host budget before starting it.
+## Runners and jobs
 
-`vectis storage --json` or MCP `vectis_storage` reports base images and instances separately. Distinguish virtual disk capacity, file size, and allocated host blocks. Copy-on-write blocks may be shared across images, so summing allocated values can overstate exclusive physical usage. Host file breakdown is not a guest filesystem breakdown; check the reported availability.
+- `vectis runner run <binding-id> --key <key> [--job-id <id>] --json` starts one disposable runner. Its success means the VM ran and was cleaned up, not that the job passed. Read job results with `vectis job list <binding-id> --json` or MCP `vectis_jobs`.
+- `job scan <binding-id>` finds queued or running jobs Vectis missed; `job refresh <binding-id> <job-id>` rereads one job from GitHub.
+- An interrupted runner or VM needs `runner reconcile <operation-id>` or `instance reconcile <id>` after the VM is confirmed stopped. Do not start new runners to hide an uncertain cleanup.
 
-## Diagnose and migrate
+A job that stays queued usually has one of these causes. Check them in order:
 
-Start with machine state, operation status, the error code and its `nextStep`. Missing runtime, missing image, insufficient capacity, and interrupted instances require different remedies. Registering a prepared image does not prove the guest OS or GitHub runner is ready.
+1. The machine is paused (`status`), offline (`cloud.state`), or busy with another VM or a preparation.
+2. Automatic runners are off for the repository, so nobody starts a runner.
+3. The workflow's `runs-on` labels do not match the connection's `runsOn` label.
+4. The environment is not ready, or it was removed.
+5. The job comes from a fork and waits for a maintainer's approval on GitHub.
+6. The GitHub App is not installed on the repository's owner.
 
-For an isolated YAML snippet, `migration.preview` only returns proposed YAML. For a connected repository, use `migration analyze <binding-id> --wait --json` and inspect every changed file and finding. With user authorization to create the PR, use `migration publish <preview-id> --wait --json`. Publication requires successful runner evidence for the same environment revision and never merges. A conflicting branch or stale preview requires inspection, not a force push. An uncertain publication may already have created the PR; retry the same preview after checking GitHub. Do not infer ARM64 compatibility from an x64 runner label. Public fork workflow approval remains a GitHub maintainer decision.
+## Workflow migration
 
-Only advertise operations present in capability discovery. Do not claim cloud pairing, automatic PR creation, a completed GitHub job, or support for an unverified guest based on a successful process launch.
+- `vectis migration preview <workflow-file> --map <from>=<vectis-label>` rewrites `runs-on` locally without writing files.
+- `vectis migration analyze <binding-id> --wait --json` prepares a preview for a connected repository; review every change and finding with the user. `migration publish <preview-id>` opens a pull request after a successful runner on the same environment, and never merges.
+- Migration only moves ARM64-compatible jobs. It leaves x64 labels, reusable workflows, dynamic matrices and privileged triggers alone.
