@@ -53,7 +53,7 @@ const summaries = {
   macos:
     "Downloads the verified macOS 26 image from Apple, or uses an existing IPSW. Setup Assistant and guest SSH configuration are separate steps; this does not register a ready runner.",
   windows:
-    "Installs Windows 11 ARM64 from your official ISO with separate driver media, UEFI and TPM state. Activation and required licenses remain your responsibility.",
+    "Experimental. Installs Windows 11 ARM64 from your official ISO with separate driver media, UEFI firmware and TPM state, and needs QEMU and swtpm installed. Activation and required licenses remain your responsibility.",
 } as const;
 
 export function NumberField({
