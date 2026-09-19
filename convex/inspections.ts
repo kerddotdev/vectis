@@ -19,8 +19,7 @@ export async function submitInspection(
 ) {
   const machineId = ctx.db.normalizeId("machines", target);
   const record = machineId ? await ctx.db.get("machines", machineId) : null;
-  if (!record || record.owner !== owner || record.revoked)
-    throw new ConvexError({ code: "machine_unavailable" });
+  if (!record || record.owner !== owner) throw new ConvexError({ code: "machine_unavailable" });
   if (!record.lastSeenAt || Date.now() - record.lastSeenAt >= 90000)
     throw new ConvexError({ code: "machine_offline" });
   const queryJson = JSON.stringify(input);

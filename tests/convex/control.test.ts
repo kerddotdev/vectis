@@ -90,7 +90,7 @@ test("revocation immediately blocks machine access and human credentials cannot 
   });
   await expect(owner.query(api.operations.pending, {})).rejects.toThrow();
   await device.mutation(api.machines.heartbeat, {});
-  await owner.mutation(api.machines.revoke, { id });
+  await owner.mutation(api.machines.remove, { id });
   await expect(device.query(api.operations.pending, {})).rejects.toThrow();
 });
 
@@ -136,7 +136,7 @@ test("machine secrets are hashed and exchange for short-lived signed JWTs until 
     aud: "vectis-machine",
     credentialVersion: 1,
   });
-  await owner.mutation(api.machines.revoke, { id: machineId });
+  await owner.mutation(api.machines.remove, { id: machineId });
   expect((await exchange()).status).toBe(401);
 });
 
@@ -239,7 +239,7 @@ test("machine inventory is bounded, owner-only and rejects revoked credentials",
   ).rejects.toThrow();
   await device.mutation(api.machines.heartbeat, { environments: [] });
   expect((await owner.query(api.machines.list, {}))[0]?.environments).toEqual([]);
-  await owner.mutation(api.machines.revoke, { id });
+  await owner.mutation(api.machines.remove, { id });
   await expect(
     device.mutation(api.machines.heartbeat, { environments: [environment] }),
   ).rejects.toThrow();

@@ -5,7 +5,7 @@ export const replace = internalMutation({
   args: { owner: v.string(), machineId: v.id("machines"), digest: v.string() },
   handler: async (ctx, args) => {
     const machine = await ctx.db.get("machines", args.machineId);
-    if (!machine || machine.owner !== args.owner || machine.revoked)
+    if (!machine || machine.owner !== args.owner)
       throw new ConvexError({ code: "machine_unavailable" });
     const existing = await ctx.db
       .query("machineCredentials")
@@ -30,7 +30,7 @@ export const verify = internalQuery({
     const id = ctx.db.normalizeId("machines", args.machineId);
     if (!id) return null;
     const machine = await ctx.db.get("machines", id);
-    if (!machine || machine.revoked) return null;
+    if (!machine) return null;
     const credential = await ctx.db
       .query("machineCredentials")
       .withIndex("by_machine", (q) => q.eq("machineId", id))

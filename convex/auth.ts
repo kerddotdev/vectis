@@ -24,10 +24,10 @@ export async function machine(ctx: Pick<QueryCtx, "auth" | "db">) {
     });
   const id = ctx.db.normalizeId("machines", identity.subject);
   const record = id ? await ctx.db.get("machines", id) : null;
-  if (!record || record.revoked || identity.credentialVersion !== (record.credentialVersion ?? 0))
+  if (!record || identity.credentialVersion !== (record.credentialVersion ?? 0))
     throw new ConvexError({
       code: "machine_revoked",
-      nextStep: "Enroll the machine again with its owner.",
+      nextStep: "This machine was removed from its account. Disconnect it, then pair it again.",
     });
   return record;
 }

@@ -70,7 +70,7 @@ test("bindings deduplicate and disappear from machine admission when disabled", 
   expect(await machine.query(api.repositoryBindings.forMachine, {})).toEqual([]);
   expect(await t.mutation(internal.repositoryBindings.save, args)).toBe(id);
   expect((await machine.query(api.repositoryBindings.forMachine, {}))[0]?.automatic).toBe(false);
-  await owner.mutation(api.machines.revoke, { id: machineId });
+  await owner.mutation(api.machines.remove, { id: machineId });
   await expect(t.mutation(internal.repositoryBindings.save, args)).rejects.toThrow();
   await expect(machine.query(api.repositoryBindings.forMachine, {})).rejects.toThrow();
 });
@@ -156,7 +156,7 @@ test("machine disconnection is scoped, repeatable, and does not remove another h
   expect(await device.query(api.repositoryBindings.forMachine, {})).toMatchObject([
     { id, automatic: false },
   ]);
-  await owner.mutation(api.machines.revoke, { id: machineId });
+  await owner.mutation(api.machines.remove, { id: machineId });
   await expect(
     device.mutation(api.repositoryBindings.disconnectForMachine, { bindingId: id }),
   ).rejects.toThrow();

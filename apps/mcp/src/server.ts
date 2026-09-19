@@ -12,7 +12,11 @@ import {
   VectisError,
 } from "../../../packages/protocol/src/index.js";
 import { githubConnection } from "../../../packages/client/src/github.js";
-import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
+import {
+  beginPairing,
+  disconnectPairing,
+  finishPairing,
+} from "../../../packages/client/src/pairing.js";
 import type { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import type { VectisClient } from "../../../packages/client/src/index.js";
@@ -128,7 +132,7 @@ const serviceInput = Schema.Struct({
   ]),
   ifIdle: Schema.optional(Schema.Boolean),
 });
-const cloudInput = Schema.Struct({ action: Schema.Literals(["pair", "finish"]) });
+const cloudInput = Schema.Struct({ action: Schema.Literals(["pair", "finish", "disconnect"]) });
 const cloudSchema = Schema.toJsonSchemaDocument(cloudInput);
 const serviceSchema = Schema.toJsonSchemaDocument(serviceInput);
 
@@ -172,9 +176,9 @@ export function createMcpServer(
       ToolSchema.parse({
         name: "vectis_cloud",
         description:
-          "Pair this local machine with its owner's Vectis account. The pair action returns a private approval link and verification code for the human; never approve it automatically or share it. After human approval, finish persists the credential in Keychain and reloads the relay without stopping VMs. Requires a running local service.",
+          "Pair this local machine with its owner's Vectis account. The pair action returns a private approval link and verification code for the human; never approve it automatically or share it. After human approval, finish persists the credential in Keychain and reloads the relay without stopping VMs. The disconnect action removes the saved connection and its credential from this machine; only run it when the user asks. Requires a running local service.",
         inputSchema: { ...cloudSchema.schema, $defs: cloudSchema.definitions },
-        annotations: { readOnlyHint: false, destructiveHint: false },
+        annotations: { readOnlyHint: false, destructiveHint: true },
       }),
     );
   if (machines)
@@ -215,11 +219,13 @@ export function createMcpServer(
           result =
             input.action === "pair"
               ? await beginPairing(pairing.home, cloudDeployment(), pairing.credentials)
-              : await finishPairing(
-                  pairing.home,
-                  pairing.credentials,
-                  AbortSignal.any([context.signal, AbortSignal.timeout(15000)]),
-                );
+              : input.action === "finish"
+                ? await finishPairing(
+                    pairing.home,
+                    pairing.credentials,
+                    AbortSignal.any([context.signal, AbortSignal.timeout(15000)]),
+                  )
+                : await disconnectPairing(pairing.home, pairing.credentials);
           break;
         }
         case "vectis_service": {

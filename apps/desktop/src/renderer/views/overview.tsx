@@ -43,6 +43,7 @@ const cloudLabels = {
   connected: "Cloud connected",
   connecting: "Connecting to cloud",
   unavailable: "Cloud unavailable",
+  removed: "Removed from account",
   unconfigured: "Local only",
 } as const;
 
@@ -161,6 +162,12 @@ export function Overview() {
       {snapshot?.cloud?.state === "unavailable" && snapshot.cloud.message && (
         <Notice tone="attention" title="The Vectis cloud is unavailable">
           {snapshot.cloud.message}
+        </Notice>
+      )}
+      {snapshot?.cloud?.state === "removed" && (
+        <Notice tone="attention" title="This Mac was removed from its account">
+          Disconnect the saved connection in Connections, then connect this Mac again whenever you
+          want.
         </Notice>
       )}
       {attention.length > 0 && (

@@ -23,6 +23,7 @@ export type DesktopAction =
   | "chooseFile"
   | "cloud.pair"
   | "cloud.finish"
+  | "cloud.disconnect"
   | "open.pull"
   | "open.docs"
   | "open.github"

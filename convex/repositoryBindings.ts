@@ -16,13 +16,7 @@ async function authorized(
 ) {
   const account = await ctx.db.get("githubAccounts", input.accountId);
   const target = await ctx.db.get("machines", input.machineId);
-  if (
-    !account ||
-    account.owner !== input.owner ||
-    !target ||
-    target.owner !== input.owner ||
-    target.revoked
-  )
+  if (!account || account.owner !== input.owner || !target || target.owner !== input.owner)
     throw new ConvexError({
       code: "repository_access_denied",
       nextStep: "Select your own connected GitHub account and an active machine.",

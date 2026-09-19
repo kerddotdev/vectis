@@ -24,7 +24,6 @@ async function fixture() {
       owner: "owner",
       localId: "local",
       name: "Mac",
-      revoked: false,
       createdAt: 1,
     });
     const accountId = await ctx.db.insert("githubAccounts", {
@@ -110,10 +109,10 @@ test("recovers a completely missing webhook using the authorized repository API"
     JSON.stringify(await t.run(async (ctx) => ctx.db.query("githubJobs").collect())),
   ).not.toContain("read-only-test-token");
 });
-test("revocation during the API request prevents persisting an authorized-looking result", async () => {
+test("removing the machine during the API request prevents persisting an authorized-looking result", async () => {
   const { device, bindingId, t, machineId, setBeforeJob } = await fixture();
   setBeforeJob(async () => {
-    await t.run(async (ctx) => ctx.db.patch("machines", machineId, { revoked: true }));
+    await t.run(async (ctx) => ctx.db.delete("machines", machineId));
   });
   await expect(device.action(api.githubJobs.refresh, { bindingId, jobId: 4 })).rejects.toThrow();
   expect(await t.run(async (ctx) => ctx.db.query("githubJobs").collect())).toHaveLength(0);
@@ -129,13 +128,12 @@ test("repository scans recover unknown jobs and recheck access before each page 
   const { device, bindingId, t, fetch, machineId } = await fixture();
   const original = fetch.getMockImplementation();
   if (!original) throw new Error("Missing test fetch");
-  let revoked = false;
+  let removed = false;
   fetch.mockImplementation(async (url) => {
     if (url.includes("/actions/runs?"))
       return Response.json({ total_count: 1, workflow_runs: [{ id: 5 }] });
     if (url.includes("/actions/runs/5/jobs?")) {
-      if (revoked)
-        await t.run(async (ctx) => ctx.db.patch("machines", machineId, { revoked: true }));
+      if (removed) await t.run(async (ctx) => ctx.db.delete("machines", machineId));
       return Response.json({
         total_count: 1,
         jobs: [
@@ -162,7 +160,7 @@ test("repository scans recover unknown jobs and recheck access before each page 
   expect(await device.query(api.jobs.list, { bindingId })).toMatchObject([
     { jobId: 4, status: "queued" },
   ]);
-  revoked = true;
+  removed = true;
   await expect(device.action(api.githubJobs.scan, { bindingId })).rejects.toThrow();
 });
 

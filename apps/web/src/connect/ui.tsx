@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ButtonHTMLAttributes, ComponentProps, ReactElement, ReactNode } from "react";
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { Menu } from "@base-ui/react/menu";
@@ -215,6 +216,74 @@ export function Dialog({
         </DialogPrimitive.Popup>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+  );
+}
+
+export function Confirm({
+  open,
+  onOpenChange,
+  title,
+  description,
+  phrase,
+  label,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  title: string;
+  description: ReactNode;
+  phrase: string;
+  label: string;
+  onConfirm: () => Promise<unknown>;
+}) {
+  const [value, setValue] = useState("");
+  const [error, setError] = useState("");
+  const [working, setWorking] = useState(false);
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (working) return;
+        setValue("");
+        setError("");
+        onOpenChange(next);
+      }}
+      title={title}
+      description={description}
+    >
+      <form
+        className="flex flex-col gap-4"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setWorking(true);
+          setError("");
+          void onConfirm()
+            .then(() => {
+              setValue("");
+              onOpenChange(false);
+            })
+            .catch(() => setError("That did not work. Try again."))
+            .finally(() => setWorking(false));
+        }}
+      >
+        {error && (
+          <Notice tone="danger" role="alert">
+            {error}
+          </Notice>
+        )}
+        <Field label={`Type ${phrase} to confirm`}>
+          <input
+            className={inputClass}
+            value={value}
+            autoComplete="off"
+            onChange={(event) => setValue(event.target.value)}
+          />
+        </Field>
+        <Button type="submit" variant="danger" disabled={working || value.trim() !== phrase}>
+          {working ? "Working" : label}
+        </Button>
+      </form>
+    </Dialog>
   );
 }
 

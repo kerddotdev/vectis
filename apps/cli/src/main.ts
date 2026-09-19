@@ -16,7 +16,11 @@ import {
 } from "../../../packages/protocol/src/index.js";
 import { runtimeDiagnostics } from "../../../packages/runner/src/diagnostics.js";
 import { githubConnection } from "../../../packages/client/src/github.js";
-import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
+import {
+  beginPairing,
+  disconnectPairing,
+  finishPairing,
+} from "../../../packages/client/src/pairing.js";
 import {
   beginControllerLogin,
   finishControllerLogin,
@@ -116,6 +120,7 @@ Service
 Cloud and GitHub
   cloud pair                    Begin browser-approved pairing of this machine with your account
   cloud finish                  Complete an approved pairing
+  cloud disconnect              Remove this machine's saved cloud connection and credential
   github connect                Print the page that links a GitHub account and installs the App
   github accounts               List verified GitHub accounts available to this machine
   login [--name <text>]         Begin browser-approved remote control of your machines
@@ -249,7 +254,10 @@ Documentation: https://vectis.kerd.dev/docs
     process.exitCode = 3;
     return;
   }
-  if (command === "cloud" && (subcommand === "pair" || subcommand === "finish")) {
+  if (
+    command === "cloud" &&
+    (subcommand === "pair" || subcommand === "finish" || subcommand === "disconnect")
+  ) {
     const helper = process.env.VECTIS_KEYCHAIN_HELPER;
     if (!helper)
       throw new VectisError(
@@ -261,7 +269,9 @@ Documentation: https://vectis.kerd.dev/docs
     const result =
       subcommand === "pair"
         ? await beginPairing(home, cloudDeployment(), credentials)
-        : await finishPairing(home, credentials);
+        : subcommand === "finish"
+          ? await finishPairing(home, credentials)
+          : await disconnectPairing(home, credentials);
     output(result);
     if (result.state === "action_required" || result.state === "pending") process.exitCode = 3;
     return;

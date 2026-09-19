@@ -121,7 +121,6 @@ export default defineSchema({
     owner: v.string(),
     localId: v.string(),
     name: v.string(),
-    revoked: v.boolean(),
     credentialVersion: v.optional(v.number()),
     createdAt: v.number(),
     lastSeenAt: v.optional(v.number()),
@@ -140,7 +139,9 @@ export default defineSchema({
     operationId: v.id("operations"),
     attempt: v.number(),
     updatedAt: v.number(),
-  }).index("by_job", ["installationId", "repositoryId", "jobId"]),
+  })
+    .index("by_job", ["installationId", "repositoryId", "jobId"])
+    .index("by_binding", ["bindingId"]),
   githubJobs: defineTable({
     installationId: v.number(),
     repositoryId: v.number(),

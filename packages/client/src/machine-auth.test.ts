@@ -24,7 +24,7 @@ test("credentials are bound to a canonical deployment and machine", () => {
   );
 });
 
-test("token reuse, forced refresh and revocation do not leak a stale token", async () => {
+test("token reuse, forced refresh and removal do not leak a stale token", async () => {
   const request = vi
     .fn()
     .mockResolvedValueOnce(Response.json({ token: "first", expiresAt: Date.now() + 300000 }))
@@ -37,7 +37,9 @@ test("token reuse, forced refresh and revocation do not leak a stale token", asy
   expect(await fetchToken({ forceRefreshToken: false })).toBe("first");
   expect(request).toHaveBeenCalledTimes(1);
   expect(await fetchToken({ forceRefreshToken: true })).toBe("second");
-  expect(await fetchToken({ forceRefreshToken: true })).toBe(null);
+  await expect(fetchToken({ forceRefreshToken: true })).rejects.toMatchObject({
+    code: "machine_rejected",
+  });
   expect(get).toHaveBeenCalledWith(credentialAccount(connection), expect.any(AbortSignal));
   expect(request.mock.calls[0]?.[1]).toMatchObject({ redirect: "error" });
 });

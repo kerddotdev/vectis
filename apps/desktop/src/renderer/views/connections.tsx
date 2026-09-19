@@ -6,6 +6,8 @@ import { Notice, Page } from "@/components/layout";
 import { Hint, Reason } from "@/components/hint";
 import { StatusBadge, type Tone } from "@/components/status";
 import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Machines } from "@/shell/machine-switcher";
 import { request, RequestError, useStateApi } from "@/state";
 
@@ -74,6 +76,7 @@ export function Connections() {
     { state: "checking" } | { state: "signed-out" } | { state: "signed-in"; machines: number }
   >({ state: "checking" });
   const [keychainMissing, setKeychainMissing] = useState(false);
+  const [disconnect, setDisconnect] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "info" | "danger"; text: string }>();
   useEffect(() => {
@@ -83,7 +86,7 @@ export function Connections() {
   async function checkAccount() {
     try {
       const machines = Schema.decodeUnknownSync(Machines)(await request("machines.list"));
-      setAccount({ state: "signed-in", machines: machines.filter((item) => !item.revoked).length });
+      setAccount({ state: "signed-in", machines: machines.length });
     } catch (issue) {
       setKeychainMissing(issue instanceof RequestError && issue.code === "runtime_missing");
       setAccount({ state: "signed-out" });
@@ -137,16 +140,20 @@ export function Connections() {
                 ? { tone: "success", label: "Connected" }
                 : cloud === "connecting"
                   ? { tone: "running", label: "Connecting" }
-                  : cloud === "unavailable"
-                    ? { tone: "attention", label: "Unavailable" }
-                    : { tone: "idle", label: "Not connected" }
+                  : cloud === "removed"
+                    ? { tone: "attention", label: "Removed from account" }
+                    : cloud === "unavailable"
+                      ? { tone: "attention", label: "Unavailable" }
+                      : { tone: "idle", label: "Not connected" }
           }
           description={
             machineId
               ? "You are controlling another machine. Switch to This Mac in the sidebar to manage its connection."
-              : paired
-                ? "GitHub jobs and remote commands can reach this Mac."
-                : "Connect this Mac to your Vectis account so GitHub jobs can start on it."
+              : cloud === "removed"
+                ? "This Mac was removed from its account. Disconnect it here, then connect it again whenever you want."
+                : paired
+                  ? "GitHub jobs and remote commands can reach this Mac."
+                  : "Connect this Mac to your Vectis account so GitHub jobs can start on it."
           }
         >
           {!machineId && cloud === "unavailable" && snapshot?.cloud?.message && (
@@ -193,7 +200,7 @@ export function Connections() {
                 </Button>
               </>
             )}
-            {paired && !machineId && cloud !== "connected" && (
+            {paired && !machineId && cloud !== "connected" && cloud !== "removed" && (
               <Button
                 variant="secondary"
                 disabled={pending !== null}
@@ -208,6 +215,42 @@ export function Connections() {
               </Button>
             )}
           </div>
+          {paired && !machineId && (
+            <form
+              className="flex items-end gap-2"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void run("disconnect", async () => {
+                  await request("cloud.disconnect");
+                  setDisconnect("");
+                  setMessage({
+                    tone: "success",
+                    text: "This Mac no longer has a cloud connection. Remove it on the account page too, then connect again whenever you want.",
+                  });
+                });
+              }}
+            >
+              <Field className="flex-1">
+                <FieldLabel htmlFor="cloud-disconnect">
+                  Type disconnect to remove this Mac's saved connection and credential
+                </FieldLabel>
+                <Input
+                  id="cloud-disconnect"
+                  required
+                  value={disconnect}
+                  onChange={(event) => setDisconnect(event.target.value)}
+                />
+              </Field>
+              <Button
+                type="submit"
+                variant="destructive"
+                size="sm"
+                disabled={pending !== null || disconnect.trim() !== "disconnect"}
+              >
+                {pending === "disconnect" ? "Disconnecting" : "Disconnect"}
+              </Button>
+            </form>
+          )}
         </Card>
 
         <Card

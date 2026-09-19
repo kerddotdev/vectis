@@ -7,7 +7,6 @@ export async function scheduleRunnerDemand(ctx: MutationCtx, machineId: Id<"mach
   const target = await ctx.db.get("machines", machineId);
   if (
     !target ||
-    target.revoked ||
     target.paused !== false ||
     target.runnerIdle !== true ||
     (target.lastSeenAt ?? 0) < Date.now() - 60000
@@ -106,13 +105,7 @@ export async function scheduleRunnerDemand(ctx: MutationCtx, machineId: Id<"mach
 
 export async function scheduleJobScan(ctx: MutationCtx, machineId: Id<"machines">) {
   const target = await ctx.db.get("machines", machineId);
-  if (
-    !target ||
-    target.revoked ||
-    target.paused !== false ||
-    !(await ctx.db.query("githubApps").first())
-  )
-    return;
+  if (!target || target.paused !== false || !(await ctx.db.query("githubApps").first())) return;
   const now = Date.now();
   const interval = 300000;
   const bindings = await ctx.db
