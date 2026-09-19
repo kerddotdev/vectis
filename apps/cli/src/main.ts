@@ -63,6 +63,7 @@ async function main() {
       environment: { type: "string" },
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
+      map: { type: "string", multiple: true },
     },
   });
   const home = resolveHome(values.home);
@@ -91,89 +92,118 @@ async function main() {
     return;
   }
   if (values.help || command === "help") {
-    process.stdout.write(`Vectis - local GitHub Actions runner control
+    process.stdout.write(`Vectis - GitHub Actions runners in disposable VMs on your Mac
 
 Usage: vectis <command> [options]
 
-  login [--name <text>]         Begin browser-approved remote control, no local service required
-  login finish                  Complete approved remote access using Keychain
-  logout                        Revoke this CLI connection and remove local credentials
-  machine list                  List owned cloud machines and last-seen presence
-  github accounts               List verified accounts available to this paired machine
-  repository connect <name>     Connect using --account <id> and --environment <id>, optional --owner <organization>
-  github connect                Open the guided GitHub account connection
-  cloud pair                    Begin browser-approved machine pairing
-  cloud finish                  Complete an approved pairing from Keychain
-  service install               Install and start a macOS login service
-  service uninstall             Remove login registration, preserving all data
-  service update                Adopt this runtime when idle; restore the previous one on failure
-  service recover-update        Restore the previous runtime after an interrupted update
-  service status                Inspect login registration for this home
-  service start                 Start the installed or independent background service
+Service
+  service install               Install and start the macOS login service for this home
+  service uninstall             Remove the login service, preserving all data
+  service start                 Start the installed or an independent background service
   service run                   Run the service in the foreground
   service stop [--if-idle]      Stop the service; --if-idle refuses to interrupt active work
-  migration analyze <binding-id>  Prepare a repository workflow migration preview
-  migration publish <preview-id>  Create or recover its PR without merging
-  job scan <binding-id>         Discover missing jobs through the GitHub API
-  job refresh <binding-id> <job-id>  Recover a job state directly from GitHub
-  job list <binding-id>         Read recent GitHub job status for a connected repository
-  repository enable-auto <id>   Enable automatic runners for matching queued jobs
-  repository disconnect <id>   Stop future runner admission without interrupting running jobs
-  repository disable-auto <id>  Disable future automatic runner admission
-  repository list               List this machine's connected repositories (requires cloud pairing)
-  storage                       Inspect image and VM disk usage
+  service status                Inspect the login service registration for this home
+  service update                Adopt this runtime when idle; restore the previous one on failure
+  service recover-update        Restore the previous runtime after an interrupted update
   status                        Inspect the machine and recent operations
-  capabilities                  Discover supported commands and schemas
+  storage                       Inspect image and VM disk usage
   doctor                        Inspect host and runtime prerequisites
-  pause | resume                Control new instance admission
-  environment install-macos <id>  Install with --image-directory and --storage-path; optional --restore-path <IPSW>
-  environment install-windows <id>  Install ARM64 Windows with --iso-path, --drivers-path, --firmware-path, --firmware-vars-path, --image-directory, --storage-path and --accept-license
-  environment resume-windows <setup-id>  Continue an interrupted Windows installation
-  environment discard-macos <setup-id> --environment <id>  Permanently discard a stopped unregistered setup
-  environment open-macos-setup <setup-id>  Open the local guest setup console
-  environment connect-macos-guest <setup-id>  Prepare guest SSH enrollment; optional --open-terminal
+  capabilities                  List supported commands and queries with the command schema
+  pause | resume                Stop or allow admission of new VMs
+
+Cloud and GitHub
+  cloud pair                    Begin browser-approved pairing of this machine with your account
+  cloud finish                  Complete an approved pairing
+  github connect                Print the page that links a GitHub account and installs the App
+  github accounts               List verified GitHub accounts available to this machine
+  login [--name <text>]         Begin browser-approved remote control of your machines
+  login finish                  Complete an approved remote control login
+  logout                        Revoke this CLI's remote access and remove its credentials
+  machine list                  List your machines and when they were last seen
+
+Repositories and jobs
+  repository list               List repositories connected to this machine, with their runs-on label
+  repository connect <name>     Connect with --account <id> and --environment <id>, optional --owner <org>
+  repository enable-auto <id>   Start runners automatically for matching queued jobs
+  repository disable-auto <id>  Stop starting runners automatically
+  repository disconnect <id>    Stop future runners without interrupting running jobs
+  runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
+  runner reconcile <operation-id>  Clean up an interrupted runner after verifying its VM stopped
+  job list <binding-id>         Read recent GitHub job states for a connected repository
+  job scan <binding-id>         Discover missing jobs through the GitHub API
+  job refresh <binding-id> <job-id>  Recover one job state directly from GitHub
+
+Workflow migration
+  migration preview <workflow-file> --map <from>=<to>  Rewrite runs-on labels locally without writing files
+  migration analyze <binding-id>  Prepare a reviewable migration preview for a repository
+  migration publish <preview-id>  Create or recover its pull request; never merges
+
+Environments
+  environment prepare-linux <id>  Prepare Ubuntu 24.04 with --image-directory and --storage-path
+  environment resume <setup-id>   Continue an interrupted Ubuntu preparation
+  environment install-macos <id>  Install macOS 26 with --image-directory and --storage-path, optional --restore-path
+  environment open-macos-setup <setup-id>     Open the guest console for Setup Assistant
+  environment connect-macos-guest <setup-id>  Prepare guest SSH enrollment, optional --open-terminal
   environment verify-macos-guest <setup-id>   Verify guest SSH and unattended startup prerequisites
   environment finish-macos-setup <setup-id>   Register the verified, stopped macOS setup
-  environment resume-macos <setup-id>  Inspect or retry an interrupted macOS installation
-  environment prepare-linux <id>  Prepare Ubuntu with --image-directory and --storage-path
-  environment resume <setup-id>   Continue an interrupted image preparation
-  environment register --file   Register a prepared environment JSON file
-  environment configure <id>    Set --cpu, --memory-mib or --storage-path for future VMs
-  environment start <id>        Start a VM; optionally override --cpu, --memory-mib, --storage-path
+  environment resume-macos <setup-id>         Inspect or retry an interrupted macOS installation
+  environment discard-macos <setup-id> --environment <id>  Permanently discard an unregistered setup
+  environment install-windows <id>  Experimental: install Windows 11 from your ISO, drivers and firmware
+  environment resume-windows <setup-id>  Continue an interrupted Windows installation
+  environment register --file <path>  Register an existing prepared environment JSON file
+  environment configure <id>    Set default --cpu, --memory-mib or --storage-path for future VMs
+  environment start <id>        Start a clean VM, optionally overriding --cpu, --memory-mib, --storage-path
   environment remove <id>       Remove an idle definition, preserving its disk
-  instance stop <id>             Stop an owned VM
-  instance reconcile <id>        Recheck an interrupted instance safely
-  runner run <binding-id>        Start one disposable runner (requires a prepared connected environment)
-  runner reconcile <operation-id>  Clean an interrupted runner after verifying its VM stopped
-  operation cancel <id>          Request runner cancellation and cleanup
-  operation get <id>             Inspect an operation
-  operation wait <id>            Wait for an operation's terminal state
-  command --file <path>          Submit any protocol command as JSON
+  instance stop <id>            Stop a VM owned by this service
+  instance reconcile <id>       Recheck an interrupted VM safely
 
-Options:
-  --home <directory>             Isolated Vectis state directory
-  --machine <id>                 Send mutations and operation get/wait to this remote machine
-  --json                        Machine-readable JSON output
-  -v, --version                 Print the Vectis version
-  --name <text>                Prepared environment display name (default: Ubuntu 24.04 ARM64)
+Operations
+  operation get <id>            Inspect an operation
+  operation wait <id>           Wait for an operation's terminal state, up to --timeout
+  operation cancel <id>         Cancel an active operation and release what it owns
+  command --file <path>         Submit any protocol command as JSON
+  version                       Print the Vectis version
+
+Options
+  --home <directory>            State directory (default: ~/.vectis, or ~/.vectis-dev for development builds)
+  --machine <id>                Send commands and queries to a remote machine after vectis login
+  --json                        Print compact JSON (output is always JSON)
+  --key <id>                    Idempotency key; retrying with the same key never repeats work
+  --wait                        Wait for the operation's terminal state
+  --timeout <milliseconds>      Wait timeout (default: 120000)
+  --name <text>                 Environment or login name (defaults: Ubuntu 24.04 ARM64, macOS 26 ARM64,
+                                Windows 11 ARM64, Vectis CLI)
   --image-directory <path>      Existing directory for prepared base images
-  --disk-gib <GiB>              Prepared Linux virtual capacity (default: 32)
-  --job-id <number>             Require a matching queued GitHub job before runner admission
-  --key <id>                    Idempotency key for a mutation
-  --wait                        Wait for command completion
-  --timeout <milliseconds>      Wait timeout (default 120000)
-  --non-interactive             Never prompt (all commands are prompt-free)
+  --storage-path <path>         Directory for VM clones
+  --cpu <count>                 Virtual CPUs (defaults: 2, Windows 4)
+  --memory-mib <MiB>            Memory (defaults: 4096, Windows 8192; at most 75% of host memory)
+  --disk-gib <GiB>              Disk capacity (defaults: Ubuntu 32, macOS 64, Windows 96)
+  --restore-path <file.ipsw>    Local macOS restore image instead of the pinned download
+  --open-terminal               Open Terminal with the guest enrollment script
+  --iso-path, --drivers-path, --firmware-path, --firmware-vars-path <path>  Windows installation media
+  --image-name <text>           Windows edition in the ISO (default: Windows 11 Pro)
+  --accept-license              Accept the Windows license terms for this installation
+  --account <id>                GitHub account ID from vectis github accounts
+  --owner <organization>        Repository owner when it differs from the account
+  --environment <id>            Environment ID
+  --job-id <number>             Require a matching queued GitHub job before starting a runner
+  --map <from>=<to>             Label mapping for migration preview; repeat for more labels
+  --file <path>                 JSON input file
+  --if-idle                     Refuse to stop while VMs or operations are active
+  -v, --version                 Print the Vectis version
+  -h, --help                    Show this help
 
-Examples:
-  vectis service start --home /tmp/vectis-demo --json
-  vectis status --home /tmp/vectis-demo --json
-  vectis environment register --file environment.json --wait --json
+Exit codes: 0 success, 1 failure or cancellation, 3 action required or still pending.
+Errors are JSON: {"error":{"code","message","nextStep"}}.
+
+Examples
+  vectis status --json
+  vectis environment prepare-linux ubuntu --image-directory ~/VMs/images --storage-path ~/VMs/clones --wait
   vectis repository list --json
   vectis runner run <binding-id> --key <stable-key> --json
   vectis operation wait <operation-id> --timeout 3600000 --json
 
-Only capabilities reported by this build are supported. Cloud setup and
-GitHub pairing require separately configured development services.
+Documentation: https://vectis.kerd.dev/docs
 `);
     return;
   }
@@ -425,6 +455,17 @@ GitHub pairing require separately configured development services.
     });
   else if (command === "migration" && subcommand === "analyze" && id)
     request = decodeCommand({ type: "migration.analyze", bindingId: id });
+  else if (command === "migration" && subcommand === "preview" && id)
+    request = decodeCommand({
+      type: "migration.preview",
+      source: await readFile(id, "utf8"),
+      targets: (values.map ?? []).map((mapping) => {
+        const [from, to, ...rest] = mapping.split("=");
+        if (!from || !to || rest.length)
+          throw new VectisError("invalid_arguments", "Use --map <from-label>=<vectis-label>.");
+        return { from, to };
+      }),
+    });
   else if (command === "migration" && subcommand === "publish" && id)
     request = decodeCommand({ type: "migration.publish", previewId: id });
   else if (command === "job" && subcommand === "scan" && id)
