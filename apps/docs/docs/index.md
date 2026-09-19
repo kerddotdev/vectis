@@ -1,18 +1,28 @@
 ---
 title: Vectis
-description: Local virtual machines for GitHub Actions, controlled by people and agents.
+description: GitHub Actions runners in disposable VMs on your own Mac, for people and agents.
 ---
 
-Vectis runs disposable virtual machines on your own Apple Silicon Mac. The local service owns each VM and its files. The CLI, desktop, and agent interfaces are designed to use the same control contract.
+Vectis runs every GitHub Actions job in a fresh virtual machine on your Apple Silicon Mac and deletes it when the job ends. You prepare an Ubuntu, macOS or Windows guest once; each job gets a clean copy.
 
-**This is a development build.** Desktop, CLI, and MCP share local and remote controls for environments, storage, repository connections, runner operations, and workflow migration. Browser connections handle machine pairing and GitHub identities. Signed desktop and standalone CLI packages can be built from source; see [development packages](/docs/guides/development-packages/). No public release is published yet.
+Three parts work together:
 
-Start with [local setup](/docs/guides/local-setup/), then choose [VM storage and resources](/docs/guides/storage/). Agents can use the [integration guide](/docs/guides/agents/) and generated [CLI reference](/docs/reference/cli/).
+- **The Vectis app and its background service** run on your Mac. The service owns the VMs, the disks and the local credentials. The app, the `vectis` CLI and the `vectis-mcp` server for agents are all clients of the same service.
+- **Your account at [vectis.kerd.dev/connect](https://vectis.kerd.dev/connect)** links your Macs, your GitHub accounts and your repositories. It also relays commands when you control one Mac from another.
+- **The Vectis GitHub App** lets Vectis see queued jobs for the repositories you connect and register a single-use runner for each one.
 
-Ubuntu 24.04 ARM64, macOS 26 ARM64, and Windows 11 ARM64 guests have completed real GitHub Actions jobs with disposable-instance cleanup in development testing. Follow the separate [Linux](/docs/guides/linux-setup/), [macOS](/docs/guides/macos-setup/), and [Windows](/docs/guides/windows-setup/) preparation guides. macOS setup and OS permissions can require manual steps. Registering an image alone does not verify its toolchain or runner readiness.
+Build files and VM disks never leave your Mac. The only cloud traffic is coordination: which jobs are waiting, which Mac takes them, and what happened.
 
-The central service coordinates identity and remote commands. VM disks and build files stay on the host. Normal GitHub Actions logs, artifacts, and caches still follow GitHub's behavior.
+## Start here
 
-## Read without a browser
+1. [Install Vectis](/docs/get-started/install) and check the requirements.
+2. Follow the [quickstart](/docs/get-started/quickstart) from an empty Mac to your first job.
+3. Point your workflows at Vectis with the right [runs-on label](/docs/guides/repositories#choose-the-runs-on-label).
 
-Append `.md` to any page URL to read its Markdown source. [`llms.txt`](/docs/llms.txt) indexes the pages for agents, and [`llms-full.txt`](/docs/llms-full.txt) contains all of them in one file.
+## For agents
+
+Agents use the same tools as you. See [Agents](/docs/guides/agents) to install the skill and connect the MCP server. Append `.md` to any page URL to read its Markdown source; [`llms.txt`](/docs/llms.txt) indexes every page and [`llms-full.txt`](/docs/llms-full.txt) contains all of them.
+
+## Run it yourself
+
+Vectis is open source. [Self-hosting](/docs/self-hosting/cloud) explains how to build it from source and run your own backend, website and GitHub App.

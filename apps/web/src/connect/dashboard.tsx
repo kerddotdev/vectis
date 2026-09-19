@@ -316,7 +316,7 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
         <Empty
           title="No Macs yet"
           action={
-            <a className={buttonClass("secondary", true)} href="/docs/guides/local-setup">
+            <a className={buttonClass("secondary", true)} href="/docs/get-started/quickstart">
               Read the setup guide
             </a>
           }

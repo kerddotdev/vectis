@@ -3,11 +3,28 @@ title: Install a Windows guest
 description: Prepare a local Windows 11 ARM64 image with private setup credentials and pinned SSH access.
 ---
 
-The Windows installer is under integration testing. It uses a local official Windows 11 ARM64 ISO, ARM64 VirtIO network drivers and QEMU with Apple Silicon hardware acceleration. It does not fall back to CPU emulation. Runtime and firmware installation are currently explicit prerequisites.
+Windows support is **experimental**. It installs Windows 11 ARM64 from your own ISO with QEMU and Apple's Hypervisor framework, and it does not fall back to slow CPU emulation. The Vectis app does not include QEMU, the software TPM or UEFI firmware; you install them yourself as described below.
 
 ## Prerequisites
 
-Configure QEMU, qemu-img, swtpm and the Vectis Keychain helper in the local service. Supply an ARM64 UEFI code image and a blank **raw** UEFI variable-store template compatible with that firmware. Do not use another VM's variable store or TPM state.
+Vectis needs four programs and two firmware files:
+
+- **QEMU 11.1.1 with the Vectis TPM patch.** Stock QEMU cannot map the Windows TPM on Apple Silicon. Build it by following [the QEMU build notes](https://github.com/kerddotdev/vectis/blob/main/native/qemu/README.md); `qemu-img` comes from the same build or from Homebrew (`brew install qemu`).
+- **swtpm**, the software TPM: `brew install swtpm`.
+- **ARM64 UEFI firmware with Secure Boot support** and a blank **raw** variable-store template that matches it. The QEMU build notes name a pinned source and explain how to convert a QCOW2 template to raw. Do not reuse another VM's variable store or TPM state.
+- **The VirtIO driver ISO** for ARM64 Windows, from the [virtio-win project](https://github.com/virtio-win/virtio-win-pkg-scripts).
+- **A Windows 11 ARM64 ISO** from Microsoft, in English.
+
+The service records runtime paths when it is registered. While no VM is running, register it again with the paths set:
+
+```sh
+export VECTIS_QEMU=/absolute/path/to/qemu-system-aarch64
+export VECTIS_QEMU_IMG=/absolute/path/to/qemu-img
+export VECTIS_SWTPM=/absolute/path/to/swtpm
+vectis service update
+```
+
+**Diagnostics** in the app shows whether the service found them.
 
 Choose existing directories for the base image and disposable VMs. Preparation requires an idle host, at least 30 GiB of free image storage, at least 2 CPU cores, 4096 MiB of guest memory and a virtual disk of at least 64 GiB. CPU and memory allocations must fit the host's limits. A thin virtual disk grows as Windows writes to it.
 
@@ -17,7 +34,7 @@ You must accept the applicable Windows license terms. Vectis does not provide a 
 
 ## Start installation
 
-In desktop **Environments > Prepare a guest image**, select **Windows 11 ARM64** and provide the media paths and resource limits. The equivalent CLI command is:
+In the app, open **Environments > Add environment**, select **Windows 11** and provide the media paths and resource limits. The equivalent CLI command is:
 
 ```sh
 vectis environment install-windows windows-11-arm64 \

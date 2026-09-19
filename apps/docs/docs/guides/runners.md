@@ -1,103 +1,68 @@
 ---
-title: Run a disposable runner
-description: Start, observe, cancel, and reconcile a service-managed GitHub runner.
+title: Runners and jobs
+description: Automatic and manual runners, reading job results, cancelling and recovering.
 ---
 
-The local service can run one official GitHub Actions runner in a disposable guest. This development path requires a paired machine, a connected personal or organization repository, and a prepared ARM64 environment with pinned guest SSH access. Organization repositories require a verified GitHub account with current administrator access. Public repositories require GitHub approval for all external contributors before connection and each new runner registration.
+Every job runs on its own runner in its own VM. Vectis boots a copy of the environment, registers a GitHub runner that accepts exactly one job, runs it, then deletes the VM and the registration.
 
-After pairing the machine and linking a GitHub identity in the browser, connect a prepared environment:
+## Automatic runners
 
-```sh
-vectis github accounts --json
-vectis repository connect <repository-name> --account <account-id> --environment <environment-id> --wait --json
-```
-
-The account ID must come from verified account discovery. The connection checks the current GitHub App installation and repository access. Repeating the same connection reuses its binding. The desktop provides the equivalent account, repository and environment form under Connections; MCP accepts `repository.connect`.
-
-Discover the repository binding, then request a runner:
+Turn on **Automatic** for a connection in **Repositories**, or:
 
 ```sh
-vectis repository list --json
-vectis runner run <binding-id> --key <stable-request-key> --json
-vectis operation get <operation-id> --json
-vectis operation wait <operation-id> --timeout 3600000 --json
+vectis repository enable-auto <binding-id> --wait
+vectis repository disable-auto <binding-id> --wait
 ```
 
-The service starts a clean VM, checks its architecture and clock, installs the checksum-verified runner, and requests a repository-scoped JIT configuration from the GitHub App. The App private key stays in the cloud. The local operation record never contains the JIT configuration.
+With automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts a runner when it is connected, not paused and idle. A Mac runs one automatic runner at a time; the next job starts after the previous VM is gone.
 
-A workflow must target the environment label `vectis-<environment-id>`, along with the appropriate OS and ARM64 labels. For example, a macOS environment named `macos-26-arm64` uses:
+Before booting a VM, and again before registering the runner, Vectis checks with GitHub that the job is still queued. GitHub may hand the runner a different job with the same labels. If the original job is still waiting after a successful run, Vectis tries again, at most three times. It never retries a failed, interrupted or cancelled runner on its own.
 
-```yaml
-runs-on: [self-hosted, macOS, ARM64, vectis-macos-26-arm64]
-```
+Automatic runners are off until you turn them on, per connection.
 
-GitHub assigns queued jobs to available runners. Starting a runner does not assign it to a particular job or automatically dispatch a workflow. Automatic admission can be enabled per binding as described below. Use the [workflow migration guide](/docs/guides/migrations/) to preview repository changes and create a PR. The manual runner task is bounded to six hours after listener startup.
+## Manual runners
 
-A successful Vectis operation confirms that its runner process completed and cleanup succeeded. Use `vectis job list <binding-id> --json`, MCP `vectis_jobs`, or **Connections > Refresh GitHub jobs** to read the latest 100 observed GitHub jobs for the repository. These records come from signed GitHub webhooks and include the GitHub conclusion. If an event has not arrived, the record can be absent or stale. Use `vectis job refresh <binding-id> <job-id> --wait --json` to recover a known job directly from the repository API. Use `vectis job scan <binding-id> --wait --json` or **Discover missing jobs** to discover queued and running workflows without knowing a job ID. The scan also revisits previously active runs. Automatic bindings request this read periodically, at most once per repository per five-minute scheduling window while a connected machine is unpaused. Large queues or API limits can produce `action_required` with a partial scan; use known job IDs to recover specific missing records. Scans never approve fork workflows. Check the GitHub Actions run for the job's actual result. The listener's exit code alone is not a job result.
-
-## Automatic admission
+Start one runner yourself with **Start runner** on the connection, or:
 
 ```sh
-vectis repository enable-auto <binding-id> --wait --json
-vectis repository disable-auto <binding-id> --wait --json
+vectis runner run <binding-id> --key <any-unique-key> --json
+vectis runner run <binding-id> --job-id <github-job-id> --json   # only if that job is still queued
 ```
 
-Automatic mode is disabled until explicitly enabled for a repository binding. A connected, unpaused, idle machine checks queued demand on its heartbeat. Admission requires the environment's Vectis label and all other requested labels to match. The current scheduler admits one automatic runner per idle machine; manual VM requests still share the host resource budget.
+A manual runner waits up to six hours for a job.
 
-Before starting a VM, and again before registering its runner, the service reads the job directly from GitHub. Completed or cancelled demand does not start a new runner. GitHub can assign the runner to a different compatible queued job. If the original demand still waits after verified successful cleanup, the scheduler permits at most three sequential attempts. Failed, interrupted or explicitly cancelled attempts require inspection rather than automatic retry.
+## Read job results
 
-Disabling automatic mode stops future admission, including queued requests that have not started. Pausing the machine leaves already running jobs alone. An offline machine is not treated as available capacity. Repeated heartbeats and competing machines cannot create a second reservation for the same active demand.
+A runner operation that succeeded means the VM ran and was cleaned up. It does not say whether the job passed. The job's result comes from GitHub:
 
-The desktop offers the same mode switch under Connections. MCP accepts `repository.automatic` through `vectis_command`. To request a single runner guarded by a known job's current state, use `runner run <binding-id> --job-id <job-id>`.
+- **App:** open a connection in **Repositories** to see its recent jobs.
+- **CLI:** `vectis job list <binding-id> --json` returns the latest 100 jobs with their GitHub status and conclusion.
 
-## Cancel and recover
+Job states arrive through GitHub webhooks. If one seems missing or stale:
 
 ```sh
-vectis operation cancel <operation-id> --json
-vectis operation wait <operation-id> --json
+vectis job scan <binding-id> --wait             # find queued and running jobs Vectis missed
+vectis job refresh <binding-id> <job-id> --wait # reread one job from GitHub
 ```
 
-Cancellation first stops the owned VM, then removes its GitHub registration. The cancellation request finishing does not mean cleanup has finished; inspect the original runner operation. Pausing the machine leaves existing runners running. Cancelling a CLI wait also leaves the runner running.
+## Cancel
 
-After a service restart or uncertain cleanup, inspect the original operation and its instance. Reconcile an interrupted instance only after the runtime confirms process exit, then reconcile its runner:
+Cancel a runner from its operation in **Overview**, or:
 
 ```sh
-vectis instance reconcile <instance-id> --wait --json
-vectis runner reconcile <operation-id> --wait --json
+vectis operation cancel <operation-id>
+vectis operation wait <operation-id>
 ```
 
-Runner reconciliation finds the original cloud lease by its stable request key. It cannot delete another binding's runner or remove a registration while VM exit is unconfirmed. Missing cloud evidence remains `action_required`; do not submit fresh runner requests to hide that state.
+Cancelling stops the VM, then removes the GitHub registration. The cancel request returns before cleanup finishes; the original operation reports the outcome. Pausing the machine only stops new VMs.
 
-In the desktop, use **Connections > Start runner** and follow the operation in **Overview**. Active operations offer **Cancel operation**; interrupted ones offer **Reconcile runner**. MCP exposes these same operations through `vectis_command` and the shared capability schema.
+## Recover after a crash
 
-## Disconnect a repository
+If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Vectis never guesses: it cleans up only after it has evidence that the VM process exited.
 
 ```sh
-vectis repository disconnect <binding-id> --json
-vectis operation wait <operation-id> --json
+vectis instance reconcile <instance-id> --wait
+vectis runner reconcile <operation-id> --wait
 ```
 
-Disconnection disables new manual and automatic runner admission for that repository binding on this machine. Running jobs can finish and their registrations can still be cleaned up. Other machines and environments keep their own connections. Repeating disconnection is safe.
-
-The GitHub App installation and workflow files remain unchanged. Jobs requesting the disconnected runner label may wait until compatible capacity is available. Reconnect with `repository connect` when needed; automatic admission stays disabled until explicitly enabled again.
-
-## Public repositories
-
-In GitHub repository **Settings > Actions > General**, require approval for **all external contributors**. Vectis reads the [repository approval policy](https://docs.github.com/en/rest/actions/permissions#get-fork-pr-contributor-approval-permissions-for-a-repository) before public runner admission and migration publication. A weaker, unreadable or unknown policy blocks those operations. Vectis does not change the policy or approve workflow runs.
-
-A maintainer remains responsible for reviewing external code before approval. This is an approval-based trust model, not a guarantee for arbitrary hostile workloads. Migration leaves privileged workflow triggers for manual review. A fork needs its own App installation and Vectis connection for its own runs; it does not inherit upstream capacity.
-
-Changing the approval policy blocks future registrations, but does not prevent cleanup of existing runners. The public-policy behavior has isolated API and authorization tests; the complete external-fork approval scenario still requires a dedicated live acceptance test.
-
-## Organization repositories
-
-Select your verified personal GitHub identity, then supply the repository's organization separately:
-
-```sh
-vectis repository connect example-repo --owner example-org \
-  --account <verified-account-id> --environment <environment-id> --json
-```
-
-Desktop and web offer the same optional repository-owner field. Vectis checks the [user's effective repository permission](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user) through the installed App. It requires `admin` and matches the returned user ID to the verified identity. It repeats this check for new runner registration, job API reads and migration access. Organization membership alone is insufficient.
-
-The runner remains repository-scoped; this does not create an organization-wide pool or Vectis team. Removing a user's admin access blocks new admission while the existing owner can still clean up registrations issued by Vectis. App removal or repository access revocation can require manual cleanup. Live organization acceptance remains separate from the isolated authorization tests.
+The app offers the same actions as **Reconcile** in **Overview**. Do not start new runners to work around an unresolved one.

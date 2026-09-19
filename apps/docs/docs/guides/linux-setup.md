@@ -31,6 +31,4 @@ A stopped or failed setup reports `action_required` and its durable `setupId`. P
 
 After a service crash, the previous guest must have verifiable process-exit evidence before its disk can be rewritten. Vectis will not kill an unrelated process or assume that a stored PID still belongs to it. The private `preparation.log` remains in the operation's reported image directory for diagnosis.
 
-Completed setup registers the environment automatically. It does not connect a repository or prove a GitHub job has run. Continue with [repository connections and runners](/docs/guides/runners/), then use a successful job and cleanup to verify the environment for [workflow migration](/docs/guides/migrations/).
-
-[macOS restore installation and its setup console](/docs/guides/macos-setup/) are available, with manual guest SSH enrollment. Windows guided preparation is still being integrated. Prepared images for both systems already run through the shared runner lifecycle.
+Completed setup registers the environment automatically. It does not connect a repository or prove a GitHub job has run. Continue with [Repositories and labels](/docs/guides/repositories), then [Runners and jobs](/docs/guides/runners).

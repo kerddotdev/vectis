@@ -22,13 +22,13 @@ Source checkouts read `CONVEX_URL` and `VECTIS_WEB_URL` from `.env.local`, so on
 1. Follow [Run your own cloud](/docs/self-hosting/cloud) with development values. Set `VECTIS_WEB_URL` to `https://vectis-dev.<account>.workers.dev`.
 2. Deploy the website with `pnpm site:deploy:dev`.
 3. **Lock the website.** In the Cloudflare dashboard, open **Workers & Pages**, select `vectis-dev`, go to **Settings > Domains & Routes**, and choose **Enable Cloudflare Access** for `workers.dev`. Edit the `vectis-dev - Production` policy in Zero Trust so it allows only your email address. GitHub webhooks go straight to Convex, so nothing needs a bypass.
-4. **Lock sign-in.** In the Clerk development instance, open **Configure > Restrictions**, turn on the allowlist with only your email address, and set sign-up mode to restricted. Nobody else can create an account, so nobody else can approve a pairing or control a machine.
+4. **Lock sign-in.** In the Clerk development instance, open **Configure > Restrictions**, turn on the allowlist with your email addresses, and enforce it on sign-in as well as sign-up. Nobody else can create an account or sign in, so nobody else can approve a pairing or control a machine.
 5. **Lock the GitHub App.** Create it with `VECTIS_GITHUB_APP_PUBLIC=false`, so it can only be installed on the account that owns it.
 
 ## Check the locks
 
 - In a private browser window, `https://vectis-dev.<account>.workers.dev/connect` shows the Cloudflare Access login instead of the page.
-- Signing in to Clerk with another email address is refused.
+- Signing in or signing up with another email address is refused.
 - The App's public page on GitHub offers installation only to its owner.
 
 ## Use it

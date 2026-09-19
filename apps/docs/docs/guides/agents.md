@@ -1,42 +1,75 @@
 ---
-title: Agent integration
-description: Discover capabilities and control Vectis through the CLI, MCP, or skill.
+title: Agents
+description: Give coding agents the Vectis skill and MCP server so they can prepare environments, connect repositories and diagnose jobs.
 ---
 
-Start with discovery instead of assuming a command or guest OS is ready:
+Agents use the same service and the same commands as you: the `vectis` CLI with JSON output, or the `vectis-mcp` server. The Vectis skill teaches them the workflow and the rules, such as never approving a pairing request on your behalf.
 
-```sh
-pnpm vectis --help
-pnpm vectis capabilities --json
-pnpm vectis status --json
+First [install the command line tools](/docs/get-started/install#command-line-tools) from the app, so `vectis` and `vectis-mcp` are on your PATH.
+
+## Claude Code
+
+Install the plugin, which contains the skill and registers the MCP server:
+
+```text
+/plugin marketplace add kerddotdev/vectis
+/plugin install vectis@vectis
 ```
 
-Use `--json` and a stable `--key` for mutations. Reuse a key only when retrying the same request. A command response containing `accepted` is not a success report. Inspect the operation's terminal state and follow a returned `nextStep` when configuration or recovery is required.
+Or add only the MCP server:
 
-All current CLI commands are non-interactive. `--non-interactive` explicitly documents that intent. `--timeout` bounds waiting; cancelling a wait does not cancel the underlying operation.
+```sh
+claude mcp add vectis -- vectis-mcp
+```
 
-After cloud pairing and repository linking, run `pnpm vectis repository list --json` to discover the machine's repository IDs and environment bindings. A connection is not proof of runner readiness. Missing cloud access returns an error with a next step, not an empty successful list.
+## Codex
 
-For runner execution, use `runner run <binding-id>` and observe the returned operation. `operation cancel <id>` requests cleanup; `runner reconcile <id>` recovers an interrupted registration after VM exit is confirmed. See [runner control](/docs/guides/runners/). A completed runner lifecycle does not prove its GitHub job succeeded.
+Add the server to `~/.codex/config.toml`:
 
-## MCP
+```toml
+[mcp_servers.vectis]
+command = "vectis-mcp"
+```
 
-After `pnpm build`, configure a stdio MCP client with:
+Copy [`skills/vectis`](https://github.com/kerddotdev/vectis/tree/main/skills/vectis) into your Codex skills directory to add the skill.
+
+## Cursor and other MCP clients
+
+Any client that starts stdio MCP servers can run `vectis-mcp`. For Cursor, add to `~/.cursor/mcp.json`:
 
 ```json
 {
-  "command": "node",
-  "args": ["/absolute/path/to/vectis/dist/apps/mcp/src/main.js"],
-  "env": { "VECTIS_HOME": "/absolute/path/to/your/vectis-home" }
+  "mcpServers": {
+    "vectis": { "command": "vectis-mcp" }
+  }
 }
 ```
 
-Discover tools, then call `vectis_capabilities`. `vectis_status`, `vectis_storage`, and `vectis_doctor` inspect local state and service configuration. `vectis_repositories` lists currently authorized repository connections for the paired machine. `vectis_command` accepts the shared command schema and an idempotency key. `vectis_wait` observes completion. State-changing tools require the same running local service as the CLI.
+The skill is a plain [`SKILL.md`](https://github.com/kerddotdev/vectis/blob/main/skills/vectis/SKILL.md) that works with any agent that reads skills.
 
-For a remote host, sign in with the CLI and pass `--machine <id>` and the same `--home` to MCP. Set `VECTIS_KEYCHAIN_HELPER` in its environment. Remote capability discovery identifies the target; local service management tools are omitted. See [remote control](/docs/guides/remote-control/).
+## MCP tools
 
-## Skill
+| Tool                                                           | Use                                                                                 |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `vectis_capabilities`                                          | Supported commands and queries, with the command schema                             |
+| `vectis_status`                                                | Machine, environments, VMs, recent operations and cloud connection                  |
+| `vectis_command`                                               | Submit a command with an idempotency key                                            |
+| `vectis_operation`, `vectis_wait`                              | Read one operation, or wait for it; a wait that times out returns the current state |
+| `vectis_logs`                                                  | The newest service log lines                                                        |
+| `vectis_repositories`, `vectis_jobs`, `vectis_github_accounts` | Connections with their labels, job results, linked accounts                         |
+| `vectis_storage`, `vectis_doctor`                              | Disk usage and runtime diagnostics                                                  |
+| `vectis_github_connect`                                        | The page that links GitHub and installs the App                                     |
+| `vectis_service`, `vectis_cloud`                               | Login service and pairing, on the Mac itself only                                   |
+| `vectis_machines`                                              | Your Macs, after `vectis login`                                                     |
 
-The repository's `skills/vectis/SKILL.md` is a portable skill for agents. Install it using your agent application's skill installer. It contains discovery, mutation, storage, and recovery guidance, without credentials or machine-specific configuration.
+To let an agent control another Mac, sign in once with `vectis login` and start the server with `vectis-mcp --machine <machine-id>`. A remote session never falls back to the local Mac.
 
-For direct documentation retrieval, read [`llms.txt`](/docs/llms.txt). Append `.md` to any documentation page URL for the same public Markdown that builds this site.
+## Rules agents follow
+
+- Humans approve pairing, sign-in and GitHub linking in the browser. Agents hand over the link and wait.
+- An accepted operation is not a finished one. Agents report the final status, and follow `nextStep` for `action_required`.
+- Agents reuse an idempotency key only to retry the exact same command.
+
+## Documentation for agents
+
+[`llms.txt`](/docs/llms.txt) indexes every page, [`llms-full.txt`](/docs/llms-full.txt) contains all of them, and appending `.md` to any page URL returns its Markdown.

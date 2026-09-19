@@ -3,6 +3,18 @@ title: Migrate repository workflows
 description: Inspect workflow changes and create an idempotent migration pull request.
 ---
 
+## Preview a single workflow
+
+To see how Vectis would rewrite one workflow file without connecting anything, map its labels yourself:
+
+```sh
+vectis migration preview .github/workflows/test.yml --map ubuntu-24.04-arm=vectis-ubuntu --wait --json
+```
+
+The result contains `changed`, the proposed YAML as `source`, and `findings` for jobs it left alone. Nothing is written.
+
+## Migrate a connected repository
+
 Connect a personal or organization repository to a prepared ARM64 environment first. Repository migration currently uses the paired machine's verified GitHub account and App installation. Public repositories must require GitHub approval for all external contributors before publication. Organization repositories require current repository administrator access for the verified GitHub identity.
 
 ```sh
@@ -10,7 +22,7 @@ vectis repository list --json
 vectis migration analyze <binding-id> --wait --json
 ```
 
-Analysis reads workflow files from the default branch at a pinned commit. Its operation result contains a `previewId`, the original and proposed YAML, per-job findings, and whether the environment has successful runner evidence. The cloud retains the preview for 24 hours. The desktop offers **Connections > Analyze workflow migration** and displays the result in Overview. MCP accepts the same `migration.analyze` command.
+Analysis reads workflow files from the default branch at a pinned commit. Its operation result contains a `previewId`, the original and proposed YAML, per-job findings, and whether the environment has successful runner evidence. The cloud retains the preview for 24 hours. The app offers **Analyze workflow migration** in a connection's menu under **Repositories** and shows the result in Overview. MCP accepts the same `migration.analyze` command.
 
 Review the proposed changes before creating the PR:
 
@@ -24,6 +36,6 @@ The publisher checks the repository ID, current default branch and pinned base c
 
 Repeated requests return the existing PR, including a closed one, instead of recreating rejected changes. An interrupted request can be retried with the same preview after inspecting the branch and PR. A conflicting migration branch is left untouched. A moved default branch requires a fresh analysis.
 
-The current automatic mappings cover Ubuntu 24.04 ARM64, Windows 11 ARM64, and macOS 26/latest labels for their corresponding environments. Static scalar selections and simple static matrices are supported. Dynamic expressions, expanded matrices, reusable workflows, aliased events and privileged event patterns require manual review. x64 labels never imply ARM64 compatibility. Check toolchain versions and action compatibility in the PR even when the runner architecture matches.
+Analysis maps `ubuntu-24.04-arm`, `windows-11-arm`, `macos-26` and `macos-latest` to the matching environment. x64 labels such as `ubuntu-latest` are reported as findings, not rewritten. Static scalar selections and simple static matrices are supported. Dynamic expressions, expanded matrices, reusable workflows, aliased events and privileged event patterns require manual review. x64 labels never imply ARM64 compatibility. Check toolchain versions and action compatibility in the PR even when the runner architecture matches.
 
 Review findings can coexist with safe changes: unsupported jobs keep their original runners. An empty migration cannot be published. To withdraw a proposal, close its PR without merging. After merging, revert the migration commit through normal GitHub review to restore the previous workflow. Automated PR closure and revert creation are not exposed by Vectis yet.

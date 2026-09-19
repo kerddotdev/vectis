@@ -1,5 +1,5 @@
 ---
-title: Portable development packages
+title: Package and sign
 description: Build and verify the standalone CLI, MCP server, and local service.
 ---
 
@@ -51,7 +51,7 @@ Keep the package directory intact and add its `bin` directory to PATH. Do not sy
 
 The launchers configure the packaged Apple and Keychain helpers and any bundled Windows runtime automatically. Explicit `VECTIS_APPLE_HELPER`, `VECTIS_KEYCHAIN_HELPER`, `VECTIS_QEMU`, `VECTIS_QEMU_IMG`, and `VECTIS_SWTPM` overrides remain available for development. Service installation records absolute paths, so stop and uninstall its login registration before moving or removing an installed package. Uninstalling that registration preserves images, configuration, and credentials.
 
-The package does not grant GitHub access or connect a cloud account automatically. Follow the [local setup guide](/docs/guides/local-setup/) and [remote control guide](/docs/guides/remote-control/).
+The package does not grant GitHub access or connect a cloud account automatically. Follow the [quickstart](/docs/get-started/quickstart) and the [remote control guide](/docs/guides/remote-control).
 
 ## Desktop development app
 

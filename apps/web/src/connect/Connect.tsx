@@ -56,7 +56,7 @@ function Shell({ children, signedIn }: { children: ReactNode; signedIn: boolean 
           <span className="text-[15px] text-muted">Account</span>
           <nav className="ml-auto flex items-center gap-1" aria-label="Help">
             <a
-              href="/docs/guides/local-setup"
+              href="/docs/get-started/quickstart"
               className="rounded-full px-3 py-1.5 text-[14px] text-muted no-underline transition hover:bg-hairline hover:text-foreground"
             >
               Setup guide

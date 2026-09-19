@@ -54,24 +54,46 @@ export default defineConfig({
     sidebar: [
       { label: "Start here", root: "index" },
       {
+        label: "Get started",
+        items: [
+          { label: "Install Vectis", root: "get-started/install" },
+          { label: "Quickstart", root: "get-started/quickstart" },
+        ],
+      },
+      {
+        label: "Environments",
+        items: [
+          { label: "Prepare Ubuntu", root: "guides/linux-setup" },
+          { label: "Install macOS", root: "guides/macos-setup" },
+          { label: "Install Windows (experimental)", root: "guides/windows-setup" },
+          { label: "Storage and resources", root: "guides/storage" },
+        ],
+      },
+      {
         label: "Guides",
         items: [
-          { label: "Local setup", root: "guides/local-setup" },
-          { label: "Prepare Linux", root: "guides/linux-setup" },
-          { label: "Install macOS", root: "guides/macos-setup" },
-          { label: "Install Windows", root: "guides/windows-setup" },
-          { label: "Desktop", root: "guides/desktop" },
-          { label: "Remote control", root: "guides/remote-control" },
-          { label: "GitHub connections", root: "guides/github" },
-          { label: "Run a runner", root: "guides/runners" },
+          { label: "Repositories and labels", root: "guides/repositories" },
+          { label: "Runners and jobs", root: "guides/runners" },
           { label: "Workflow migration", root: "guides/migrations" },
-          { label: "VM storage and resources", root: "guides/storage" },
-          { label: "Agent integration", root: "guides/agents" },
+          { label: "The Vectis app", root: "guides/app" },
+          { label: "Your account", root: "guides/account" },
+          { label: "Remote control", root: "guides/remote-control" },
+          { label: "Agents", root: "guides/agents" },
+          { label: "Troubleshooting", root: "guides/troubleshooting" },
+        ],
+      },
+      {
+        label: "Reference",
+        items: [
+          { label: "CLI reference", root: "reference/cli" },
+          { label: "Operations and output", root: "reference/operations" },
         ],
       },
       {
         label: "Self-hosting",
         items: [
+          { label: "Build from source", root: "self-hosting/build-from-source" },
+          { label: "Package and sign", root: "self-hosting/packaging" },
           { label: "Run your own cloud", root: "self-hosting/cloud" },
           {
             label: "Private development environment",
@@ -79,7 +101,6 @@ export default defineConfig({
           },
         ],
       },
-      { label: "Reference", items: [{ label: "CLI reference", root: "reference/cli" }] },
     ],
   },
   ai: {

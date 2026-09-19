@@ -1,30 +1,25 @@
 ---
-title: Development desktop
-description: Control local and remote machines from the Electron interface.
+title: The Vectis app
+description: What each part of the Mac app does, and where to find the CLI and MCP equivalents.
 ---
 
-Build and open the desktop from a development checkout:
+The app is a window onto the background service. Closing it leaves the service and its jobs running. Everything in the app is also available in the `vectis` CLI and to agents through `vectis-mcp`.
 
-```sh
-pnpm install --frozen-lockfile
-pnpm desktop:build
-pnpm desktop:start
-```
+| View             | What it shows and does                                                                                                                                                                                              | CLI                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| **Overview**     | The service, running VMs, operations that need you and the operation history. Pause or resume new VMs, stop or reconcile VMs, cancel operations. The menu stops the service when idle or removes the login service. | `status`, `pause`, `resume`, `operation`   |
+| **Environments** | Your guest images. Prepare Ubuntu, macOS or Windows, register an existing image, start a clean VM, and set default CPU, memory and VM folder.                                                                       | `environment`                              |
+| **Repositories** | Connections on this Mac with their `runs-on` label, the **Automatic** switch, **Start runner**, recent jobs, workflow migration and disconnecting.                                                                  | `repository`, `runner`, `job`, `migration` |
+| **Connections**  | Connect this Mac to your account, link GitHub, and sign in to control your other Macs.                                                                                                                              | `cloud`, `github`, `login`                 |
+| **Storage**      | Disk usage of images and VMs, including blocks shared between copies.                                                                                                                                               | `storage`                                  |
+| **Diagnostics**  | Host support, runtime components, the service log and the command line tools installer.                                                                                                                             | `doctor`, `logs`                           |
 
-The desktop uses the same local service and state as the CLI. Set `VECTIS_HOME` before starting it to select a separate state directory. The default is `~/.vectis`. Keep service state on the internal disk; macOS background-process access to removable volumes can prevent service startup. VM storage is configured separately for each environment.
+Keyboard: **Cmd+1** to **Cmd+6** switch views, **Cmd+B** toggles the sidebar.
 
-The first screen can install and start the per-user background service. Closing Vectis leaves that service running. Stopping the service explicitly also stops its owned VMs. The development launcher supplies the standalone Node executable; the service does not depend on Electron staying open.
+## Control another Mac
 
-## Remote machines
+After signing in under **Connections > Other Macs**, the machine switcher at the bottom of the sidebar selects which Mac the views control. File pickers work only for this Mac; for another Mac, type paths that exist on it. Service installation and pairing only work on the Mac itself. See [Remote control](/docs/guides/remote-control).
 
-Sign in for remote control, approve the browser request, finish sign-in, and refresh machines. The machine selector applies to all service controls. Switching machines clears forms and reports from the previous target. File paths refer to the selected host; native file pickers are available only for This Mac. See [remote control](/docs/guides/remote-control/) for credentials, offline behavior, and CLI/MCP equivalents.
+## Updates
 
-## Available controls
-
-- Overview shows VM states and durable operations, with pause, resume, stop, and reconciliation controls. Pausing prevents new VMs and leaves running work alone.
-- Environments registers prepared images and configures CPU count, memory, and VM storage. A native folder picker selects storage locations.
-- Storage measures base images and individual VM files, including allocated host blocks. Shared APFS blocks can affect interpretation; guest filesystem categories are not available yet.
-- Diagnostics reports the running service host and configured runtime helpers. A configured path does not prove that a runtime can start a VM. The CLI `doctor` command uses this report when the service is reachable, or labels its local shell fallback with `source: "shell"`.
-- Connections opens GitHub account linking and machine pairing in your browser. Pairing requires the configured Keychain helper and a running local service. Compare the verification code before approval, then finish pairing in Vectis. Refresh repositories to verify which connected repositories target this machine. Start a prepared repository runner from its row, then observe, cancel, or reconcile it in Overview. See [runner control](/docs/guides/runners/) for prerequisites and result semantics.
-
-A registered image is not automatically a verified GitHub runner. This interface is a development preview; release packaging is still being integrated. See the OS setup guides for guest preparation and manual system steps. Use the [CLI reference](/docs/reference/cli/) to discover the currently supported headless controls.
+The app updates itself from GitHub Releases and restarts the service only when it is idle. See [Updates](/docs/get-started/install#updates).

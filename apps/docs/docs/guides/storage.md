@@ -23,8 +23,8 @@ Example `environment.json` for an already prepared Linux image:
 Register it and start a VM:
 
 ```sh
-pnpm vectis environment register --file environment.json --wait --json
-pnpm vectis environment start ubuntu --wait --json
+vectis environment register --file environment.json --wait --json
+vectis environment start ubuntu --wait --json
 ```
 
 The original base image is preserved. The instance receives its own working disk and directory. Stopping an owned instance removes its disposable working directory, preserving the selected parent directory and base image.
@@ -34,13 +34,13 @@ The original base image is preserved. The instance receives its own working disk
 Change defaults for future instances:
 
 ```sh
-pnpm vectis environment configure ubuntu --cpu 4 --memory-mib 8192 --storage-path /Volumes/CI/VMs --wait --json
+vectis environment configure ubuntu --cpu 4 --memory-mib 8192 --storage-path /Volumes/CI/VMs --wait --json
 ```
 
 Override just one start without changing defaults:
 
 ```sh
-pnpm vectis environment start ubuntu --cpu 2 --memory-mib 4096 --wait --json
+vectis environment start ubuntu --cpu 2 --memory-mib 4096 --wait --json
 ```
 
 Running instances keep the resources and location they started with. Changing a path does not move existing disks. Vectis validates the per-instance request and the combined CPU and memory reservations. Memory reservations may use at most 75 percent of host RAM; startup also checks available memory.
@@ -50,7 +50,7 @@ If a selected directory disappears, Vectis reports `storage_unavailable`. Reconn
 ## Understand disk usage
 
 ```sh
-pnpm vectis storage --json
+vectis storage --json
 ```
 
 The report separates base images from active and interrupted instances and includes a host-file breakdown when inspection succeeds.

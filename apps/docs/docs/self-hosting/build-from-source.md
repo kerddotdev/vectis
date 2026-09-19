@@ -1,9 +1,21 @@
 ---
-title: Local setup
-description: Build the headless tools and run an isolated local service.
+title: Build from source
+description: Build Vectis from a checkout, run an isolated development service, and configure native helpers.
 ---
 
-Use Node.js 24.21 or newer within the Node 24 release line, and pnpm 10.24.0. Native VM execution requires an Apple Silicon Mac. This development checkout does not provide a signed installer yet.
+Use Node.js 24.21 or newer within the Node 24 release line, and pnpm 10.24.0. Native VM execution requires an Apple Silicon Mac. To use Vectis rather than develop it, [install the app](/docs/get-started/install) instead.
+
+## Development builds
+
+Everything run from a checkout is a **development build**: it is named Vectis Dev, keeps its state in `~/.vectis-dev` instead of `~/.vectis`, and connects to the cloud deployment configured in the repository's `.env.local`:
+
+```sh
+cp .env.example .env.local   # then fill in CONVEX_URL and VECTIS_WEB_URL
+```
+
+Without those values everything local works, and cloud commands report `cloud_unconfigured`. To connect to your own backend, see [Run your own cloud](/docs/self-hosting/cloud) and [Private development environment](/docs/self-hosting/development-environment).
+
+## Run an isolated service
 
 From the repository root:
 
@@ -34,7 +46,7 @@ pnpm vectis service status --home /absolute/path/to/vectis-state --json
 
 Stop an already running manual service before installation. Installation registers a LaunchAgent for the current macOS user and waits for an authenticated response before reporting that it is running. macOS may require background item approval in System Settings. A registration whose startup times out remains available for inspection, retry, or removal.
 
-The registration stores absolute paths to Node, this built checkout, the state directory, and any configured `VECTIS_APPLE_HELPER`, `VECTIS_QEMU`, `VECTIS_QEMU_IMG`, `VECTIS_SWTPM`, and `VECTIS_KEYCHAIN_HELPER` executables. Set these before installation. Other shell variables and secrets are not copied. Keep the checkout and runtime paths available when running from source. For standalone installations, use the [packaged runtime](/docs/guides/development-packages/). To adopt another runtime, use `vectis service update` from the new package while the service is idle.
+The registration stores absolute paths to Node, this built checkout, the state directory, and any configured `VECTIS_APPLE_HELPER`, `VECTIS_QEMU`, `VECTIS_QEMU_IMG`, `VECTIS_SWTPM`, and `VECTIS_KEYCHAIN_HELPER` executables. Set these before installation. Other shell variables and secrets are not copied. Keep the checkout and runtime paths available when running from source. For standalone installations, [package](/docs/self-hosting/packaging) the runtime. To adopt another runtime, use `vectis service update` from the new package while the service is idle.
 
 An abnormal exit permits launchd to restart the service. An authenticated `service stop` exits cleanly and leaves it stopped until `service start` or the next login. Logging out ends this per-user service. Closing the terminal does not. This behavior follows Apple's [LaunchAgent lifecycle](https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html).
 
@@ -58,9 +70,9 @@ swift build --package-path native/apple
 codesign --force --sign - --entitlements native/apple/entitlements.plist native/apple/.build/out/Products/Debug/vectis-vm
 ```
 
-Set `VECTIS_APPLE_HELPER` to the absolute executable path before starting the service. A previously running service must be restarted to pick up runtime configuration. Use `environment register --file environment.json` to register the prepared image. See the [storage guide](/docs/guides/storage/) for the file format.
+Set `VECTIS_APPLE_HELPER` to the absolute executable path before starting the service. A previously running service must be restarted to pick up runtime configuration. Use `environment register --file environment.json` to register the prepared image. See the [storage guide](/docs/guides/storage) for the file format.
 
-Registering an environment does not install its operating system or toolchains. Once its guest SSH access is prepared, the shared runner lifecycle installs the official runner and executes jobs in disposable instances. See the [runner guide](/docs/guides/runners/) for manual and automatic admission.
+Registering an environment does not install its operating system or toolchains. Once its guest SSH access is prepared, the shared runner lifecycle installs the official runner and executes jobs in disposable instances. See [Runners and jobs](/docs/guides/runners) for manual and automatic runners.
 
 ## Operation outcomes
 
@@ -72,7 +84,7 @@ VM startup runs as a cancellable operation. Use `operation cancel <operation-id>
 
 ## Connect your machine
 
-The development pairing flow requires the native Keychain helper. Set `VECTIS_KEYCHAIN_HELPER` to its absolute executable path before starting both the service and CLI. An installed login service captures this path at installation.
+Pairing requires the native Keychain helper. Set `VECTIS_KEYCHAIN_HELPER` to its absolute executable path before starting both the service and CLI. An installed login service captures this path at installation.
 
 ```sh
 pnpm vectis cloud pair --home /absolute/path/to/vectis-state --json
@@ -91,4 +103,4 @@ pnpm vectis status --home /absolute/path/to/vectis-state --json
 
 The service and CLI keep raw credentials in macOS Keychain. The web approval contains only credential fingerprints. An MCP process configured with the same Keychain helper exposes `vectis_cloud` for the same pair and finish actions. Human approval is always explicit.
 
-This connects a machine to Vectis. Continue with [GitHub connections](/docs/guides/github/) and the [runner guide](/docs/guides/runners/) to connect repositories and run jobs. Guest OS preparation remains a separate step.
+This connects a machine to Vectis. Continue with the [quickstart](/docs/get-started/quickstart#3-link-github-and-install-the-app) to link GitHub and connect repositories.
