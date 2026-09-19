@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/kerddotdev/vectis/security/advisories/new
+    about: Report vulnerabilities privately. Never open a public issue for them.
+  - name: Documentation
+    url: https://vectis.kerd.dev/docs
+    about: Setup guides, the CLI reference, and troubleshooting.

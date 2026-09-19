@@ -21,3 +21,4 @@ apps/desktop/renderer/
 apps/desktop/.electron-runtime/
 
 packages/design/fonts/
+.pnpm-store/

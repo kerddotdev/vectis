@@ -1,0 +1,108 @@
+name: Bug report
+description: Report broken behavior, a regression, a crash, or a state Vectis reported incorrectly.
+title: "[Bug]: "
+labels:
+  - bug
+  - needs-triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues first and keep the report focused on one problem.
+        Do not report security vulnerabilities here. Follow [SECURITY.md](https://github.com/kerddotdev/vectis/blob/main/SECURITY.md) instead.
+        Redact tokens, repository secrets, and private paths from everything you paste.
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I removed secrets and private data from this report.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Desktop app
+        - CLI
+        - MCP server or agent skill
+        - Runners, VMs, or guest images
+        - Cloud, pairing, or the connect page
+        - Website or documentation
+        - Build, CI, or release tooling
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: guest
+    attributes:
+      label: Guest operating system
+      options:
+        - Not guest-specific
+        - Ubuntu
+        - macOS
+        - Windows
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Prepare an Ubuntu environment
+        2. Connect a repository
+        3. Push a workflow with runs-on: vectis-ubuntu
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Vectis version
+      description: Output of `vectis --version`, or the version in the app's About window.
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: host
+    attributes:
+      label: Host
+      description: Mac model and macOS version.
+      placeholder: MacBook Pro M3 Pro, macOS 26.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Diagnostics
+      description: Output of `vectis doctor --json`.
+      render: json
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or operation output
+      description: The relevant part of `service.log` or `vectis operation get <id> --json`.
+      render: shell
