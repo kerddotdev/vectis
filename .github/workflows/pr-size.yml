@@ -1,0 +1,55 @@
+name: PR size
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-size-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  label:
+    name: label
+    runs-on: vectis-ubuntu
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      # This job fetches pull request commits only as passive git data. Never install
+      # dependencies or run scripts from the pull request in a pull_request_target job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { execFileSync } = require("node:child_process");
+            const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
+            const number = context.payload.pull_request.number;
+            const base = context.payload.pull_request.base.sha;
+            git("fetch", "--no-tags", "origin", `+refs/pull/${number}/head:refs/remotes/pr/${number}`);
+            const count = (...paths) =>
+              git("diff", "--numstat", "--ignore-all-space", "--ignore-blank-lines", `${base}...refs/remotes/pr/${number}`, "--", ...paths)
+                .split("\n")
+                .filter(Boolean)
+                .reduce((total, line) => {
+                  const [added, removed] = line.split("\t");
+                  return total + (Number.parseInt(added, 10) || 0) + (Number.parseInt(removed, 10) || 0);
+                }, 0);
+            const total = count(".");
+            const code = count(".", ":(glob,exclude)**/*.test.*", ":(glob,exclude)tests/**", ":(exclude)pnpm-lock.yaml");
+            const lines = code === 0 ? total : code;
+            const sizes = [["size:XS", 10], ["size:S", 30], ["size:M", 100], ["size:L", 500], ["size:XL", 1000]];
+            const label = sizes.find(([, limit]) => lines < limit)?.[0] ?? "size:XXL";
+            const { data: current } = await github.rest.issues.listLabelsOnIssue({ ...context.repo, issue_number: number });
+            for (const { name } of current)
+              if (name.startsWith("size:") && name !== label)
+                await github.rest.issues.removeLabel({ ...context.repo, issue_number: number, name });
+            if (!current.some(({ name }) => name === label))
+              await github.rest.issues.addLabels({ ...context.repo, issue_number: number, labels: [label] });
+            core.info(`#${number}: ${lines} effective changed lines -> ${label}`);

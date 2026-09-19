@@ -1,0 +1,26 @@
+name: Native
+
+on:
+  pull_request:
+    paths:
+      - native/**
+      - scripts/package-*.ts
+      - scripts/release/**
+      - .github/workflows/native.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  helpers:
+    name: helpers
+    # A disposable macOS VM prepared as the "macos" environment, with Xcode installed.
+    runs-on: vectis-macos
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: swift build --package-path native/apple --configuration release

@@ -1,0 +1,97 @@
+[
+  {
+    "name": "bug",
+    "color": "d73a4a",
+    "description": "Something is broken or behaving incorrectly."
+  },
+  {
+    "name": "enhancement",
+    "color": "a2eeef",
+    "description": "Requested improvement or new capability."
+  },
+  {
+    "name": "needs-triage",
+    "color": "fbca04",
+    "description": "Needs maintainer review and initial categorization."
+  },
+  {
+    "name": "docs",
+    "color": "0075ca",
+    "description": "Documentation, guides, or the agent skill."
+  },
+  {
+    "name": "security",
+    "color": "b60205",
+    "description": "Security hardening or a fixed vulnerability."
+  },
+  {
+    "name": "dependencies",
+    "color": "0366d6",
+    "description": "Dependency updates."
+  },
+  {
+    "name": "internal",
+    "color": "c5def5",
+    "description": "Refactoring, tests, CI, or tooling with no user-visible change."
+  },
+  {
+    "name": "area:desktop",
+    "color": "d4c5f9",
+    "description": "Desktop app."
+  },
+  {
+    "name": "area:cli",
+    "color": "d4c5f9",
+    "description": "Command line interface."
+  },
+  {
+    "name": "area:mcp",
+    "color": "d4c5f9",
+    "description": "MCP server and agent skill."
+  },
+  {
+    "name": "area:runner",
+    "color": "d4c5f9",
+    "description": "Runners, VMs, and guest images."
+  },
+  {
+    "name": "area:cloud",
+    "color": "d4c5f9",
+    "description": "Convex backend, pairing, remote control, and the GitHub App."
+  },
+  {
+    "name": "area:web",
+    "color": "d4c5f9",
+    "description": "Website and the connect page."
+  },
+  {
+    "name": "size:XS",
+    "color": "0e8a16",
+    "description": "0-9 effective changed lines, test files excluded in mixed PRs."
+  },
+  {
+    "name": "size:S",
+    "color": "5ebd3e",
+    "description": "10-29 effective changed lines, test files excluded in mixed PRs."
+  },
+  {
+    "name": "size:M",
+    "color": "fbca04",
+    "description": "30-99 effective changed lines, test files excluded in mixed PRs."
+  },
+  {
+    "name": "size:L",
+    "color": "fe7d37",
+    "description": "100-499 effective changed lines, test files excluded in mixed PRs."
+  },
+  {
+    "name": "size:XL",
+    "color": "d93f0b",
+    "description": "500-999 effective changed lines, test files excluded in mixed PRs."
+  },
+  {
+    "name": "size:XXL",
+    "color": "b60205",
+    "description": "1,000+ effective changed lines, test files excluded in mixed PRs."
+  }
+]

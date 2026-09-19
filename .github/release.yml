@@ -1,0 +1,22 @@
+changelog:
+  exclude:
+    labels:
+      - internal
+    authors:
+      - dependabot
+  categories:
+    - title: Features
+      labels:
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+    - title: Security
+      labels:
+        - security
+    - title: Documentation
+      labels:
+        - docs
+    - title: Other changes
+      labels:
+        - "*"
