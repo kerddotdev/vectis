@@ -5,6 +5,14 @@ export function webUrl() {
   return value;
 }
 
+// GitHub delivers webhooks straight to Convex, where their signature is verified, so the website
+// can sit entirely behind Cloudflare Access in private deployments.
+export function webhookUrl() {
+  const site = process.env.CONVEX_SITE_URL;
+  if (!site) throw new Error("CONVEX_SITE_URL is not available in this deployment.");
+  return `${site}/github/webhook`;
+}
+
 export function githubApp() {
   return {
     name: process.env.VECTIS_GITHUB_APP_NAME || "Vectis",

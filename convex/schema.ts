@@ -170,6 +170,7 @@ export default defineSchema({
     stateDigest: v.string(),
     ownerId: v.number(),
     ownerLogin: v.string(),
+    organization: v.optional(v.boolean()),
     expiresAt: v.number(),
     consumed: v.boolean(),
   }).index("by_state", ["stateDigest"]),

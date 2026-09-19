@@ -2,7 +2,12 @@ import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery } from "./_generated/server.js";
 
 export const create = internalMutation({
-  args: { stateDigest: v.string(), ownerId: v.number(), ownerLogin: v.string() },
+  args: {
+    stateDigest: v.string(),
+    ownerId: v.number(),
+    ownerLogin: v.string(),
+    organization: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     if (
       !/^[a-f0-9]{64}$/.test(args.stateDigest) ||
@@ -28,7 +33,11 @@ export const inspect = internalQuery({
       .withIndex("by_state", (q) => q.eq("stateDigest", args.stateDigest))
       .unique();
     if (!setup || setup.consumed || setup.expiresAt <= Date.now()) return null;
-    return { ownerId: setup.ownerId, ownerLogin: setup.ownerLogin };
+    return {
+      ownerId: setup.ownerId,
+      ownerLogin: setup.ownerLogin,
+      organization: setup.organization ?? false,
+    };
   },
 });
 export const save = internalMutation({

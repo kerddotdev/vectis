@@ -50,13 +50,18 @@ test("the App registration page describes the configured deployment", async () =
   vi.stubEnv("VECTIS_WEB_URL", "https://vectis-dev.example.workers.dev");
   vi.stubEnv("VECTIS_GITHUB_APP_NAME", "Vectis <dev>");
   vi.stubEnv("VECTIS_GITHUB_APP_PUBLIC", "false");
+  vi.stubEnv("CONVEX_SITE_URL", "https://dev-1.convex.site");
   const t = convexTest(schema, modules);
   await t.mutation(internal.githubAppSetup.create, {
     stateDigest,
     ownerId: 42,
     ownerLogin: "test-owner",
+    organization: true,
   });
   const page = await (await t.fetch(`/github/app/setup?state=${state}`)).text();
+  expect(page).toContain(
+    `action="https://github.com/organizations/test-owner/settings/apps/new?state=${state}"`,
+  );
   const encoded = /name="manifest" value="([^"]+)"/.exec(page)?.[1];
   const manifest = JSON.parse(
     (encoded ?? "")
@@ -68,7 +73,7 @@ test("the App registration page describes the configured deployment", async () =
   expect(manifest).toMatchObject({
     name: "Vectis <dev>",
     public: false,
-    hook_attributes: { url: "https://vectis-dev.example.workers.dev/api/github/webhook" },
+    hook_attributes: { url: "https://dev-1.convex.site/github/webhook" },
     redirect_url: "https://vectis-dev.example.workers.dev/api/github/manifest/callback",
     callback_urls: ["https://vectis-dev.example.workers.dev/api/github/oauth/callback"],
   });

@@ -3,7 +3,7 @@ import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { appManifest } from "../packages/github/src/manifest.js";
 import { smallJson } from "./httpBody.js";
-import { githubApp, webUrl } from "./site.js";
+import { githubApp, webhookUrl, webUrl } from "./site.js";
 
 const App = Schema.Struct({
   id: Schema.Int,
@@ -39,12 +39,15 @@ export const setup = httpAction(async (ctx, request) => {
   const site = webUrl();
   const app = githubApp();
   const manifest = appManifest(app.name, site, site, { public: app.public });
-  manifest.hook_attributes.url = `${site}/api/github/webhook`;
+  manifest.hook_attributes.url = webhookUrl();
   manifest.redirect_url = `${site}/api/github/manifest/callback`;
   manifest.callback_urls = [`${site}/api/github/oauth/callback`];
   const title = escaped(app.name);
+  const registration = owner.organization
+    ? `https://github.com/organizations/${owner.ownerLogin}/settings/apps/new`
+    : "https://github.com/settings/apps/new";
   return new Response(
-    `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="referrer" content="no-referrer"><title>Register ${title}</title><style>body{background:#15191e;color:#e6e9ee;font:18px/1.6 system-ui;max-width:650px;margin:12vh auto;padding:24px}button{background:#b9d7fe;color:#182638;padding:16px;border:0;border-radius:8px;font:inherit;cursor:pointer}</style></head><body><h1>Register ${title}</h1><p>Continue with the configured GitHub owner account. App credentials are stored only in the Vectis backend.</p><form action="https://github.com/settings/apps/new?state=${state.state}" method="post"><input type="hidden" name="manifest" value="${escaped(JSON.stringify(manifest))}"><button type="submit">Continue to GitHub</button></form></body></html>`,
+    `<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="referrer" content="no-referrer"><title>Register ${title}</title><style>body{background:#15191e;color:#e6e9ee;font:18px/1.6 system-ui;max-width:650px;margin:12vh auto;padding:24px}button{background:#b9d7fe;color:#182638;padding:16px;border:0;border-radius:8px;font:inherit;cursor:pointer}</style></head><body><h1>Register ${title}</h1><p>Continue with the configured GitHub owner account. App credentials are stored only in the Vectis backend.</p><form action="${registration}?state=${state.state}" method="post"><input type="hidden" name="manifest" value="${escaped(JSON.stringify(manifest))}"><button type="submit">Continue to GitHub</button></form></body></html>`,
     {
       headers: {
         "Content-Type": "text/html; charset=utf-8",
