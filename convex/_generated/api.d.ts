@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as account from "../account.js";
 import type * as auth from "../auth.js";
+import type * as clerkWebhook from "../clerkWebhook.js";
 import type * as controllerHttp from "../controllerHttp.js";
 import type * as controllers from "../controllers.js";
 import type * as credentials from "../credentials.js";
@@ -48,7 +50,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  account: typeof account;
   auth: typeof auth;
+  clerkWebhook: typeof clerkWebhook;
   controllerHttp: typeof controllerHttp;
   controllers: typeof controllers;
   credentials: typeof credentials;

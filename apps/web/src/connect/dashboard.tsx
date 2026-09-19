@@ -8,11 +8,13 @@ import {
   KeyRoundIcon,
   LaptopIcon,
   LayoutGridIcon,
+  UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
 import { site } from "@vectis/design/site";
 import { api } from "../../../../convex/_generated/api.js";
 import { AccessTab } from "./access.js";
+import { AccountTab } from "./account.js";
 import { GitHubMark, GitHubTab, useLinkGitHub } from "./github.js";
 import { RepositoriesTab } from "./repositories.js";
 import {
@@ -41,6 +43,7 @@ const tabs = [
   { id: "github", label: "GitHub", icon: null },
   { id: "repositories", label: "Repositories", icon: FolderGit2Icon },
   { id: "access", label: "Remote access", icon: KeyRoundIcon },
+  { id: "account", label: "Account", icon: UserRoundIcon },
 ] as const satisfies ReadonlyArray<{ id: string; label: string; icon: LucideIcon | null }>;
 export type Tab = (typeof tabs)[number]["id"];
 
@@ -122,6 +125,7 @@ export function Dashboard() {
           <RepositoriesTab bindings={bindings} identity={identity} machines={machines} />
         )}
         {tab === "access" && <AccessTab controllers={controllers} />}
+        {tab === "account" && <AccountTab />}
       </div>
     </div>
   );

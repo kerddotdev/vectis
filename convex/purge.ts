@@ -87,60 +87,65 @@ export const binding = internalMutation({
   },
 });
 
+export async function purgeOwner(ctx: MutationCtx, owner: string) {
+  const machines = await ctx.db
+    .query("machines")
+    .withIndex("by_owner", (q) => q.eq("owner", owner))
+    .take(batch);
+  for (const record of machines) {
+    await ctx.db.delete("machines", record._id);
+    await ctx.scheduler.runAfter(0, internal.purge.machine, { machineId: record._id });
+  }
+  let deleted = machines.length;
+  for (const account of await ctx.db
+    .query("githubAccounts")
+    .withIndex("by_owner", (q) => q.eq("owner", owner))
+    .take(batch)) {
+    await ctx.db.delete("githubAccounts", account._id);
+    deleted += 1;
+  }
+  for (const link of await ctx.db
+    .query("githubLinks")
+    .withIndex("by_owner", (q) => q.eq("owner", owner))
+    .take(batch)) {
+    await ctx.db.delete("githubLinks", link._id);
+    deleted += 1;
+  }
+  for (const controller of await ctx.db
+    .query("controllers")
+    .withIndex("by_owner", (q) => q.eq("owner", owner))
+    .take(batch)) {
+    await ctx.db.delete("controllers", controller._id);
+    deleted += 1;
+  }
+  for (const pairing of await ctx.db
+    .query("pairings")
+    .withIndex("by_owner", (q) => q.eq("owner", owner))
+    .take(batch)) {
+    await ctx.db.delete("pairings", pairing._id);
+    deleted += 1;
+  }
+  for (const inspection of await ctx.db
+    .query("inspections")
+    .withIndex("by_owner_key", (q) => q.eq("owner", owner))
+    .take(batch)) {
+    await ctx.db.delete("inspections", inspection._id);
+    deleted += 1;
+  }
+  for (const operation of await ctx.db
+    .query("operations")
+    .withIndex("by_owner_key", (q) => q.eq("owner", owner))
+    .take(batch)) {
+    await ctx.db.delete("operations", operation._id);
+    deleted += 1;
+  }
+  if (deleted) await ctx.scheduler.runAfter(0, internal.purge.owner, { owner });
+  return deleted;
+}
+
 export const owner = internalMutation({
   args: { owner: v.string() },
   handler: async (ctx, args) => {
-    const machines = await ctx.db
-      .query("machines")
-      .withIndex("by_owner", (q) => q.eq("owner", args.owner))
-      .take(batch);
-    for (const record of machines) {
-      await ctx.db.delete("machines", record._id);
-      await ctx.scheduler.runAfter(0, internal.purge.machine, { machineId: record._id });
-    }
-    let deleted = machines.length;
-    for (const account of await ctx.db
-      .query("githubAccounts")
-      .withIndex("by_owner", (q) => q.eq("owner", args.owner))
-      .take(batch)) {
-      await ctx.db.delete("githubAccounts", account._id);
-      deleted += 1;
-    }
-    for (const link of await ctx.db
-      .query("githubLinks")
-      .withIndex("by_owner", (q) => q.eq("owner", args.owner))
-      .take(batch)) {
-      await ctx.db.delete("githubLinks", link._id);
-      deleted += 1;
-    }
-    for (const controller of await ctx.db
-      .query("controllers")
-      .withIndex("by_owner", (q) => q.eq("owner", args.owner))
-      .take(batch)) {
-      await ctx.db.delete("controllers", controller._id);
-      deleted += 1;
-    }
-    for (const pairing of await ctx.db
-      .query("pairings")
-      .withIndex("by_owner", (q) => q.eq("owner", args.owner))
-      .take(batch)) {
-      await ctx.db.delete("pairings", pairing._id);
-      deleted += 1;
-    }
-    for (const inspection of await ctx.db
-      .query("inspections")
-      .withIndex("by_owner_key", (q) => q.eq("owner", args.owner))
-      .take(batch)) {
-      await ctx.db.delete("inspections", inspection._id);
-      deleted += 1;
-    }
-    for (const operation of await ctx.db
-      .query("operations")
-      .withIndex("by_owner_key", (q) => q.eq("owner", args.owner))
-      .take(batch)) {
-      await ctx.db.delete("operations", operation._id);
-      deleted += 1;
-    }
-    if (deleted) await ctx.scheduler.runAfter(0, internal.purge.owner, args);
+    await purgeOwner(ctx, args.owner);
   },
 });
