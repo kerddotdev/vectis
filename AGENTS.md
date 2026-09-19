@@ -69,8 +69,8 @@ Before calling a change done, walk this list and say which entries applied:
 - `pnpm web:dev` runs the Astro website. `pnpm docs:dev` runs the Blume documentation. `pnpm site:build` builds both and stages them into `apps/web/site` with the docs under `/docs`.
 - Web, docs, and desktop builds download General Sans from Fontshare into the gitignored `packages/design/fonts`. Its license forbids committing the font files. `VECTIS_ALLOW_FONT_FALLBACK=1` builds without them.
 - The Swift helpers live in `native/apple`: `swift build --package-path native/apple`, then ad-hoc sign `vectis-vm` with `native/apple/entitlements.plist`. QEMU build notes are in `native/qemu/README.md`.
-- Convex runs with `pnpm exec convex dev` against your own deployment. The web app needs `VITE_CONVEX_URL` and `VITE_CLERK_PUBLISHABLE_KEY` (see `apps/web/.env.example`).
-- Never deploy (Convex, Cloudflare, `site:deploy:dev`) or publish packages unless asked.
+- Source checkouts are development builds. They read `CONVEX_URL`, `VECTIS_WEB_URL` and `CLERK_PUBLISHABLE_KEY` from the repository `.env.local` (see `.env.example`); `pnpm exec convex dev` fills in the Convex values. Production packages (`pnpm package:cli --flavor production`) and `pnpm site:deploy` read `.env.production.local` and bake the values in.
+- Never deploy (Convex, Cloudflare, `site:deploy`, `site:deploy:dev`), publish packages, push tags or create releases unless asked. [RELEASING.md](RELEASING.md) describes how CI and releases run.
 
 ## Verifying
 
