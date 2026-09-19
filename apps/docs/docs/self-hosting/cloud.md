@@ -65,9 +65,10 @@ The production route in `apps/web/wrangler.jsonc` is `vectis.kerd.dev`; change i
 
 ## 4. GitHub App
 
-Vectis creates its GitHub App through GitHub's manifest flow, so the App's private key, client secret, and webhook secret are written straight into Convex and never touch your machine.
+Vectis creates its GitHub App through GitHub's manifest flow, so the App's private key, client secret, and webhook secret are written straight into Convex and never touch your machine. The Worker from step 3 must already serve `VECTIS_WEB_URL`, because GitHub returns to it. Run this from the repository root; for production, load `.env.production.local` instead and add `--prod` to `convex run`:
 
 ```sh
+set -a; . ./.env.local; set +a
 state=$(openssl rand -hex 32)
 digest=$(printf %s "$state" | shasum -a 256 | cut -d " " -f 1)
 owner=your-github-login
