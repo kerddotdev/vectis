@@ -3,12 +3,12 @@
   "name": "vectis-web",
   "main": "worker.ts",
   "compatibility_date": "2026-09-15",
+  // VECTIS_CONVEX_SITE is passed by scripts/deploy-site.ts from CONVEX_SITE_URL.
   "env": {
     "development": {
-      "name": "vectis-docs-dev",
-      "workers_dev": false,
-      "vars": { "VECTIS_CONVEX_SITE": "https://clear-hare-471.convex.site" },
-      "routes": [{ "pattern": "vectis.kerd.dev", "custom_domain": true }],
+      "name": "vectis-dev",
+      "workers_dev": true,
+      "preview_urls": false,
       "assets": {
         "directory": "./site",
         "binding": "ASSETS",
@@ -17,12 +17,11 @@
         "html_handling": "drop-trailing-slash",
       },
     },
-    // Placeholder values until the production Convex deployment and domain exist.
     "production": {
       "name": "vectis-web",
       "workers_dev": false,
-      "vars": { "VECTIS_CONVEX_SITE": "https://production-placeholder.convex.site" },
-      "routes": [{ "pattern": "vectis.example", "custom_domain": true }],
+      "preview_urls": false,
+      "routes": [{ "pattern": "vectis.kerd.dev", "custom_domain": true }],
       "assets": {
         "directory": "./site",
         "binding": "ASSETS",

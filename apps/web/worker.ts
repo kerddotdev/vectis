@@ -1,4 +1,10 @@
-import type { ExportedHandler } from "@cloudflare/workers-types";
+import type { ExportedHandler, Fetcher } from "@cloudflare/workers-types";
+
+// Deploy scripts pass VECTIS_CONVEX_SITE with --var, so each deployment keeps its own backend.
+interface Env {
+  ASSETS: Fetcher;
+  VECTIS_CONVEX_SITE: string;
+}
 
 const routes = new Map([
   ["/api/github/app/setup", "GET"],
