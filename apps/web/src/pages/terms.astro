@@ -1,0 +1,52 @@
+---
+import LegalSections from "../components/LegalSections.astro";
+import PageHero from "../components/PageHero.astro";
+import Base from "../layouts/Base.astro";
+
+const updated = "September 19, 2026";
+const sections = [
+  {
+    title: "The software",
+    points: [
+      "The Vectis app, CLI, MCP server and service are open source under the MIT License. The license, not these terms, governs your use of the code.",
+      "These terms cover the hosted account service at vectis.kerd.dev that connects your Macs, GitHub and remote controllers.",
+    ],
+  },
+  {
+    title: "Your account",
+    points: [
+      "Keep your sign-in secure. Approve pairing and remote control requests only when you started them yourself.",
+      "You are responsible for the machines, repositories and workflows you connect, including the code your runners execute and the approval settings of public repositories.",
+    ],
+  },
+  {
+    title: "Acceptable use",
+    points: [
+      "Do not use the service to attack other systems, to run jobs for repositories you are not allowed to use, to bypass GitHub's rules, or to overload the service.",
+      "We may suspend accounts that put the service or other users at risk.",
+    ],
+  },
+  {
+    title: "The service",
+    points: [
+      "The hosted service is free and provided as is, without warranties or a guaranteed level of availability. We may change or discontinue it, and will give notice on this site when we can.",
+      "To the extent the law allows, we are not liable for indirect or consequential damages, or for jobs, data or machines affected by the software you run.",
+    ],
+  },
+  {
+    title: "Changes and contact",
+    points: [
+      "We will post changes to these terms on this page. Continuing to use the service after a change means you accept it.",
+      "Questions: kerd@kerd.dev. Security reports: security@kerd.dev.",
+      `Last updated ${updated}.`,
+    ],
+  },
+];
+---
+
+<Base title="Terms" description="Terms for the hosted Vectis account service.">
+  <PageHero title="Terms">
+    <p>Short terms for the free hosted account service. The open source software itself is MIT licensed.</p>
+  </PageHero>
+  <LegalSections sections={sections} />
+</Base>

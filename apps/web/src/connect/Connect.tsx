@@ -86,6 +86,12 @@ function Shell({ children, signedIn }: { children: ReactNode; signedIn: boolean 
           <a className="no-underline hover:text-foreground" href="/docs">
             Documentation
           </a>
+          <a className="no-underline hover:text-foreground" href="/privacy">
+            Privacy
+          </a>
+          <a className="no-underline hover:text-foreground" href="/terms">
+            Terms
+          </a>
         </div>
       </footer>
     </div>

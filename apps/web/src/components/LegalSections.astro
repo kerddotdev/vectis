@@ -1,0 +1,21 @@
+---
+interface Props {
+  sections: ReadonlyArray<{ title: string; points: ReadonlyArray<string> }>;
+}
+const { sections } = Astro.props;
+---
+
+<div class="shell flex flex-col pb-28">
+  {
+    sections.map((section) => (
+      <section class="grid grid-cols-1 gap-6 border-t border-hairline py-14 lg:grid-cols-[1fr_1.6fr] lg:gap-16">
+        <h2 class="text-title max-w-[14ch] font-medium">{section.title}</h2>
+        <ul class="flex max-w-[64ch] flex-col gap-4 text-muted">
+          {section.points.map((point) => (
+            <li>{point}</li>
+          ))}
+        </ul>
+      </section>
+    ))
+  }
+</div>
