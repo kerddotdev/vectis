@@ -134,7 +134,10 @@ async function inspect(directory: string) {
 }
 await inspect(output);
 const manifest = Schema.decodeUnknownSync(
-  Schema.Struct({ dependencies: Schema.Record(Schema.String, Schema.String) }),
+  Schema.Struct({
+    version: Schema.String,
+    dependencies: Schema.Record(Schema.String, Schema.String),
+  }),
 )(JSON.parse(await readFile(join(application, "package.json"), "utf8")));
 await writeFile(
   join(application, "package.json"),
@@ -142,7 +145,7 @@ await writeFile(
     {
       name: "vectis",
       license: "MIT",
-      version: "0.1.0-dev",
+      version: manifest.version,
       private: true,
       type: "module",
       main: "dist/apps/desktop/src/main.js",

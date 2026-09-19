@@ -1,7 +1,14 @@
 {
   "name": "vectis-workspace",
+  "version": "0.1.0",
   "private": true,
+  "homepage": "https://vectis.kerd.dev",
+  "bugs": "https://github.com/kerddotdev/vectis/issues",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kerddotdev/vectis.git"
+  },
   "files": [
     "dist/apps/cli/src",
     "dist/apps/server/src",

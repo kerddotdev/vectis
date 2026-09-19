@@ -27,6 +27,7 @@ import { RemoteClient } from "../../../packages/client/src/remote.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { localClient } from "../../../packages/client/src/local.js";
+import { buildInfo } from "../../../packages/client/src/build.js";
 
 async function main() {
   const { values, positionals } = parseArgs({
@@ -37,6 +38,7 @@ async function main() {
       url: { type: "string" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
+      version: { type: "boolean", short: "v" },
       file: { type: "string" },
       key: { type: "string" },
       wait: { type: "boolean" },
@@ -82,6 +84,12 @@ async function main() {
       : localClient(home);
 
   const [command = "help", subcommand, id] = positionals;
+  if (values.version || command === "version") {
+    process.stdout.write(
+      values.json ? JSON.stringify(buildInfo()) + "\n" : `${buildInfo().version}\n`,
+    );
+    return;
+  }
   if (values.help || command === "help") {
     process.stdout.write(`Vectis - local GitHub Actions runner control
 
@@ -146,6 +154,7 @@ Options:
   --home <directory>             Isolated Vectis state directory
   --machine <id>                 Send mutations and operation get/wait to this remote machine
   --json                        Machine-readable JSON output
+  -v, --version                 Print the Vectis version
   --name <text>                Prepared environment display name (default: Ubuntu 24.04 ARM64)
   --image-directory <path>      Existing directory for prepared base images
   --disk-gib <GiB>              Prepared Linux virtual capacity (default: 32)

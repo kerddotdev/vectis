@@ -1,8 +1,19 @@
 import { compileBrandIcons } from "./release/brand-icons.js";
 import { execFile } from "node:child_process";
-import { chmod, copyFile, cp, mkdir, open, readdir, realpath, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { basename, join, resolve, sep } from "node:path";
 import { parseArgs, promisify } from "node:util";
+import { Schema } from "effect";
 import { verifyPackageLinks } from "./release/package-links.js";
 import { notarizationArguments, notarizeBundle } from "./release/notarization.js";
 
@@ -29,6 +40,9 @@ const authentication = notarize
   : undefined;
 const source = await realpath(values.package);
 await verifyPackageLinks(source);
+const packaged = Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))(
+  JSON.parse(await readFile(join(source, "application", "package.json"), "utf8")),
+);
 await mkdir(resolve(values.output), { mode: 0o700 });
 const output = await realpath(values.output);
 if (output.startsWith(source + sep)) throw new Error("Output must be outside the source payload.");
@@ -66,7 +80,7 @@ await writeFile(
 <key>CFBundleIconFile</key><string>vectis.icns</string>
 <key>CFBundleIconName</key><string>vectis</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
+<key>CFBundleShortVersionString</key><string>${packaged.version}</string>
 <key>CFBundleVersion</key><string>1</string>
 <key>LSMinimumSystemVersion</key><string>15.0</string>
 <key>LSUIElement</key><true/>

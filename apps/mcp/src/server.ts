@@ -16,6 +16,7 @@ import { beginPairing, finishPairing } from "../../../packages/client/src/pairin
 import type { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import type { VectisClient } from "../../../packages/client/src/index.js";
+import { buildInfo } from "../../../packages/client/src/build.js";
 
 const commandSchema = Schema.toJsonSchemaDocument(Request);
 const waitInput = Schema.Struct({ id: Identifier, timeoutMs: Schema.optional(Schema.Int) });
@@ -158,7 +159,7 @@ export function createMcpServer(
       }),
     );
   const server = new Server(
-    { name: "vectis", version: "0.1.0" },
+    { name: "vectis", version: buildInfo().version },
     {
       capabilities: { tools: {} },
       instructions:

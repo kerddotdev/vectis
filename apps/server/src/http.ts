@@ -18,6 +18,7 @@ import { Store } from "./store.js";
 import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
+import { buildInfo } from "../../../packages/client/src/build.js";
 import { configuredRelay } from "./cloud.js";
 
 function reply(response: ServerResponse, status: number, body: unknown) {
@@ -196,7 +197,7 @@ export async function startService(
             message: "The service is shutting down.",
             nextStep: "Wait for shutdown to finish, then start the service again.",
           });
-        return reply(response, 200, { ...store.snapshot(), cloud });
+        return reply(response, 200, { ...store.snapshot(), version: buildInfo().version, cloud });
       }
       if (request.method === "GET" && request.url === "/v1/capabilities")
         return reply(response, 200, { protocolVersion: 1, capabilities });

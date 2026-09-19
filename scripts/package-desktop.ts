@@ -52,6 +52,9 @@ for (const entry of [
 ])
   await access(join(source, entry));
 await mkdir(output, { mode: 0o700 });
+const packaged = Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))(
+  JSON.parse(await readFile(join(source, "application", "package.json"), "utf8")),
+);
 const brandDirectory = join(output, ".brand");
 const brand = await compileBrandIcons(brandDirectory);
 const paths = await packager({
@@ -60,7 +63,7 @@ const paths = await packager({
   out: output,
   name: "Vectis Dev",
   appBundleId: "dev.kerd.vectis.desktop",
-  appVersion: "0.1.0",
+  appVersion: packaged.version,
   buildVersion: "1",
   platform: "darwin",
   arch: "arm64",
