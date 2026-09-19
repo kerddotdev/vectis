@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
@@ -9,6 +7,7 @@ import { localClient } from "../../../packages/client/src/local.js";
 import { controllerClient } from "../../../packages/client/src/controller.js";
 import { RemoteClient } from "../../../packages/client/src/remote.js";
 import { VectisError } from "../../../packages/protocol/src/index.js";
+import { resolveHome } from "../../../packages/client/src/deployment.js";
 import { createMcpServer } from "./server.js";
 
 async function main() {
@@ -21,7 +20,7 @@ async function main() {
     );
     return;
   }
-  const home = values.home ?? process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
+  const home = resolveHome(values.home);
   const helper = process.env.VECTIS_KEYCHAIN_HELPER;
   const credentials = helper ? new KeychainCredentials(helper) : undefined;
   const machine = values.machine;

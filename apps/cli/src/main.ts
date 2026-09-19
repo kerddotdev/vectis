@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 import { readFile, mkdir, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
-import { homedir, platform } from "node:os";
+import { platform } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -28,6 +28,7 @@ import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { localClient } from "../../../packages/client/src/local.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
+import { cloudDeployment, resolveHome } from "../../../packages/client/src/deployment.js";
 
 async function main() {
   const { values, positionals } = parseArgs({
@@ -35,7 +36,6 @@ async function main() {
     options: {
       home: { type: "string" },
       machine: { type: "string" },
-      url: { type: "string" },
       json: { type: "boolean" },
       help: { type: "boolean", short: "h" },
       version: { type: "boolean", short: "v" },
@@ -65,7 +65,7 @@ async function main() {
       "storage-path": { type: "string" },
     },
   });
-  const home = values.home ?? process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
+  const home = resolveHome(values.home);
   const output = (value: unknown) =>
     process.stdout.write(JSON.stringify(value, null, values.json ? undefined : 2) + "\n");
   const credentials = () => {
@@ -95,14 +95,14 @@ async function main() {
 
 Usage: vectis <command> [options]
 
-  login [--url <deployment>]    Begin browser-approved remote control, no local service required
+  login [--name <text>]         Begin browser-approved remote control, no local service required
   login finish                  Complete approved remote access using Keychain
   logout                        Revoke this CLI connection and remove local credentials
   machine list                  List owned cloud machines and last-seen presence
   github accounts               List verified accounts available to this paired machine
   repository connect <name>     Connect using --account <id> and --environment <id>, optional --owner <organization>
   github connect                Open the guided GitHub account connection
-  cloud pair [--url <deployment>]  Begin browser-approved machine pairing
+  cloud pair                    Begin browser-approved machine pairing
   cloud finish                  Complete an approved pairing from Keychain
   service install               Install and start a macOS login service
   service uninstall             Remove login registration, preserving all data
@@ -195,7 +195,7 @@ GitHub pairing require separately configured development services.
             : subcommand === undefined
               ? await beginControllerLogin(
                   home,
-                  values.url ?? "https://clear-hare-471.convex.cloud",
+                  cloudDeployment(),
                   values.name ?? "Vectis CLI",
                   store,
                 )
@@ -213,7 +213,7 @@ GitHub pairing require separately configured development services.
     return;
   }
   if (command === "github" && subcommand === "connect") {
-    output(githubConnection());
+    output(githubConnection(cloudDeployment()));
     process.exitCode = 3;
     return;
   }
@@ -228,7 +228,7 @@ GitHub pairing require separately configured development services.
     const credentials = new KeychainCredentials(helper);
     const result =
       subcommand === "pair"
-        ? await beginPairing(home, values.url ?? "https://clear-hare-471.convex.cloud", credentials)
+        ? await beginPairing(home, cloudDeployment(), credentials)
         : await finishPairing(home, credentials);
     output(result);
     if (result.state === "action_required" || result.state === "pending") process.exitCode = 3;

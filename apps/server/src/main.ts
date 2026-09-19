@@ -1,9 +1,8 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { Effect } from "effect";
 import { startService } from "./http.js";
+import { resolveHome } from "../../../packages/client/src/deployment.js";
 
-const home = process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
+const home = resolveHome();
 const program = Effect.scoped(
   Effect.gen(function* () {
     const server = yield* Effect.acquireRelease(

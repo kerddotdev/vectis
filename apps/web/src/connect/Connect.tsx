@@ -14,8 +14,8 @@ import { site } from "@vectis/design/site";
 import { Dashboard } from "./dashboard.js";
 import { Pending, TipProvider } from "./ui.js";
 
-const deploymentUrl: string | undefined = import.meta.env.VITE_CONVEX_URL;
-const publishableKey: string | undefined = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
+const deploymentUrl = import.meta.env.VECTIS_CONVEX_URL || undefined;
+const publishableKey = import.meta.env.VECTIS_CLERK_PUBLISHABLE_KEY || undefined;
 
 export function errorCode(issue: unknown) {
   return issue instanceof ConvexError &&

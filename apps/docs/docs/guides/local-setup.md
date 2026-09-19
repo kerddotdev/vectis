@@ -78,7 +78,7 @@ The development pairing flow requires the native Keychain helper. Set `VECTIS_KE
 pnpm vectis cloud pair --home /absolute/path/to/vectis-state --json
 ```
 
-Open the returned `https://vectis.kerd.dev/connect` link yourself. Compare the verification code with the CLI output, sign in, and approve the machine. Treat the pairing link as private and never approve a link supplied by someone else. The request expires after ten minutes. The default backend is the dedicated Vectis development deployment; `--url` selects another deployment for a separately configured web frontend.
+Open the returned `/connect` link yourself. Compare the verification code with the CLI output, sign in, and approve the machine. Treat the pairing link as private and never approve a link supplied by someone else. The request expires after ten minutes. A source checkout uses the deployment configured by `CONVEX_URL` and `VECTIS_WEB_URL` in `.env.local` (see `.env.example`); packaged apps use the deployment they were built for.
 
 Then finish the connection:
 

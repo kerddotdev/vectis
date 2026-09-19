@@ -15,23 +15,32 @@ import { dirname, join, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 import { Schema } from "effect";
 import { downloadArtifact } from "../packages/runner/src/artifact.js";
+import { Flavor } from "../packages/client/src/build.js";
+import { readLocalEnvironment, resolveCloudDeployment } from "../packages/client/src/deployment.js";
 
 const { values } = parseArgs({
   options: {
     output: { type: "string" },
     helpers: { type: "string" },
     "windows-runtime": { type: "string" },
+    flavor: { type: "string", default: "development" },
   },
 });
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("The first portable package targets Apple Silicon macOS.");
 if (!values.output || !values.helpers)
   throw new Error(
-    "Usage: pnpm package:cli --output <new-directory> --helpers <native-bin-directory>",
+    "Usage: pnpm package:cli --output <new-directory> --helpers <native-bin-directory> [--flavor development|production]",
   );
 let output = resolve(values.output);
 const helpers = resolve(values.helpers);
 const root = await realpath(process.cwd());
+const flavor = Schema.decodeUnknownSync(Flavor)(values.flavor);
+const cloud = resolveCloudDeployment({
+  packaged: undefined,
+  environment: process.env,
+  local: readLocalEnvironment(root, flavor),
+});
 const nodeSource = {
   url: "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
   sha256: "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
@@ -150,6 +159,7 @@ await writeFile(
       type: "module",
       main: "dist/apps/desktop/src/main.js",
       dependencies: manifest.dependencies,
+      vectis: { flavor, ...cloud },
     },
     null,
     2,
@@ -160,6 +170,7 @@ await writeFile(
   JSON.stringify(
     {
       platform: "darwin-arm64",
+      flavor,
       signing: "ad-hoc-development",
       node: nodeSource,
       included: ["CLI", "MCP", "local service", "Apple virtualization helper", "Keychain helper"],

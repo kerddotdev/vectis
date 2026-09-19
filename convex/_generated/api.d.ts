@@ -38,6 +38,7 @@ import type * as pairings from "../pairings.js";
 import type * as repositoryBindings from "../repositoryBindings.js";
 import type * as runnerDemand from "../runnerDemand.js";
 import type * as runnerLeases from "../runnerLeases.js";
+import type * as site from "../site.js";
 
 import type {
   ApiFromModules,
@@ -76,6 +77,7 @@ declare const fullApi: ApiFromModules<{
   repositoryBindings: typeof repositoryBindings;
   runnerDemand: typeof runnerDemand;
   runnerLeases: typeof runnerLeases;
+  site: typeof site;
 }>;
 
 /**

@@ -12,6 +12,7 @@ import {
   machineTokenFetcher,
 } from "./machine-auth.js";
 import type { KeychainCredentials } from "./keychain.js";
+import type { CloudDeployment } from "./deployment.js";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const Secrets = Schema.Struct({ request: Schema.String, credential: Schema.String });
@@ -26,7 +27,12 @@ async function descriptorAt(home: string) {
     JSON.parse(await readFile(join(home, "pairing.json"), "utf8")),
   );
 }
-export async function beginPairing(home: string, deploymentUrl: string, credentials: Credentials) {
+export async function beginPairing(
+  home: string,
+  deployment: CloudDeployment,
+  credentials: Credentials,
+) {
+  const deploymentUrl = deployment.convexUrl;
   machineEndpoint(deploymentUrl);
   const { machine } = await (await localClient(home)).status();
   try {
@@ -86,7 +92,7 @@ export async function beginPairing(home: string, deploymentUrl: string, credenti
     state: "action_required",
     verificationCode: descriptor.requestDigest.slice(0, 12).toUpperCase(),
     expiresAt: descriptor.expiresAt,
-    url: `https://vectis.kerd.dev/connect#request=${encodeURIComponent(JSON.stringify(Schema.decodeUnknownSync(PairingDescriptor)(descriptor)))}`,
+    url: `${deployment.webUrl}/connect#request=${encodeURIComponent(JSON.stringify(Schema.decodeUnknownSync(PairingDescriptor)(descriptor)))}`,
     nextStep:
       "Open this link yourself, compare the verification code and approve. Then run vectis cloud finish. Do not share the pairing link.",
   };

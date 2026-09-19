@@ -3,8 +3,10 @@ import { action, httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { human } from "./auth.js";
 import { readBody } from "./httpBody.js";
+import { webUrl } from "./site.js";
 
-const callbackUrl = "https://vectis.kerd.dev/api/github/oauth/callback";
+const callbackUrl = () => `${webUrl()}/api/github/oauth/callback`;
+const connectUrl = () => `${webUrl()}/connect?github=1`;
 const base64 = (bytes: Uint8Array) =>
   btoa(String.fromCharCode(...bytes))
     .replaceAll("+", "-")
@@ -27,7 +29,7 @@ export const begin = action({
     });
     const params = new URLSearchParams({
       client_id: clientId,
-      redirect_uri: callbackUrl,
+      redirect_uri: callbackUrl(),
       state,
       code_challenge: base64(await hash(verifier)),
       code_challenge_method: "S256",
@@ -72,7 +74,7 @@ export const callback = httpAction(async (ctx, request) => {
   if (!state)
     return new Response(null, {
       status: 303,
-      headers: { ...headers, Location: "https://vectis.kerd.dev/connect?github=1" },
+      headers: { ...headers, Location: connectUrl() },
     });
   if (!/^[A-Za-z0-9_-]{43}$/.test(state))
     return new Response("Start GitHub linking from Vectis before authorizing this App.", {
@@ -103,7 +105,7 @@ export const callback = httpAction(async (ctx, request) => {
             client_id: claim.clientId,
             client_secret: claim.clientSecret,
             code,
-            redirect_uri: callbackUrl,
+            redirect_uri: callbackUrl(),
             code_verifier: claim.verifier,
           }).toString(),
         },
@@ -149,7 +151,7 @@ export const callback = httpAction(async (ctx, request) => {
     });
     return new Response(null, {
       status: 303,
-      headers: { ...headers, Location: "https://vectis.kerd.dev/connect?github=1" },
+      headers: { ...headers, Location: connectUrl() },
     });
   } catch {
     await ctx.runMutation(internal.githubIdentity.finish, { id: claim.id });

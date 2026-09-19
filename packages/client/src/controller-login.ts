@@ -12,6 +12,7 @@ import {
   controllerEndpoint,
 } from "./controller.js";
 import type { KeychainCredentials } from "./keychain.js";
+import type { CloudDeployment } from "./deployment.js";
 
 type Credentials = Pick<KeychainCredentials, "get" | "set" | "remove">;
 const hash = (value: string) => createHash("sha256").update(value).digest("hex");
@@ -27,10 +28,11 @@ const missing = (error: unknown) =>
   error instanceof Error && "code" in error && error.code === "ENOENT";
 export async function beginControllerLogin(
   home: string,
-  deploymentUrl: string,
+  deployment: CloudDeployment,
   name: string,
   credentials: Credentials,
 ) {
+  const deploymentUrl = deployment.convexUrl;
   controllerEndpoint(deploymentUrl);
   await mkdir(home, { recursive: true, mode: 0o700 });
   try {
@@ -83,7 +85,7 @@ export async function beginControllerLogin(
     state: "action_required",
     verificationCode: request.requestDigest.slice(0, 12).toUpperCase(),
     expiresAt: request.expiresAt,
-    url: `https://vectis.kerd.dev/connect#controller=${encodeURIComponent(JSON.stringify(request))}`,
+    url: `${deployment.webUrl}/connect#controller=${encodeURIComponent(JSON.stringify(request))}`,
     nextStep:
       "Open this link yourself, compare the code and approve remote control. Then run vectis login finish. Do not share the login link.",
   };

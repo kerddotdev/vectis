@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, session } from "electron";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Schema } from "effect";
@@ -9,6 +8,7 @@ import { localClient } from "../../../packages/client/src/local.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
+import { githubConnection } from "../../../packages/client/src/github.js";
 import { controllerClient } from "../../../packages/client/src/controller.js";
 import {
   beginControllerLogin,
@@ -16,6 +16,8 @@ import {
   logoutController,
 } from "../../../packages/client/src/controller-login.js";
 import { RemoteClient } from "../../../packages/client/src/remote.js";
+import { buildInfo } from "../../../packages/client/src/build.js";
+import { cloudDeployment, resolveHome } from "../../../packages/client/src/deployment.js";
 import { desktopTarget } from "./target.js";
 import { trafficLightPosition, type Route, type WindowEvent } from "./chrome.js";
 import type { DesktopReply } from "./bridge.js";
@@ -33,14 +35,15 @@ if (app.isPackaged) {
     if (existsSync(binary)) process.env[variable] ??= binary;
   }
 }
-app.setName(app.isPackaged ? "Vectis" : "Vectis Dev");
+const production = buildInfo().flavor === "production";
+app.setName(production ? "Vectis" : "Vectis Dev");
 app.setAboutPanelOptions({
-  applicationName: "Vectis",
+  applicationName: production ? "Vectis" : "Vectis Dev",
   applicationVersion: app.isPackaged ? app.getVersion() : "Development",
   copyright: "kerd.dev · https://kerd.dev",
   website: "https://vectis.kerd.dev",
 });
-const home = process.env.VECTIS_HOME ?? join(homedir(), ".vectis");
+const home = resolveHome();
 const page = fileURLToPath(
   new URL("../../../../apps/desktop/renderer/index.html", import.meta.url),
 );
@@ -97,7 +100,7 @@ else {
             case "controller.login": {
               const login = await beginControllerLogin(
                 home,
-                "https://clear-hare-471.convex.cloud",
+                cloudDeployment(),
                 "Vectis desktop",
                 credentials(),
               );
@@ -196,11 +199,7 @@ else {
                 );
               const credentials = new KeychainCredentials(helper);
               if (action === "cloud.pair") {
-                const pairing = await beginPairing(
-                  home,
-                  "https://clear-hare-471.convex.cloud",
-                  credentials,
-                );
+                const pairing = await beginPairing(home, cloudDeployment(), credentials);
                 await shell.openExternal(pairing.url);
                 data = { state: pairing.state, verificationCode: pairing.verificationCode };
               } else data = await finishPairing(home, credentials);
@@ -222,7 +221,7 @@ else {
               data = null;
               break;
             case "open.github":
-              await shell.openExternal("https://vectis.kerd.dev/connect?github=1");
+              await shell.openExternal(githubConnection(cloudDeployment()).url);
               data = null;
               break;
             default:

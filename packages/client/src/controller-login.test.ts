@@ -10,7 +10,10 @@ import {
 } from "./controller-login.js";
 import { controllerClient } from "./controller.js";
 
-const deployment = "https://isolated-test.convex.cloud";
+const deployment = {
+  convexUrl: "https://isolated-test.convex.cloud",
+  webUrl: "https://vectis.test",
+};
 function credentials() {
   const entries = new Map<string, string>();
   return {

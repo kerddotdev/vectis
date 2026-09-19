@@ -32,7 +32,7 @@ Treat this document as good defaults, not hard rules. The developer's instructio
 - **maintainers** means the people building Vectis.
 - **user** means the person running Vectis on their own machine.
 - **host** means the machine that runs the local service and its VMs.
-- **home** means the service data directory: `--home`, then `VECTIS_HOME`, then `~/.vectis`. It holds `state.sqlite`, `connection.json` (loopback URL and bearer token), `service.log`, and cloud credentials metadata.
+- **home** means the service data directory: `--home`, then `VECTIS_HOME`, then `~/.vectis` for production builds or `~/.vectis-dev` for development builds. It holds `state.sqlite`, `connection.json` (loopback URL and bearer token), `service.log`, and cloud credentials metadata.
 - **environment** means a prepared Linux, macOS, or Windows guest image with its default CPU, memory, and storage settings.
 - **instance** means one disposable VM cloned from an environment.
 - **runner** means an ephemeral GitHub Actions just-in-time runner registered inside an instance.
@@ -42,7 +42,7 @@ Treat this document as good defaults, not hard rules. The developer's instructio
 ## The three ways to hurt yourself
 
 1. **Killing by pattern.** Never `pkill -f`, `pgrep | kill`, or kill a PID found by matching a name or path. Your own agent and other Vectis processes share those strings. Kill only a PID you captured at spawn.
-2. **Touching the real install.** The CLI, MCP server, and development desktop all default to the real `~/.vectis`. Always pass `--home` or set `VECTIS_HOME` to a temporary directory. Never run `service install`, `uninstall`, or `update` against a real home: they manage per-user LaunchAgents (`dev.kerd.vectis.*`). Never read or write `sh.vectis.machine` Keychain items, and never pair or log in against a cloud deployment unless asked.
+2. **Touching the real install.** From a source checkout, the CLI, MCP server, and development desktop default to `~/.vectis-dev` and the cloud deployment in `.env.local`; packaged production builds use `~/.vectis`. Both can be someone's real install. Always pass `--home` or set `VECTIS_HOME` to a temporary directory. Never run `service install`, `uninstall`, or `update` against a real home: they manage per-user LaunchAgents (`com.kerddotdev.vectis.*`). Never read or write `com.kerddotdev.vectis.machine` Keychain items, and never pair or log in against a cloud deployment unless asked.
 3. **Filling the disk.** Linux preparation, macOS restore images, Windows installation, and instance clones download or allocate many gigabytes. Do not start them, and do not boot real VMs, unless the developer asks.
 
 ## Hit every surface

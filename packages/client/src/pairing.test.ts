@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { beginPairing, finishPairing } from "./pairing.js";
 import { startService } from "../../../apps/server/src/http.js";
 
+const cloud = { convexUrl: "https://pairing-test.convex.cloud", webUrl: "https://vectis.test" };
 afterEach(() => vi.unstubAllGlobals());
 test("pairing retries preserve the local secret and approval links never contain raw credentials", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-pair-client-"));
@@ -20,10 +21,8 @@ test("pairing retries preserve the local secret and approval links never contain
     },
   };
   try {
-    const request = await beginPairing(home, "https://pairing-test.convex.cloud", credentials);
-    expect(await beginPairing(home, "https://pairing-test.convex.cloud", credentials)).toEqual(
-      request,
-    );
+    const request = await beginPairing(home, cloud, credentials);
+    expect(await beginPairing(home, cloud, credentials)).toEqual(request);
     expect(stored.size).toBe(1);
     const packed = Array.from(stored.values())[0];
     expect(packed).toBeDefined();

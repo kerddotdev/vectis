@@ -17,6 +17,7 @@ import type { KeychainCredentials } from "../../../packages/client/src/keychain.
 import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import type { VectisClient } from "../../../packages/client/src/index.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
+import { cloudDeployment } from "../../../packages/client/src/deployment.js";
 
 const commandSchema = Schema.toJsonSchemaDocument(Request);
 const waitInput = Schema.Struct({ id: Identifier, timeoutMs: Schema.optional(Schema.Int) });
@@ -109,10 +110,7 @@ const serviceInput = Schema.Struct({
   ]),
   ifIdle: Schema.optional(Schema.Boolean),
 });
-const cloudInput = Schema.Struct({
-  action: Schema.Literals(["pair", "finish"]),
-  deploymentUrl: Schema.optional(Schema.String),
-});
+const cloudInput = Schema.Struct({ action: Schema.Literals(["pair", "finish"]) });
 const cloudSchema = Schema.toJsonSchemaDocument(cloudInput);
 const serviceSchema = Schema.toJsonSchemaDocument(serviceInput);
 
@@ -172,7 +170,7 @@ export function createMcpServer(
       let result: unknown;
       switch (request.params.name) {
         case "vectis_github_connect":
-          result = githubConnection();
+          result = githubConnection(cloudDeployment());
           break;
         case "vectis_cloud": {
           if (!pairing)
@@ -185,11 +183,7 @@ export function createMcpServer(
           );
           result =
             input.action === "pair"
-              ? await beginPairing(
-                  pairing.home,
-                  input.deploymentUrl ?? "https://clear-hare-471.convex.cloud",
-                  pairing.credentials,
-                )
+              ? await beginPairing(pairing.home, cloudDeployment(), pairing.credentials)
               : await finishPairing(
                   pairing.home,
                   pairing.credentials,

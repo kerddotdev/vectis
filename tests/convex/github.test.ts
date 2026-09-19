@@ -11,7 +11,10 @@ const modules = {
   "../../convex/githubAppSetup.ts": () => import("../../convex/githubAppSetup.js"),
   "../../convex/_generated/server.js": () => import("../../convex/_generated/server.js"),
 };
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 const state = "a".repeat(64);
 const stateDigest = createHash("sha256").update(state).digest("hex");
 const app = {
@@ -42,6 +45,34 @@ test("manifest conversion stores credentials only in the backend and consumes th
   expect(stored?.appId).toBe(123);
   expect((await t.fetch(`/github/manifest/callback?state=${state}&code=test`)).status).toBe(403);
   expect(convert).toHaveBeenCalledTimes(1);
+});
+test("the App registration page describes the configured deployment", async () => {
+  vi.stubEnv("VECTIS_WEB_URL", "https://vectis-dev.example.workers.dev");
+  vi.stubEnv("VECTIS_GITHUB_APP_NAME", "Vectis <dev>");
+  vi.stubEnv("VECTIS_GITHUB_APP_PUBLIC", "false");
+  const t = convexTest(schema, modules);
+  await t.mutation(internal.githubAppSetup.create, {
+    stateDigest,
+    ownerId: 42,
+    ownerLogin: "test-owner",
+  });
+  const page = await (await t.fetch(`/github/app/setup?state=${state}`)).text();
+  const encoded = /name="manifest" value="([^"]+)"/.exec(page)?.[1];
+  const manifest = JSON.parse(
+    (encoded ?? "")
+      .replaceAll("&quot;", '"')
+      .replaceAll("&lt;", "<")
+      .replaceAll("&gt;", ">")
+      .replaceAll("&amp;", "&"),
+  );
+  expect(manifest).toMatchObject({
+    name: "Vectis <dev>",
+    public: false,
+    hook_attributes: { url: "https://vectis-dev.example.workers.dev/api/github/webhook" },
+    redirect_url: "https://vectis-dev.example.workers.dev/api/github/manifest/callback",
+    callback_urls: ["https://vectis-dev.example.workers.dev/api/github/oauth/callback"],
+  });
+  expect(page).toContain("<title>Register Vectis &lt;dev&gt;</title>");
 });
 test("a different GitHub owner cannot replace the configured app", async () => {
   const t = convexTest(schema, modules);

@@ -14,7 +14,10 @@ const identity = {
   subject: "owner",
   tokenIdentifier: "https://clerk.test|owner",
 };
-beforeEach(() => vi.stubEnv("CLERK_JWT_ISSUER_DOMAIN", identity.issuer));
+beforeEach(() => {
+  vi.stubEnv("CLERK_JWT_ISSUER_DOMAIN", identity.issuer);
+  vi.stubEnv("VECTIS_WEB_URL", "https://vectis.test");
+});
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
@@ -142,7 +145,7 @@ test("direct installation callbacks require a fresh Vectis link instead of trust
   vi.stubGlobal("fetch", fetch);
   const response = await t.fetch("/github/oauth/callback?code=unbound&installation_id=123");
   expect(response.status).toBe(303);
-  expect(response.headers.get("Location")).toBe("https://vectis.kerd.dev/connect?github=1");
+  expect(response.headers.get("Location")).toBe("https://vectis.test/connect?github=1");
   expect(fetch).not.toHaveBeenCalled();
   expect(await t.run((ctx) => ctx.db.query("githubAccounts").collect())).toEqual([]);
 });

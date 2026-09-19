@@ -21,7 +21,25 @@ test("finds the root manifest past versionless workspace manifests", async () =>
     join(directory, "dist", "packages", "client", "package.json"),
     JSON.stringify({ name: "@vectis/client" }),
   );
-  expect(findBuildInfo(module)).toEqual({ version: "1.2.3" });
+  expect(findBuildInfo(module)).toMatchObject({
+    version: "1.2.3",
+    flavor: "development",
+    root: directory,
+  });
+});
+
+test("packaged manifests carry the production flavor and deployment", async () => {
+  directory = await mkdtemp(join(tmpdir(), "vectis-build-"));
+  const vectis = {
+    flavor: "production",
+    convexUrl: "https://prod-1.convex.cloud",
+    webUrl: "https://vectis.test",
+  };
+  await writeFile(
+    join(directory, "package.json"),
+    JSON.stringify({ name: "vectis", version: "1.2.3", vectis }),
+  );
+  expect(findBuildInfo(directory)).toMatchObject({ flavor: "production", packaged: vectis });
 });
 
 test("fails when no Vectis manifest exists", async () => {
