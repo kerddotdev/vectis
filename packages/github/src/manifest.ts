@@ -24,7 +24,6 @@ export function appManifest(
     default_permissions: {
       administration: "write",
       actions: "read",
-      checks: "write",
       contents: "write",
       metadata: "read",
       pull_requests: "write",
