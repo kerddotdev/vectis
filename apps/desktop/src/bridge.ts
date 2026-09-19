@@ -26,7 +26,10 @@ export type DesktopAction =
   | "open.docs"
   | "open.github"
   | "cli.status"
-  | "cli.install";
+  | "cli.install"
+  | "update.status"
+  | "update.check"
+  | "update.install";
 export type DesktopReply =
   | { ok: true; data: unknown }
   | { ok: false; error: { code: string; message: string; nextStep: string } };

@@ -1,4 +1,6 @@
 import { existsSync } from "node:fs";
+import { rm, writeFile } from "node:fs/promises";
+import electronUpdater from "electron-updater";
 import { app, BrowserWindow, dialog, ipcMain, Menu, shell, session } from "electron";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -20,6 +22,7 @@ import { buildInfo } from "../../../packages/client/src/build.js";
 import { cloudDeployment, resolveHome } from "../../../packages/client/src/deployment.js";
 import { desktopTarget } from "./target.js";
 import { commandLineStatus, installCommandLine, shellPath } from "./command-line.js";
+import { UpdateController, type UpdateService } from "./updates.js";
 import { trafficLightPosition, type Route, type WindowEvent } from "./chrome.js";
 import type { DesktopReply } from "./bridge.js";
 if (app.isPackaged) {
@@ -49,6 +52,73 @@ const page = fileURLToPath(
   new URL("../../../../apps/desktop/renderer/index.html", import.meta.url),
 );
 const pageUrl = pathToFileURL(page).href;
+const restartMarker = join(home, "restart-after-update");
+const updateService: UpdateService = {
+  async stopIfIdle() {
+    const client = await localClient(home);
+    try {
+      await client.status();
+    } catch {
+      return "not-running";
+    }
+    try {
+      await client.shutdown({ ifIdle: true });
+    } catch (error) {
+      if (error instanceof VectisError && error.code === "service_busy") return "busy";
+      throw error;
+    }
+    for (let attempt = 0; attempt < 120; attempt++) {
+      await new Promise((done) => setTimeout(done, 500));
+      try {
+        await client.status();
+      } catch {
+        return "stopped";
+      }
+    }
+    throw new VectisError(
+      "update_blocked",
+      "The service did not stop, so the update was not installed.",
+      "Stop the service from Overview, then install the update again.",
+    );
+  },
+  async rememberRestart() {
+    await writeFile(restartMarker, "", { mode: 0o600 });
+  },
+};
+const updates =
+  app.isPackaged && production && existsSync(join(process.resourcesPath, "app-update.yml"))
+    ? (() => {
+        const { autoUpdater } = electronUpdater;
+        autoUpdater.autoDownload = true;
+        autoUpdater.autoInstallOnAppQuit = false;
+        autoUpdater.allowPrerelease = false;
+        autoUpdater.disableDifferentialDownload = true;
+        return new UpdateController(
+          {
+            check: async () => {
+              await autoUpdater.checkForUpdates();
+            },
+            quitAndInstall: () => autoUpdater.quitAndInstall(false, true),
+            subscribe: (listener) => {
+              autoUpdater.on("checking-for-update", () => listener({ type: "checking" }));
+              autoUpdater.on("update-available", (info) =>
+                listener({ type: "available", version: info.version }),
+              );
+              autoUpdater.on("update-not-available", () => listener({ type: "none" }));
+              autoUpdater.on("download-progress", (progress) =>
+                listener({ type: "progress", percent: progress.percent }),
+              );
+              autoUpdater.on("update-downloaded", (info) =>
+                listener({ type: "downloaded", version: info.version }),
+              );
+              autoUpdater.on("error", (error) => listener({ type: "error", error }));
+            },
+          },
+          updateService,
+          { checkIntervalMs: 4 * 60 * 60 * 1000, retryIdleMs: 30000 },
+        );
+      })()
+    : undefined;
 let window: BrowserWindow | undefined;
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
@@ -229,6 +299,15 @@ else {
               data = await commandLineStatus(process.resourcesPath, undefined, await shellPath());
               break;
             }
+            case "update.status":
+              data = updates?.current() ?? { status: "disabled" };
+              break;
+            case "update.check":
+              data = (await updates?.check()) ?? { status: "disabled" };
+              break;
+            case "update.install":
+              data = (await updates?.install()) ?? { status: "disabled" };
+              break;
             case "open.docs":
               await shell.openExternal("https://vectis.kerd.dev/docs");
               data = null;
@@ -377,6 +456,14 @@ else {
       void window.loadFile(page);
     }
     open();
+    updates?.start(15000);
+    if (existsSync(restartMarker))
+      void rm(restartMarker)
+        .then(() => LaunchAgent.forHome(home))
+        .then(async (agent) => {
+          if (await agent.installed()) await agent.start();
+        })
+        .catch(() => undefined);
     app.on("activate", () => {
       if (!window) open();
     });

@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useStateApi } from "@/state";
 import { MachineSwitcher } from "./machine-switcher";
+import { UpdateStatus } from "./update-status";
 
 const widthKey = "vectis.sidebar-width";
 const defaultWidth = 232;
@@ -116,6 +117,7 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="mt-auto flex flex-col gap-1 p-2.5">
+        <UpdateStatus />
         <button
           type="button"
           onClick={() => void perform("open.docs")}
