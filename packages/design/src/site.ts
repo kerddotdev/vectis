@@ -1,9 +1,9 @@
-// Repository and download links are placeholders until the public release exists.
 export const site = {
   url: "https://vectis.kerd.dev",
   author: { name: "kerd.dev", url: "https://kerd.dev" },
   repository: "https://github.com/kerddotdev/vectis",
-  download: "https://github.com/kerddotdev/vectis/releases/latest",
+  // GitHub redirects this to the asset of the latest non-prerelease release.
+  download: "https://github.com/kerddotdev/vectis/releases/latest/download/Vectis-arm64.dmg",
   navigation: [
     { href: "/features", label: "Features" },
     { href: "/security", label: "Security" },

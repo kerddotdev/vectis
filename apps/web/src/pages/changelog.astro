@@ -1,15 +1,10 @@
 ---
-import { getCollection, render } from "astro:content";
 import { site } from "@vectis/design/site";
 import PageHero from "../components/PageHero.astro";
 import Base from "../layouts/Base.astro";
+import { releases } from "../lib/releases";
 
-const entries = (await getCollection("changelog")).sort(
-  (a, b) => b.data.date.getTime() - a.data.date.getTime(),
-);
-const rendered = await Promise.all(
-  entries.map(async (entry) => ({ entry, Content: (await render(entry)).Content })),
-);
+const entries = await releases();
 const format = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC" });
 ---
 
@@ -28,23 +23,33 @@ const format = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC
   </PageHero>
   <div class="shell flex flex-col pb-28">
     {
-      rendered.map(({ entry, Content }) => (
-        <article
-          id={`v${entry.data.version}`}
-          class="grid grid-cols-1 gap-6 border-t border-hairline py-14 lg:grid-cols-[14rem_1fr] lg:gap-16"
-        >
-          <header class="flex flex-col gap-1.5">
-            <p class="font-mono text-[15px]">{entry.data.version}</p>
-            <time class="eyebrow" datetime={entry.data.date.toISOString().slice(0, 10)}>
-              {format.format(entry.data.date)}
-            </time>
-          </header>
-          <div class="release flex max-w-[64ch] flex-col gap-5">
-            <h2 class="text-2xl font-medium">{entry.data.title}</h2>
-            <Content />
-          </div>
-        </article>
-      ))
+      entries.length === 0 ? (
+        <p class="border-t border-hairline py-14 text-muted">No releases are published yet.</p>
+      ) : (
+        entries.map((release) => (
+          <article
+            id={`v${release.version}`}
+            class="grid grid-cols-1 gap-6 border-t border-hairline py-14 lg:grid-cols-[14rem_1fr] lg:gap-16"
+          >
+            <header class="flex flex-col gap-1.5">
+              <a class="font-mono text-[15px]" href={`#v${release.version}`}>
+                {release.version}
+              </a>
+              <time class="eyebrow" datetime={release.date.toISOString().slice(0, 10)}>
+                {format.format(release.date)}
+              </time>
+              {release.prerelease && <span class="eyebrow">Prerelease</span>}
+            </header>
+            <div class="release flex max-w-[64ch] flex-col gap-5">
+              <h2 class="text-2xl font-medium">{release.title}</h2>
+              <Fragment set:html={release.html} />
+              <a class="prose-link self-start" href={release.url}>
+                Release on GitHub
+              </a>
+            </div>
+          </article>
+        ))
+      )
     }
   </div>
 </Base>
@@ -53,6 +58,15 @@ const format = new Intl.DateTimeFormat("en", { dateStyle: "long", timeZone: "UTC
   .release :global(p),
   .release :global(li) {
     color: var(--vectis-muted);
+  }
+  .release :global(h2),
+  .release :global(h3) {
+    color: var(--vectis-foreground);
+    font-weight: 500;
+  }
+  .release :global(a) {
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
   .release :global(ul) {
     display: flex;

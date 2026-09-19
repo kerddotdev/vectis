@@ -7,6 +7,10 @@ import JobTrace from "../components/JobTrace.astro";
 import SectionHead from "../components/SectionHead.astro";
 import Base from "../layouts/Base.astro";
 import { codeLines } from "../lib/code";
+import { latestRelease } from "../lib/releases";
+
+const latest = await latestRelease();
+const megabytes = latest?.diskImageBytes && Math.round(latest.diskImageBytes / 1e6);
 
 const lifecycle = [
   {
@@ -32,12 +36,16 @@ const phases = [
   ["running", "registering"],
   ["running", "listening"],
   ["running", "cleaning"],
-  ["succeeded", "runner exited, VM removed"],
+  ["succeeded", ""],
 ];
 const guests = [
   ["macOS 26", "Apple Virtualization", "Downloaded from Apple and verified"],
   ["Ubuntu 24.04", "Apple Virtualization", "Official cloud image, verified by SHA-256"],
-  ["Windows 11", "QEMU on Hypervisor.framework, TPM 2.0", "Installed from your own ISO and license"],
+  [
+    "Windows 11 (experimental)",
+    "QEMU on Hypervisor.framework, TPM 2.0",
+    "Your own ISO and license; QEMU installed separately",
+  ],
 ];
 const promises = [
   [
@@ -46,7 +54,7 @@ const promises = [
   ],
   [
     "Keys stay in Keychain.",
-    "Machine and controller credentials live in macOS Keychain. The cloud keeps fingerprints, not secrets.",
+    "Machine and controller credentials live in macOS Keychain. The cloud stores only their fingerprints.",
   ],
   [
     "Forks wait for you.",
@@ -71,7 +79,7 @@ const agentExample = `<span class="p">$</span> vectis status <span class="k">--j
 <span class="dim">{"error": {</span>
 <span class="dim">  "code":</span> <span class="k">"machine_paused"</span><span class="dim">,</span>
 <span class="dim">  "message":</span> "Resume the machine before preparing a guest."<span class="dim">,</span>
-<span class="dim">  "nextStep":</span> "Run vectis doctor for diagnostics."
+<span class="dim">  "nextStep":</span> "Run vectis resume, then retry."
 <span class="dim">}}</span>`;
 const migrationExample = `<span class="dim">.github/workflows/test.yml</span>
 
@@ -103,7 +111,10 @@ jobs:
             <a class="button button-primary" href={site.download}>Download for macOS</a>
             <a class="button button-secondary" href="/docs">Read the docs</a>
           </div>
-          <p class="eyebrow">Requires an Apple Silicon Mac.</p>
+          <p class="eyebrow">
+            {latest && `Version ${latest.version}${megabytes ? `, ${megabytes} MB` : ""}. `}
+            Requires an Apple Silicon Mac with macOS 15 or later.
+          </p>
         </div>
       </div>
     </div>
@@ -198,12 +209,15 @@ jobs:
           <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
             <dt class="font-medium">MCP server</dt>
             <dd class="text-muted">
-              Twelve tools, from <code>vectis_status</code> to <code>vectis_command</code> and <code>vectis_wait</code>.
+              Tools for every capability, from <code>vectis_status</code> to <code>vectis_command</code>, <code>vectis_wait</code> and <code>vectis_logs</code>.
             </dd>
           </div>
           <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
             <dt class="font-medium">Agent skill</dt>
-            <dd class="text-muted">A portable skill that teaches agents the safe way to use Vectis.</dd>
+            <dd class="text-muted">
+              A portable skill that teaches agents the safe way to use Vectis, installable as a Claude
+              Code plugin.
+            </dd>
           </div>
           <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
             <dt class="font-medium">llms.txt</dt>
