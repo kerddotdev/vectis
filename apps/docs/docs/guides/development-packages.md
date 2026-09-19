@@ -65,7 +65,7 @@ pnpm package:cli --output /absolute/path/to/new-payload --helpers /absolute/path
 pnpm package:desktop --package /absolute/path/to/new-payload --output /absolute/path/to/new-desktop-output
 ```
 
-The result is `Vectis Dev-darwin-arm64/Vectis Dev.app`. The app finds its Node runtime and native helpers inside its own Resources directory. Installing the service from the desktop registers that independent runtime with macOS; closing the desktop leaves it running.
+The result is `Vectis-darwin-arm64/Vectis.app` for a production payload (`pnpm package:cli --flavor production`) or `Vectis Dev-darwin-arm64/Vectis Dev.app` for a development one. The app also contains the `vectis` and `vectis-mcp` launchers in `Contents/Resources/bin`. The app finds its Node runtime and native helpers inside its own Resources directory. Installing the service from the desktop registers that independent runtime with macOS; closing the desktop leaves it running.
 
 The default desktop build is for local development verification. Add `--sign` to use an available Developer ID Application identity. Add `--keychain-profile <profile-name>` together with `--sign` to submit the signed app for notarization using an existing notarytool profile. Signing errors fail the build; signing alone does not mean Apple has notarized the app.
 
@@ -101,14 +101,19 @@ After an interrupted update, use `service recover-update` with the same home. Th
 
 The desktop's **Use this app's runtime** and **Recover runtime update** buttons use the same operations. MCP exposes `vectis_service` with `action: "update"` or `action: "recoverUpdate"`. Updates adopt the runtime running that client; they do not download a release. This recovery restores the runtime registration, not a backup of application data or a general database downgrade.
 
-## Desktop disk image
+## Release artifacts
 
-Create a signed, notarized development DMG from an already notarized desktop app. Include the matching collected runtime sources when Windows binaries are bundled:
+Create the release artifacts from an already notarized desktop app. Include the matching collected runtime sources when Windows binaries are bundled:
 
 ```sh
-pnpm package:disk-image --app /absolute/path/to/Vectis\ Dev.app --output /absolute/path/to/new.dmg --identity YOUR_DEVELOPER_ID_IDENTITY --sources /absolute/path/to/source-materials
+pnpm package:release --app /absolute/path/to/Vectis.app --output /absolute/path/to/new-directory --identity YOUR_DEVELOPER_ID_IDENTITY
 ```
 
-Use the API key environment variables above or `--keychain-profile`. The command verifies the app signature and stapled ticket, includes an Applications shortcut and installation instructions, signs and notarizes the disk image, then writes a SHA-256 manifest alongside it. It does not publish the artifact.
+Use the API key environment variables above or `--keychain-profile`. The command verifies the app signature and stapled ticket, then writes:
 
-For a first installation, drag the app to Applications before opening it and installing the service. For an upgrade, place the new app in a separate permanent folder and use **Use this app's runtime**. Keep the old app at its original path until the switch succeeds. Do not overwrite a runtime used by a running service, and do not install the background service directly from a mounted DMG.
+- `Vectis-arm64.dmg`: the app with an Applications shortcut, signed and notarized. Development builds produce `Vectis-Dev-arm64.dmg`.
+- `Vectis-<version>-arm64-mac.zip` and `latest-mac.yml`: the update payload and feed that installed production apps read from GitHub Releases. Development builds have no update feed.
+
+It does not publish anything. Production apps look for updates on the `kerddotdev/vectis` GitHub Releases, so a fork must change `scripts/release/desktop-identity.ts`.
+
+Drag the app to Applications before opening it and installing the service. Do not install the background service directly from a mounted disk image.

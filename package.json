@@ -47,7 +47,7 @@
     "package:headless": "pnpm build && node dist/scripts/package-headless.js",
     "package:windows-runtime": "pnpm build && node dist/scripts/package-windows-runtime.js",
     "package:runtime-sources": "pnpm build && node dist/scripts/collect-runtime-sources.js",
-    "package:disk-image": "pnpm build && node dist/scripts/package-disk-image.js",
+    "package:release": "pnpm build && node dist/scripts/package-release.js",
     "package:verify-runtime-sources": "pnpm build && node dist/scripts/verify-runtime-sources.js"
   },
   "dependencies": {

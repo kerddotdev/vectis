@@ -1,12 +1,24 @@
 import { execFile } from "node:child_process";
-import { access, cp, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  access,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { parseArgs, promisify } from "node:util";
 import { Schema } from "effect";
-import { inspectLocalArtifact } from "../packages/runner/src/artifact.js";
+import { PackagedBuild } from "../packages/client/src/build.js";
+import { desktopIdentity } from "./release/desktop-identity.js";
 import { notarizationArguments, notarizeBundle } from "./release/notarization.js";
 import { verifyPackageLinks } from "./release/package-links.js";
+import { describeFile, updateManifest } from "./release/update-manifest.js";
 import { verifyRuntimeSources } from "./release/verify-runtime-sources.js";
 
 const { values } = parseArgs({
@@ -19,19 +31,19 @@ const { values } = parseArgs({
   },
 });
 if (!values.app || !values.output || !values.identity)
-  throw Error("Provide --app <notarized-app>, --output <new.dmg>, and --identity <Developer ID>.");
-const app = resolve(values.app);
+  throw Error(
+    "Provide --app <notarized-app>, --output <new-directory>, and --identity <Developer ID>.",
+  );
+const app = await realpath(values.app);
+if (!app.endsWith(".app")) throw Error("Expected an application bundle.");
 const output = resolve(values.output);
-if (!app.endsWith(".app") || !output.endsWith(".dmg"))
-  throw Error("Expected an application bundle and a .dmg output.");
-await access(output).then(
-  () => {
-    throw Error("Output already exists.");
-  },
-  (error) => {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-  },
-);
+await mkdir(output, { mode: 0o700 });
+const packaged = Schema.decodeUnknownSync(
+  Schema.Struct({ version: Schema.String, vectis: PackagedBuild }),
+)(JSON.parse(await readFile(join(app, "Contents/Resources/app/package.json"), "utf8")));
+const identity = desktopIdentity(packaged.vectis.flavor);
+if (basename(app) !== `${identity.name}.app`)
+  throw Error(`Expected ${identity.name}.app for a ${packaged.vectis.flavor} build.`);
 const authentication = await notarizationArguments(values["keychain-profile"]);
 const run = promisify(execFile);
 await verifyPackageLinks(app);
@@ -48,6 +60,7 @@ if (values.sources) {
   );
   await verifyPackageLinks(resolve(values.sources));
 }
+const diskImage = join(output, `${identity.artifact}-arm64.dmg`);
 const staging = await mkdtemp(join(tmpdir(), "vectis-disk-image-"));
 try {
   await run("/usr/bin/ditto", [app, join(staging, basename(app))]);
@@ -62,28 +75,38 @@ try {
       join(staging, basename(app), "Contents/Resources/runtime/windows"),
       join(staging, "Corresponding Sources"),
     );
-  await writeFile(
-    join(staging, "Install.txt"),
-    "Drag Vectis Dev.app to Applications, then open it and install the background service.\nKeep the app at its installed location while the service uses it.\nFor upgrades, place the new app in a separate permanent folder. Do not overwrite or move the previous app while its service uses it. Open the new app and use its runtime update control when idle; remove the old app only after success.\nThis development artifact does not grant GitHub access automatically.\nDocumentation: https://vectis.kerd.dev/docs/\n",
-  );
   await run(
     "/usr/bin/hdiutil",
-    ["create", "-srcfolder", staging, "-volname", "Vectis Dev", "-format", "UDZO", output],
+    ["create", "-srcfolder", staging, "-volname", identity.name, "-format", "UDZO", diskImage],
     { timeout: 300000 },
   );
-  await run("/usr/bin/codesign", ["--sign", values.identity, "--timestamp", output]);
-  const notarization = await notarizeBundle(output, authentication, "disk-image");
-  const artifact = await inspectLocalArtifact(output, AbortSignal.timeout(60000));
-  await writeFile(
-    `${output}.json`,
-    JSON.stringify(
-      { file: basename(output), ...artifact, notarization, developmentOnly: true },
-      null,
-      2,
-    ) + "\n",
-    { flag: "wx" },
-  );
-  console.log(JSON.stringify({ output, ...artifact, notarization }));
 } finally {
   await rm(staging, { recursive: true, force: true });
 }
+await run("/usr/bin/codesign", ["--sign", values.identity, "--timestamp", diskImage]);
+const notarization = await notarizeBundle(diskImage, authentication, "disk-image");
+const artifacts = [diskImage];
+if (identity.updates) {
+  const zip = join(output, `${identity.artifact}-${packaged.version}-arm64-mac.zip`);
+  await run("/usr/bin/ditto", ["-c", "-k", "--sequesterRsrc", "--keepParent", app, zip]);
+  const feed = join(output, "latest-mac.yml");
+  await writeFile(
+    feed,
+    updateManifest({
+      version: packaged.version,
+      zip: await describeFile(zip),
+      diskImage: await describeFile(diskImage),
+      releaseDate: new Date(),
+    }),
+    { flag: "wx" },
+  );
+  artifacts.push(zip, feed);
+}
+console.log(
+  JSON.stringify({
+    flavor: packaged.vectis.flavor,
+    version: packaged.version,
+    artifacts,
+    notarization,
+  }),
+);

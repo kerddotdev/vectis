@@ -125,7 +125,9 @@ if [ -x "$VECTIS_PACKAGE_ROOT/runtime/windows/bin/qemu-system-aarch64" ]; then
   export VECTIS_QEMU_IMG="\${VECTIS_QEMU_IMG:-$VECTIS_PACKAGE_ROOT/runtime/windows/bin/qemu-img}"
   export VECTIS_SWTPM="\${VECTIS_SWTPM:-$VECTIS_PACKAGE_ROOT/runtime/windows/bin/swtpm}"
 fi
-exec "$VECTIS_PACKAGE_ROOT/runtime/bin/node" "$VECTIS_PACKAGE_ROOT/application/dist/apps/${entry}/src/main.js" "$@"
+VECTIS_APPLICATION="$VECTIS_PACKAGE_ROOT/application"
+[ -d "$VECTIS_APPLICATION" ] || VECTIS_APPLICATION="$VECTIS_PACKAGE_ROOT/app"
+exec "$VECTIS_PACKAGE_ROOT/runtime/bin/node" "$VECTIS_APPLICATION/dist/apps/${entry}/src/main.js" "$@"
 `,
     { mode: 0o755 },
   );

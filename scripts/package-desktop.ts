@@ -1,10 +1,12 @@
 import { compileBrandIcons } from "./release/brand-icons.js";
 import { relocatePackageLinks, verifyPackageLinks } from "./release/package-links.js";
 import { packager } from "@electron/packager";
-import { access, mkdir, readFile, realpath, rm } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { Schema } from "effect";
+import { PackagedBuild } from "../packages/client/src/build.js";
+import { desktopIdentity } from "./release/desktop-identity.js";
 
 const { values } = parseArgs({
   options: {
@@ -47,22 +49,34 @@ for (const entry of [
   "application/apps/desktop/renderer/index.html",
   "application/dist/apps/desktop/src/main.js",
   "runtime/bin/node",
+  "bin/vectis",
+  "bin/vectis-mcp",
   "runtime/vectis-vm",
   "runtime/vectis-keychain",
 ])
   await access(join(source, entry));
 await mkdir(output, { mode: 0o700 });
-const packaged = Schema.decodeUnknownSync(Schema.Struct({ version: Schema.String }))(
-  JSON.parse(await readFile(join(source, "application", "package.json"), "utf8")),
-);
+const packaged = Schema.decodeUnknownSync(
+  Schema.Struct({ version: Schema.String, vectis: PackagedBuild }),
+)(JSON.parse(await readFile(join(source, "application", "package.json"), "utf8")));
+const identity = desktopIdentity(packaged.vectis.flavor);
 const brandDirectory = join(output, ".brand");
 const brand = await compileBrandIcons(brandDirectory);
+const resources = [join(source, "runtime"), join(source, "bin"), brand.catalog];
+if (identity.updates) {
+  const feed = join(brandDirectory, "app-update.yml");
+  await writeFile(
+    feed,
+    `provider: github\nowner: ${identity.updates.owner}\nrepo: ${identity.updates.repo}\nupdaterCacheDirName: vectis-updater\n`,
+  );
+  resources.push(feed);
+}
 const paths = await packager({
   icon: brand.icon,
   dir: join(source, "application"),
   out: output,
-  name: "Vectis Dev",
-  appBundleId: "com.kerddotdev.vectis",
+  name: identity.name,
+  appBundleId: identity.bundleId,
   appVersion: packaged.version,
   buildVersion: "1",
   platform: "darwin",
@@ -73,7 +87,7 @@ const paths = await packager({
   derefSymlinks: false,
   afterCopy: [({ buildPath }) => relocatePackageLinks(join(source, "application"), buildPath)],
   overwrite: false,
-  extraResource: [join(source, "runtime"), brand.catalog],
+  extraResource: resources,
   appCategoryType: "public.app-category.developer-tools",
   extendInfo: { LSMinimumSystemVersion: "15.0", CFBundleIconName: "vectis" },
   ...(values.sign
@@ -109,6 +123,7 @@ for (const path of paths) await verifyPackageLinks(path);
 console.log(
   JSON.stringify({
     paths,
+    flavor: packaged.vectis.flavor,
     signing: values.sign ? "developer-id" : "development-only",
     notarized: Boolean(notarization),
   }),
