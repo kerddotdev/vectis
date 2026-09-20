@@ -27,6 +27,8 @@ vectis logs --lines 200 --json
 
 The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means Vectis stopped safely and is waiting for the step it describes.
 
+An operation that stays in **Needs you** after you have read it, usually because the service restarted before it finished, can be closed with **Dismiss** in the app or `vectis operation cancel <operation-id>`. It ends as `cancelled` and nothing else changes. Two cases keep their own way out instead: an interrupted runner is closed by `vectis runner reconcile <operation-id>` once its VM is confirmed stopped, and an image preparation by resuming or discarding the setup.
+
 ## The Mac says it was removed from its account
 
 `vectis status --json` reports `cloud.state` as `removed`, and the app shows "Removed from account". Someone deleted this Mac on the account page, so its credential no longer works and Vectis stops retrying. Nothing local is lost.

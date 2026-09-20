@@ -31,6 +31,7 @@ Every change is an operation: `accepted`, `running`, `action_required`, `succeed
 - Pass a stable `--key` (MCP: `key`) and reuse it only to retry the exact same command. A repeated key never repeats work.
 - `--wait` waits up to `--timeout` (default 120000 ms). When time runs out, the CLI prints the operation as it is now and exits with 3. MCP `vectis_wait` returns it with `timedOut: true`; call it again to keep waiting.
 - Read one operation with `vectis operation get <id> --json` or MCP `vectis_operation`. Cancel with `vectis operation cancel <id>`; cancelling a wait does not cancel the operation.
+- The same command closes an `action_required` operation that nothing is working on any more, after you reported it to the user. An interrupted runner and an image preparation refuse it: they have their own recovery commands.
 - Output is always JSON. Exit codes: 0 success, 1 failed or cancelled, 3 action required or still pending. Errors look like `{"error":{"code","message","nextStep"}}`; follow `nextStep`.
 - When something fails or hangs, read `vectis logs --lines 200 --json` or MCP `vectis_logs` before retrying.
 

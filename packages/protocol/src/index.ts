@@ -343,7 +343,7 @@ export const capabilities = [
     name: "operation.cancel",
     kind: "command",
     description:
-      "Request cancellation of an active background operation; inspect its final cleanup status.",
+      "Request cancellation of an active background operation, or close one that waits for a person and has no recovery command of its own; inspect its final cleanup status.",
   },
   {
     name: "repository.list",

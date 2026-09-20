@@ -167,7 +167,7 @@ Environments
 Operations
   operation get <id>            Inspect an operation
   operation wait <id>           Wait for an operation's terminal state; on --timeout, print it as it is
-  operation cancel <id>         Cancel an active operation and release what it owns
+  operation cancel <id>         Cancel an active operation, or close one that only waits for you
   command --file <path>         Submit any protocol command as JSON
   version                       Print the Vectis version
 
