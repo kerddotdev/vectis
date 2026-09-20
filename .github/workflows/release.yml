@@ -86,7 +86,6 @@ jobs:
           printf %s "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
           echo "APPLE_API_KEY=$RUNNER_TEMP/AuthKey.p8" >> "$GITHUB_ENV"
       - run: swift build --package-path native/apple --configuration release
-      - run: pnpm desktop:build
       - run: pnpm package:cli --output "$RUNNER_TEMP/payload" --helpers native/apple/.build/release --flavor production
       - run: pnpm package:desktop --package "$RUNNER_TEMP/payload" --output "$RUNNER_TEMP/desktop" --sign --notarize
         env:
