@@ -334,8 +334,8 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
         <div className="grid gap-4 md:grid-cols-2">
           {machines.map((machine) => (
             <Panel key={machine._id} className="flex flex-col gap-5 p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
+              <div className="flex items-start gap-4">
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-[17px] font-medium">{machine.name}</p>
                   <p className="text-[14px] text-muted">
                     {machine.lastSeenAt
@@ -343,24 +343,26 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
                       : "Not seen yet"}
                   </p>
                 </div>
-                {machine.paused ? (
-                  <Status tone="attention">New VMs paused</Status>
-                ) : online(machine) ? (
-                  <Status tone="success">Online</Status>
-                ) : (
-                  <Status tone="neutral">Offline</Status>
-                )}
-                <ActionMenu
-                  label={`Actions for ${machine.name}`}
-                  trigger={<EllipsisIcon className="size-4" />}
-                  items={[
-                    {
-                      label: "Remove this Mac",
-                      danger: true,
-                      onSelect: () => setRemoving(machine),
-                    },
-                  ]}
-                />
+                <div className="flex shrink-0 items-center gap-1">
+                  {machine.paused ? (
+                    <Status tone="attention">New VMs paused</Status>
+                  ) : online(machine) ? (
+                    <Status tone="success">Online</Status>
+                  ) : (
+                    <Status tone="neutral">Offline</Status>
+                  )}
+                  <ActionMenu
+                    label={`Actions for ${machine.name}`}
+                    trigger={<EllipsisIcon className="size-4" />}
+                    items={[
+                      {
+                        label: "Remove this Mac",
+                        danger: true,
+                        onSelect: () => setRemoving(machine),
+                      },
+                    ]}
+                  />
+                </div>
               </div>
               <div className="flex flex-col gap-2">
                 <p className="text-[14px] text-muted">Prepared environments</p>
