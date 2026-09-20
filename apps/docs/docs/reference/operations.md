@@ -24,6 +24,8 @@ Each command carries a key (`--key` in the CLI, `key` in MCP). Submitting the sa
 
 ## Waiting
 
+Commands marked `activity: "setting"` in capabilities wait automatically in the CLI: pause/resume, repository enable-auto/disable-auto, environment register/configure/remove, instance stop/reconcile and operation cancel. They return the terminal operation, with exit code 1 for failure or cancellation and 3 for action required. If their `--timeout` expires, they report a `wait_cancelled` error and exit with 3; the operation may still be running. MCP command submission keeps its existing behavior.
+
 `--wait` or `vectis operation wait <id>` waits until the operation leaves `accepted` and `running`, for up to `--timeout` milliseconds (default 120000). If time runs out, the CLI prints the operation as it is and exits with 3; the operation keeps going. MCP `vectis_wait` waits up to 120 seconds per call and returns `timedOut: true` in the same case. Stopping a wait never cancels the operation; use `vectis operation cancel <id>` for that.
 
 ## Output and exit codes

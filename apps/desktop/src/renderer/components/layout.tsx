@@ -41,7 +41,7 @@ export function Page({
   children: ReactNode;
 }) {
   const { collapsed, fullscreen } = useWindowChrome();
-  const { error, snapshot, ready, machineId, perform } = useStateApi();
+  const { snapshot, ready, machineId, perform } = useStateApi();
   const scroller = useRef<HTMLDivElement>(null);
   const heading = useRef<HTMLHeadingElement>(null);
   const [condensed, setCondensed] = useState(false);
@@ -106,11 +106,6 @@ export function Page({
           {ready && !snapshot && machineId && (
             <Notice tone="attention" className="mt-5" title="Waiting for the remote machine">
               Check that the Vectis service is online on that machine.
-            </Notice>
-          )}
-          {error && (
-            <Notice tone="danger" className="mt-5" role="alert">
-              {error}
             </Notice>
           )}
           <div className="mt-8 flex flex-col gap-10">{children}</div>

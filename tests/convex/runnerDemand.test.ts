@@ -2,6 +2,7 @@ import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api } from "../../convex/_generated/api.js";
+import { decodeCommand } from "../../packages/protocol/src/index.js";
 const modules = {
   "../../convex/machines.ts": () => import("../../convex/machines.js"),
   "../../convex/_generated/server.js": () => import("../../convex/_generated/server.js"),
@@ -149,6 +150,10 @@ test("repository scans are deduplicated across machines and retry on later heart
     (item) => JSON.parse(item.commandJson).type === "job.scan",
   );
   expect(scans).toHaveLength(1);
+  expect(decodeCommand(JSON.parse(scans[0]!.commandJson))).toMatchObject({
+    type: "job.scan",
+    automatic: true,
+  });
   await t.run(async (ctx) => {
     for (const binding of await ctx.db.query("repositoryBindings").collect())
       await ctx.db.patch("repositoryBindings", binding._id, { lastJobScanAt: Date.now() - 600000 });

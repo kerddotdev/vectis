@@ -1,11 +1,10 @@
-import { useEffect, useState } from "react";
-import { Schema } from "effect";
+import { useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
-import { EllipsisIcon, PlayIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
-import { MachineRepositories } from "../../../../../packages/protocol/src/repositories.js";
+import { EllipsisIcon, PlayIcon, PlusIcon } from "lucide-react";
+import type { MachineRepositories } from "../../../../../packages/protocol/src/repositories.js";
 import { GitHubIcon } from "@/components/github-icon";
 import { Hint, Reason } from "@/components/hint";
-import { EmptyState, ExpandableRow, List, Mono, Notice, Page, Section } from "@/components/layout";
+import { EmptyState, ExpandableRow, List, Mono, Page, Section } from "@/components/layout";
 import { OsIcon } from "@/components/os-icon";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,8 +22,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 import { useStateApi } from "@/state";
 import { ConnectRepository } from "./connect-repository";
 import { RepositoryJobs } from "./repository-jobs";
@@ -32,34 +29,16 @@ import { RepositoryJobs } from "./repository-jobs";
 type Binding = MachineRepositories[number];
 
 export function Repositories() {
-  const { perform, submit, snapshot, machineId } = useStateApi();
+  const { submit, snapshot, machineId } = useStateApi();
   const navigate = useNavigate();
   const linked = !!machineId || (!!snapshot?.cloud && snapshot.cloud.state !== "unconfigured");
-  const [repositories, setRepositories] = useState<MachineRepositories | null>(null);
-  const [loading, setLoading] = useState(false);
+  const repositories = snapshot?.repositories ?? null;
   const [starting, setStarting] = useState<string | null>(null);
   const [connecting, setConnecting] = useState(false);
-  const [message, setMessage] = useState("");
-  async function discover() {
-    setLoading(true);
-    try {
-      const result = await perform("repositories");
-      if (result !== undefined)
-        setRepositories(Schema.decodeUnknownSync(MachineRepositories)(result));
-    } catch {
-      setMessage("The service returned an invalid repository report.");
-    } finally {
-      setLoading(false);
-    }
-  }
-  useEffect(() => {
-    if (snapshot && linked) void discover();
-  }, [!!snapshot, linked]);
   async function startRunner(bindingId: string) {
     setStarting(bindingId);
     try {
-      if ((await submit({ type: "runner.run", bindingId })) !== undefined)
-        setMessage("Runner requested. Follow its progress in Overview.");
+      await submit({ type: "runner.run", bindingId });
     } finally {
       setStarting(null);
     }
@@ -77,38 +56,19 @@ export function Repositories() {
       title="Repositories"
       description="Repositories whose jobs run on this machine. Build files stay here."
       actions={
-        <>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label="Refresh repositories"
-                  disabled={loading || !linked}
-                  onClick={() => void discover()}
-                />
-              }
-            >
-              <RefreshCwIcon className={cn(loading && "animate-spin")} />
-            </TooltipTrigger>
-            <TooltipContent>Refresh repositories</TooltipContent>
-          </Tooltip>
-          <Reason reason={!linked && "Connect this Mac to your Vectis account first."}>
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled={!linked}
-              onClick={() => setConnecting(true)}
-            >
-              <PlusIcon />
-              Connect repository
-            </Button>
-          </Reason>
-        </>
+        <Reason reason={!linked && "Connect this Mac to your Vectis account first."}>
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!linked}
+            onClick={() => setConnecting(true)}
+          >
+            <PlusIcon />
+            Connect repository
+          </Button>
+        </Reason>
       }
     >
-      {message && <Notice>{message}</Notice>}
       <Section title="Connected repositories">
         {snapshot && !linked ? (
           <div className="flex flex-col items-center gap-3 rounded-2xl px-6 py-10 text-center ring-1 ring-border ring-inset">
@@ -122,9 +82,7 @@ export function Repositories() {
             </Button>
           </div>
         ) : !repositories ? (
-          <EmptyState>
-            {loading ? "Checking repository access" : "Repositories are unavailable."}
-          </EmptyState>
+          <EmptyState>Checking repository access</EmptyState>
         ) : groups.length === 0 ? (
           <EmptyState>No repositories are connected to this machine.</EmptyState>
         ) : (
@@ -186,16 +144,14 @@ export function Repositories() {
                                 size="sm"
                                 checked={!!binding.automatic}
                                 onCheckedChange={(enabled) =>
-                                  void submit({
-                                    type: "repository.automatic",
-                                    bindingId: binding.id,
-                                    enabled,
-                                  }).then((value) => {
-                                    if (value !== undefined)
-                                      setMessage(
-                                        "Automatic mode change requested. Follow the operation in Overview, then refresh repositories.",
-                                      );
-                                  })
+                                  void submit(
+                                    {
+                                      type: "repository.automatic",
+                                      bindingId: binding.id,
+                                      enabled,
+                                    },
+                                    `Automatic runners ${enabled ? "on" : "off"} for ${first.repositoryName}`,
+                                  )
                                 }
                               />
                             </label>
@@ -234,11 +190,6 @@ export function Repositories() {
                                     void submit({
                                       type: "migration.analyze",
                                       bindingId: binding.id,
-                                    }).then((value) => {
-                                      if (value !== undefined)
-                                        setMessage(
-                                          "Migration analysis requested. The preview appears in Overview.",
-                                        );
                                     })
                                   }
                                 >
@@ -251,11 +202,6 @@ export function Repositories() {
                                     void submit({
                                       type: "repository.disconnect",
                                       bindingId: binding.id,
-                                    }).then((value) => {
-                                      if (value !== undefined)
-                                        setMessage(
-                                          "Disconnection requested. Follow the operation in Overview, then refresh repositories. Running jobs can finish.",
-                                        );
                                     })
                                   }
                                 >
@@ -283,14 +229,7 @@ export function Repositories() {
               Jobs from this repository will run in the environment you choose.
             </DialogDescription>
           </DialogHeader>
-          <ConnectRepository
-            onDone={() => {
-              setConnecting(false);
-              setMessage(
-                "Connection requested. Follow its operation in Overview, then refresh repositories.",
-              );
-            }}
-          />
+          <ConnectRepository onDone={() => setConnecting(false)} />
         </DialogContent>
       </Dialog>
     </Page>

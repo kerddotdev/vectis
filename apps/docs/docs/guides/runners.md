@@ -10,15 +10,15 @@ Every job runs on its own runner in its own VM. Vectis boots a copy of the envir
 Turn on **Automatic** for a connection in **Repositories**, or:
 
 ```sh
-vectis repository enable-auto <binding-id> --wait
-vectis repository disable-auto <binding-id> --wait
+vectis repository enable-auto <binding-id>
+vectis repository disable-auto <binding-id>
 ```
 
 With automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts a runner when it is connected, not paused and idle. A Mac runs one automatic runner at a time; the next job starts after the previous VM is gone.
 
 Before booting a VM, and again before registering the runner, Vectis checks with GitHub that the job is still queued. GitHub may hand the runner a different job with the same labels. If the original job is still waiting after a successful run, Vectis tries again, at most three times. It never retries a failed, interrupted or cancelled runner on its own.
 
-Automatic runners are off until you turn them on, per connection.
+Automatic runners are off until you turn them on, per connection. These CLI commands wait for the setting to be applied without needing `--wait`, and return a nonzero exit code if it fails or needs attention.
 
 ## Manual runners
 

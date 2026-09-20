@@ -12,6 +12,7 @@ export async function configuredRelay(
   local: VectisClient,
   helper: string | undefined,
   onState: (status: CloudStatus) => void,
+  onChange: () => void,
 ) {
   try {
     const contents = await readFile(join(home, "cloud.json"), "utf8").catch((error: unknown) => {
@@ -26,8 +27,12 @@ export async function configuredRelay(
       JSON.parse(contents),
     );
     if (!helper) throw new Error("Keychain helper is not configured.");
-    return startCloudRelay(connection, local, new KeychainCredentials(helper), (state) =>
-      onState({ state }),
+    return startCloudRelay(
+      connection,
+      local,
+      new KeychainCredentials(helper),
+      (state) => onState({ state }),
+      onChange,
     );
   } catch {
     onState({

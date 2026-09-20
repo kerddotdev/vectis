@@ -40,7 +40,6 @@ import { PrepareEnvironment, RegisterEnvironment } from "./prepare-environment";
 export function Environments() {
   const { snapshot, machineId } = useStateApi();
   const [adding, setAdding] = useState(false);
-  const [message, setMessage] = useState("");
   return (
     <Page
       title="Environments"
@@ -53,7 +52,6 @@ export function Environments() {
       }
     >
       {machineId && <Notice>File paths refer to the selected remote machine.</Notice>}
-      {message && <Notice tone="success">{message}</Notice>}
       <Section title="Guest images">
         {!snapshot?.environments.length ? (
           <EmptyState>
@@ -81,20 +79,10 @@ export function Environments() {
               <TabsTrigger value="register">Register existing</TabsTrigger>
             </TabsList>
             <TabsContent value="prepare">
-              <PrepareEnvironment
-                onDone={() => {
-                  setAdding(false);
-                  setMessage("Preparation requested. Follow, cancel or resume it in Overview.");
-                }}
-              />
+              <PrepareEnvironment onDone={() => setAdding(false)} />
             </TabsContent>
             <TabsContent value="register">
-              <RegisterEnvironment
-                onDone={() => {
-                  setAdding(false);
-                  setMessage("Registration requested. The environment appears here when ready.");
-                }}
-              />
+              <RegisterEnvironment onDone={() => setAdding(false)} />
             </TabsContent>
           </Tabs>
         </DialogContent>

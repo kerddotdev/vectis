@@ -212,11 +212,16 @@ else {
             case "logs":
               data = await (await client()).logs();
               break;
-            case "command": {
+            case "command":
+            case "command.settle": {
               const request = Schema.decodeUnknownSync(Request, { onExcessProperty: "error" })(
                 input,
               );
-              data = await (await client()).submit(request.command, request.key);
+              const target = await client();
+              data =
+                action === "command.settle"
+                  ? await target.settle(request.command, request.key)
+                  : await target.submit(request.command, request.key);
               break;
             }
             case "service.install":

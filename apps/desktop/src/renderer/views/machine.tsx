@@ -35,7 +35,7 @@ function useMeasurement<T>(
   action: "storage" | "doctor",
   decode: (value: unknown) => T,
 ) {
-  const { perform, machineId } = useStateApi();
+  const { perform, machineId, snapshot } = useStateApi();
   const key = machineId ?? "local";
   const [report, setReport] = useState<T | null>(() => cache.get(key) ?? null);
   const [pending, setPending] = useState(false);
@@ -55,9 +55,12 @@ function useMeasurement<T>(
       setPending(false);
     }
   }
+  // The probes are expensive, so they follow what they describe rather than every change: a new
+  // environment or a VM that started or stopped.
+  const subject = `${key}:${snapshot?.environments.length ?? 0}:${snapshot?.instances.map((instance) => `${instance.id}:${instance.status}`).join(",") ?? ""}`;
   useEffect(() => {
     void measure();
-  }, []);
+  }, [subject]);
   return { report, pending, error, measure };
 }
 

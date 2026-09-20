@@ -1,7 +1,7 @@
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, test } from "vitest";
+import { afterEach, expect, test, vi } from "vitest";
 import { startService } from "./http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 
@@ -17,6 +17,35 @@ async function fixture() {
   cleanup.push(server.close);
   return { home, server, client: new VectisClient(server.connection) };
 }
+test("an unpaired status snapshot decodes with a stable revision and no repositories", async () => {
+  const { client, server } = await fixture();
+  const snapshot = await client.status();
+  expect(snapshot.revision).toBe(server.service.snapshot().revision);
+  expect(snapshot).not.toHaveProperty("repositories");
+  expect((await client.status()).revision).toBe(snapshot.revision);
+});
+
+test.each([
+  { repositories: [] },
+  {
+    repositories: [
+      {
+        id: "binding1",
+        repositoryId: 1,
+        repositoryName: "owner/repo",
+        environmentId: "linux",
+        automatic: true,
+      },
+    ],
+  },
+])(
+  "a paired status snapshot decodes its cached repositories: $repositories",
+  async ({ repositories }) => {
+    const { client, server } = await fixture();
+    vi.spyOn(server.service, "repositorySnapshot").mockReturnValue(repositories);
+    expect((await client.status()).repositories).toEqual(repositories);
+  },
+);
 test("rejects unauthorized and browser-origin requests without exposing state", async () => {
   const { server } = await fixture();
   expect((await fetch(server.connection.url + "/v1/status")).status).toBe(401);

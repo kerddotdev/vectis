@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { Outlet, useNavigate } from "@tanstack/react-router";
 import { SidebarToggle } from "@/components/layout";
 import { cn } from "@/lib/utils";
 import { useStateApi } from "@/state";
@@ -8,10 +8,8 @@ import { useWindowChrome } from "./window-chrome";
 
 export function AppShell() {
   const { collapsed, fullscreen } = useWindowChrome();
-  const { machineId, dismissError } = useStateApi();
+  const { machineId } = useStateApi();
   const navigate = useNavigate();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  useEffect(() => dismissError(), [pathname]);
   useEffect(
     () =>
       window.vectis?.onWindowEvent((event) => {

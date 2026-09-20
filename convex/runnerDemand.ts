@@ -134,7 +134,7 @@ export async function scheduleJobScan(ctx: MutationCtx, machineId: Id<"machines"
       owner: target.owner,
       machineId,
       key,
-      commandJson: JSON.stringify({ type: "job.scan", bindingId: binding._id }),
+      commandJson: JSON.stringify({ type: "job.scan", bindingId: binding._id, automatic: true }),
       phase: "accepted",
       createdAt: now,
       updatedAt: now,
