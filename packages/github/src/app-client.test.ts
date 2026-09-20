@@ -1,6 +1,6 @@
 import { generateKeyPairSync, verify } from "node:crypto";
 import { afterEach, expect, test, vi } from "vitest";
-import { GitHubAppClient } from "./app-client.js";
+import { GitHubAppClient, GitHubInstallationError } from "./app-client.js";
 const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
 const app = {
   appId: 42,
@@ -74,6 +74,17 @@ test("foreign owners, suspended installations and repository mismatches cannot o
   await expect(new GitHubAppClient(app).repositoryToken(input)).rejects.toThrow(
     "verified repository in the selected installation",
   );
+});
+
+test("a missing installation is reported as one, not as an unexplained failure", async () => {
+  vi.stubGlobal("fetch", async () => new Response("Not Found", { status: 404 }));
+  const failure = await new GitHubAppClient(app)
+    .repositoryToken(input)
+    .then(() => null)
+    .catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(GitHubInstallationError);
+  expect((failure as GitHubInstallationError).code).toBe("github_app_not_installed");
+  expect((failure as Error).message).toContain("test-owner/sandbox");
 });
 
 test("initial repository discovery still issues a token limited to one explicit name", async () => {
