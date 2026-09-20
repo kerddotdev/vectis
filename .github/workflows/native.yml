@@ -18,8 +18,8 @@ concurrency:
 jobs:
   helpers:
     name: helpers
-    # A disposable macOS VM prepared as the "macos" environment, with Xcode installed.
-    runs-on: vectis-macos
+    # A disposable macOS VM prepared as the "macos-26-arm64" environment, with Xcode installed.
+    runs-on: vectis-macos-26-arm64
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -13,7 +13,7 @@ permissions:
 jobs:
   sync:
     name: sync
-    runs-on: vectis-ubuntu
+    runs-on: vectis-ubuntu-24-arm64
     timeout-minutes: 5
     permissions:
       contents: read

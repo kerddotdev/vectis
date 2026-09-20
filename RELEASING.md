@@ -6,10 +6,12 @@ This is the maintainer runbook for CI and releases. Contributors only need [CONT
 
 Vectis runs its own CI. Every workflow targets a Vectis runner on a maintainer's Mac, never a GitHub-hosted runner:
 
-| Label           | Environment                                                                    | Used by                                                                      |
-| --------------- | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| `vectis-ubuntu` | Ubuntu 24.04 environment with the ID `ubuntu`                                  | `check`, `pr-title`, `pr-size`, labels, backend and site deploys, publishing |
-| `vectis-macos`  | macOS 26 environment with the ID `macos`, with Xcode 26 installed in the guest | native helper builds and the signed desktop release                          |
+| Label                    | Environment                                                                             | Used by                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `vectis-ubuntu-24-arm64` | Ubuntu 24.04 environment with the ID `ubuntu-24-arm64`                                  | `check`, `pr-title`, `pr-size`, labels, backend and site deploys, publishing |
+| `vectis-macos-26-arm64`  | macOS 26 environment with the ID `macos-26-arm64`, with Xcode 26 installed in the guest | native helper builds and the signed desktop release                          |
+
+A runner label is always `vectis-` followed by the environment ID, so the CI Mac's environments have to carry exactly these IDs. Changing an ID means changing every `runs-on` in `.github/workflows` and the required checks in the `main` ruleset.
 
 The scheduler starts one automatic runner at a time per Mac, so workflows are few and cancel superseded runs.
 
@@ -17,7 +19,7 @@ The scheduler starts one automatic runner at a time per Mac, so workflows are fe
 
 1. Install a signed production build of Vectis and install its service.
 2. Pair the Mac with the production account, link the `kerddotdev` GitHub account, and install the Vectis GitHub App on `kerddotdev/vectis`.
-3. Prepare the `ubuntu` environment. Prepare the `macos` environment, and while its setup console is open, install Xcode 26 and accept its license in the guest before finishing setup.
+3. Prepare the `ubuntu-24-arm64` environment. Prepare the `macos-26-arm64` environment, and while its setup console is open, install Xcode 26 and accept its license in the guest before finishing setup.
 4. Connect `kerddotdev/vectis` to both environments and turn on automatic runners for both connections.
 5. Push a pull request and confirm `check` runs in the Ubuntu VM.
 
