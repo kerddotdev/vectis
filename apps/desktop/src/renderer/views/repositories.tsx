@@ -29,6 +29,8 @@ import { useStateApi } from "@/state";
 import { ConnectRepository } from "./connect-repository";
 import { RepositoryJobs } from "./repository-jobs";
 
+type Binding = MachineRepositories[number];
+
 export function Repositories() {
   const { perform, submit, snapshot, machineId } = useStateApi();
   const navigate = useNavigate();
@@ -62,6 +64,14 @@ export function Repositories() {
       setStarting(null);
     }
   }
+  // One repository can run on several environments. GitHub sees one repository, so the page does
+  // too, and the environments it runs on live inside it.
+  const grouped = new Map<number, Binding[]>();
+  for (const binding of repositories ?? [])
+    grouped.set(binding.repositoryId, [...(grouped.get(binding.repositoryId) ?? []), binding]);
+  const groups = [...grouped.values()].sort((left, right) =>
+    (left[0]?.repositoryName ?? "").localeCompare(right[0]?.repositoryName ?? ""),
+  );
   return (
     <Page
       title="Repositories"
@@ -115,128 +125,150 @@ export function Repositories() {
           <EmptyState>
             {loading ? "Checking repository access" : "Repositories are unavailable."}
           </EmptyState>
-        ) : repositories.length === 0 ? (
+        ) : groups.length === 0 ? (
           <EmptyState>No repositories are connected to this machine.</EmptyState>
         ) : (
           <List>
-            {repositories.map((repository) => {
-              const environment = snapshot?.environments.find(
-                (item) => item.id === repository.environmentId,
-              );
+            {groups.map((bindings) => {
+              const first = bindings[0];
+              if (!first) return null;
+              const automatic = bindings.filter((binding) => binding.automatic).length;
               return (
                 <ExpandableRow
-                  key={repository.id}
+                  key={first.repositoryId}
                   leading={
                     <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted text-foreground/80">
                       <GitHubIcon className="size-[18px]" />
                     </span>
                   }
-                  title={repository.repositoryName}
+                  title={first.repositoryName}
                   summary={
-                    <span className="inline-flex items-center gap-1.5">
-                      {environment && <OsIcon os={environment.os} className="size-3" />}
-                      Runs in {environment?.name ?? repository.environmentId}
-                      {repository.runsOn && (
-                        <>
-                          {" · runs-on: "}
-                          <Mono>{repository.runsOn}</Mono>
-                        </>
-                      )}
-                    </span>
-                  }
-                  actions={
                     <>
+                      {bindings.length} {bindings.length === 1 ? "environment" : "environments"}
+                      {automatic > 0 && ` · ${automatic} automatic`}
+                    </>
+                  }
+                >
+                  <Section
+                    title="Environments"
+                    hint={
                       <Hint label="About automatic runners">
                         When on, this Mac starts a runner by itself whenever GitHub queues a job for
                         this repository. Failed jobs are never retried automatically.
                       </Hint>
-                      <label className="flex items-center gap-2 pr-1 text-xs text-muted-foreground">
-                        Automatic
-                        <Switch
-                          size="sm"
-                          checked={!!repository.automatic}
-                          onCheckedChange={(enabled) =>
-                            void submit({
-                              type: "repository.automatic",
-                              bindingId: repository.id,
-                              enabled,
-                            }).then((value) => {
-                              if (value !== undefined)
-                                setMessage(
-                                  "Automatic mode change requested. Follow the operation in Overview, then refresh repositories.",
-                                );
-                            })
-                          }
-                        />
-                      </label>
-                      <Reason
-                        reason={
-                          (!snapshot && "The service is not reachable.") ||
-                          (snapshot?.machine.paused &&
-                            "New VMs are paused. Resume them in Overview.")
-                        }
-                      >
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={starting !== null || !snapshot || snapshot.machine.paused}
-                          onClick={() => void startRunner(repository.id)}
-                        >
-                          <PlayIcon />
-                          {starting === repository.id ? "Requesting" : "Start runner"}
-                        </Button>
-                      </Reason>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger
-                          render={
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              aria-label={`${repository.repositoryName} actions`}
-                            />
-                          }
-                        >
-                          <EllipsisIcon />
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-60">
-                          <DropdownMenuItem
-                            onClick={() =>
-                              void submit({
-                                type: "migration.analyze",
-                                bindingId: repository.id,
-                              }).then((value) => {
-                                if (value !== undefined)
-                                  setMessage(
-                                    "Migration analysis requested. The preview appears in Overview.",
-                                  );
-                              })
-                            }
+                    }
+                  >
+                    <div className="flex flex-col divide-y divide-border rounded-xl ring-1 ring-border ring-inset">
+                      {bindings.map((binding) => {
+                        const environment = snapshot?.environments.find(
+                          (item) => item.id === binding.environmentId,
+                        );
+                        return (
+                          <div
+                            key={binding.id}
+                            className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-2.5"
                           >
-                            Analyze workflow migration
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            variant="destructive"
-                            onClick={() =>
-                              void submit({
-                                type: "repository.disconnect",
-                                bindingId: repository.id,
-                              }).then((value) => {
-                                if (value !== undefined)
-                                  setMessage(
-                                    "Disconnection requested. Follow the operation in Overview, then refresh repositories. Running jobs can finish.",
-                                  );
-                              })
-                            }
-                          >
-                            Disconnect repository
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </>
-                  }
-                >
-                  <RepositoryJobs bindingId={repository.id} />
+                            {environment && <OsIcon os={environment.os} className="size-4" />}
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-medium">
+                                {environment?.name ?? binding.environmentId}
+                              </span>
+                              {binding.runsOn && (
+                                <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                                  {"runs-on: "}
+                                  <Mono>{binding.runsOn}</Mono>
+                                </span>
+                              )}
+                            </span>
+                            <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                              Automatic
+                              <Switch
+                                size="sm"
+                                checked={!!binding.automatic}
+                                onCheckedChange={(enabled) =>
+                                  void submit({
+                                    type: "repository.automatic",
+                                    bindingId: binding.id,
+                                    enabled,
+                                  }).then((value) => {
+                                    if (value !== undefined)
+                                      setMessage(
+                                        "Automatic mode change requested. Follow the operation in Overview, then refresh repositories.",
+                                      );
+                                  })
+                                }
+                              />
+                            </label>
+                            <Reason
+                              reason={
+                                (!snapshot && "The service is not reachable.") ||
+                                (snapshot?.machine.paused &&
+                                  "New VMs are paused. Resume them in Overview.")
+                              }
+                            >
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                disabled={starting !== null || !snapshot || snapshot.machine.paused}
+                                onClick={() => void startRunner(binding.id)}
+                              >
+                                <PlayIcon />
+                                {starting === binding.id ? "Requesting" : "Start runner"}
+                              </Button>
+                            </Reason>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    aria-label={`${first.repositoryName} on ${environment?.name ?? binding.environmentId} actions`}
+                                  />
+                                }
+                              >
+                                <EllipsisIcon />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end" className="w-60">
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    void submit({
+                                      type: "migration.analyze",
+                                      bindingId: binding.id,
+                                    }).then((value) => {
+                                      if (value !== undefined)
+                                        setMessage(
+                                          "Migration analysis requested. The preview appears in Overview.",
+                                        );
+                                    })
+                                  }
+                                >
+                                  Analyze workflow migration
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  onClick={() =>
+                                    void submit({
+                                      type: "repository.disconnect",
+                                      bindingId: binding.id,
+                                    }).then((value) => {
+                                      if (value !== undefined)
+                                        setMessage(
+                                          "Disconnection requested. Follow the operation in Overview, then refresh repositories. Running jobs can finish.",
+                                        );
+                                    })
+                                  }
+                                >
+                                  Disconnect from this environment
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Section>
+                  <RepositoryJobs bindingId={first.id} />
                 </ExpandableRow>
               );
             })}
