@@ -41,6 +41,13 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
       scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
       refreshJob: vi.fn(async () => ({
         jobId: 1,
+        runId: 2,
+        name: "Build",
+        workflowName: "CI",
+        htmlUrl: "https://github.com/test/repo/actions/runs/2/job/1",
+        runnerId: null,
+        runnerName: null,
+        updatedAt: 1,
         labels: ["vectis-test"],
         status: "queued" as const,
         conclusion: null,
@@ -142,6 +149,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
       expect(store.snapshot().instances).toHaveLength(1);
       const snapshot = store.snapshot();
       expect(snapshot.activities).toHaveLength(1);
+      expect(snapshot.activities?.[0]?.subject).not.toHaveProperty("actualJob");
       expect(snapshot.activities?.[0]).toMatchObject({
         id: run.id,
         kind: "github",
@@ -149,7 +157,18 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         bindingId: "binding",
         environmentId: "test",
         repository: { id: 1, name: "test/repo" },
-        subject: { type: "runner", requestedJob: { jobId: 1, status: "queued", conclusion: null } },
+        subject: {
+          type: "runner",
+          requestedJob: {
+            jobId: 1,
+            runId: 2,
+            name: "Build",
+            workflowName: "CI",
+            htmlUrl: "https://github.com/test/repo/actions/runs/2/job/1",
+            status: "queued",
+            conclusion: null,
+          },
+        },
       });
       expect(snapshot.operations.find((item) => item.key === `${run.id}:start`)?.activityId).toBe(
         run.id,

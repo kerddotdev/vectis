@@ -18,7 +18,17 @@ test("uncertain publication remains actionable and does not block or duplicate m
       throw new Error("unused");
     },
     scanJobs: async () => ({ runs: 0, jobs: 0, complete: true }),
-    refreshJob: async () => ({ jobId: 1, labels: [], status: "queued", conclusion: null }),
+    refreshJob: async () => ({
+      jobId: 1,
+      runId: 2,
+      name: "Build",
+      runnerId: null,
+      runnerName: null,
+      updatedAt: 1,
+      labels: [],
+      status: "queued",
+      conclusion: null,
+    }),
     repositories: async () => [],
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},

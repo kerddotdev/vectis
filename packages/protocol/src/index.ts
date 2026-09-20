@@ -82,12 +82,18 @@ export const ActivityJob = Schema.Struct({
   jobId: Schema.Int,
   runId: Schema.optional(Schema.Int),
   name: Schema.optional(Schema.String),
+  workflowName: Schema.optional(Schema.String),
+  htmlUrl: Schema.optional(Schema.String),
   status: Schema.optional(Schema.Literals(["queued", "in_progress", "completed"])),
   conclusion: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export const ActivitySubject = Schema.Union([
   Schema.Struct({ type: Schema.Literal("preparation"), setupId: Identifier, os: GuestOS }),
-  Schema.Struct({ type: Schema.Literal("runner"), requestedJob: Schema.optional(ActivityJob) }),
+  Schema.Struct({
+    type: Schema.Literal("runner"),
+    requestedJob: Schema.optional(ActivityJob),
+    actualJob: Schema.optional(ActivityJob),
+  }),
   Schema.Struct({ type: Schema.Literal("command"), command: Schema.NonEmptyString }),
 ]);
 export const ActivityBase = Schema.Struct({

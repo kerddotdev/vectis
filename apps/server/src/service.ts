@@ -21,7 +21,7 @@ import type {
 } from "../../../packages/protocol/src/migrations.js";
 import { matchesRunnerLabels } from "../../../packages/github/src/runner-labels.js";
 import { setTimeout as delay } from "node:timers/promises";
-import type { JobRefresh, JobScan } from "../../../packages/protocol/src/jobs.js";
+import type { JobRefresh, JobScan, JobObservations } from "../../../packages/protocol/src/jobs.js";
 import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
 import type {
   MachineRepositories,
@@ -33,6 +33,7 @@ import { cpus, totalmem } from "node:os";
 import { Schema } from "effect";
 import {
   Command,
+  ActivityJob,
   Environment,
   Preparation,
   VectisError,
@@ -44,6 +45,7 @@ import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { Store } from "./store.js";
 import { activityFor, decidingMember, type ActivityLink } from "./activities.js";
 import { retainActivities } from "./activity-retention.js";
+import { observeRunnerJobs, watchRunnerJobs } from "./runner-job-observations.js";
 
 export class Service {
   private queue: Promise<void> = Promise.resolve();
@@ -51,6 +53,7 @@ export class Service {
   private preparing: string | undefined;
   private tasks = new Map<string, { abort: AbortController; done: Promise<void> }>();
   private retentionTimer: ReturnType<typeof setInterval> | undefined;
+  private stopWatchingJobs: () => void;
   constructor(
     readonly store: Store,
     readonly runtime: VmRuntime,
@@ -68,8 +71,13 @@ export class Service {
     },
     readonly setupCredentials?: SetupCredentials,
     readonly repositorySnapshot: () => MachineRepositories | undefined = () => undefined,
+    watchLeases: (ids: readonly string[]) => void = () => {},
   ) {
     store.recover();
+    this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
+  }
+  observeJobs(observations: JobObservations) {
+    observeRunnerJobs(this.store, observations);
   }
   snapshot(): Snapshot {
     const repositories = this.repositorySnapshot();
@@ -471,11 +479,7 @@ export class Service {
                         subject: {
                           ...base.subject,
                           type: "runner",
-                          requestedJob: {
-                            jobId: job.jobId,
-                            status: job.status,
-                            conclusion: job.conclusion,
-                          },
+                          requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
                         },
                       }));
                       if (job.status !== "queued") return false;
@@ -942,6 +946,7 @@ export class Service {
   }
   async close() {
     this.closing = true;
+    this.stopWatchingJobs();
     if (this.retentionTimer) clearInterval(this.retentionTimer);
     for (const task of this.tasks.values()) task.abort.abort();
     await this.queue;

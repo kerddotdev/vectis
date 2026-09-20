@@ -60,3 +60,24 @@ test("rejects mismatched run identity before saving jobs", async () => {
   ).rejects.toThrow("different workflow");
   expect(saved).toBe(false);
 });
+
+test("scan pages retain optional workflow metadata and accept historical jobs", async () => {
+  const jobs = [
+    job(1, 10),
+    {
+      ...job(2, 10),
+      html_url: "https://github.com/test/repo/actions/runs/10/job/2",
+      workflow_name: "CI",
+    },
+  ];
+  const saved: unknown[] = [];
+  await scanRepositoryJobs(
+    async (path) =>
+      path.includes("/jobs?") ? { total_count: 2, jobs } : { total_count: 0, workflow_runs: [] },
+    async (batch) => {
+      saved.push(...batch);
+    },
+    [10],
+  );
+  expect(saved).toEqual(jobs);
+});

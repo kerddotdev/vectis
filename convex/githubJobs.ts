@@ -6,13 +6,11 @@ import { internal } from "./_generated/api.js";
 import { GitHubAppClient } from "../packages/github/src/app-client.js";
 import { scanRepositoryJobs } from "../packages/github/src/job-scan.js";
 import { GitHubJob } from "../packages/github/src/job.js";
+import type { Job } from "../packages/protocol/src/jobs.js";
 
 export const refresh = action({
   args: { bindingId: v.string(), jobId: v.number() },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ jobId: number; status: string; conclusion: string | null; labels: string[] }> => {
+  handler: async (ctx, args): Promise<Job> => {
     if (!Number.isSafeInteger(args.jobId) || args.jobId <= 0)
       throw new ConvexError({ code: "invalid_job_id" });
     const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
@@ -35,18 +33,12 @@ export const refresh = action({
       await client.request(access.token, `${access.path}/actions/jobs/${args.jobId}`),
     );
     if (job.id !== args.jobId) throw new ConvexError({ code: "job_identity_mismatch" });
-    await ctx.runMutation(internal.jobs.save, {
+    return ctx.runMutation(internal.jobs.save, {
       bindingId: args.bindingId,
       installationId: access.installationId,
       repositoryId: access.repositoryId,
       job: { ...job, labels: [...job.labels] },
     });
-    return {
-      jobId: job.id,
-      status: job.status,
-      conclusion: job.conclusion,
-      labels: [...job.labels],
-    };
   },
 });
 

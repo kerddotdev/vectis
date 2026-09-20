@@ -27,6 +27,7 @@ export class Store {
   readonly db: DatabaseSync;
   readonly startId = randomUUID();
   private changes = 0;
+  private listeners = new Set<() => void>();
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
@@ -69,6 +70,13 @@ export class Store {
   }
   touch() {
     this.changes++;
+    for (const listener of this.listeners) listener();
+  }
+  onChange(listener: () => void) {
+    this.listeners.add(listener);
+    return () => {
+      this.listeners.delete(listener);
+    };
   }
   activityMembers(activityId: string): Operation[] {
     return this.db
