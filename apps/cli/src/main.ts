@@ -169,6 +169,7 @@ Operations
   operation get <id>            Inspect an operation
   operation wait <id>           Wait for an operation's terminal state; on --timeout, print it as it is
   operation cancel <id>         Cancel an active operation, or close one that only waits for you
+  activity cancel <id>          Cancel owned activity work, or close an activity that only waits for you
   command --file <path>         Submit any protocol command as JSON
   version                       Print the Vectis version
 
@@ -203,7 +204,7 @@ Options
 
 Exit codes: 0 success, 1 failure or cancellation, 3 action required or still pending.
 Setting commands always wait: pause/resume, repository enable-auto/disable-auto,
-environment register/configure/remove, instance stop/reconcile, and operation cancel.
+environment register/configure/remove, instance stop/reconcile, operation cancel, and activity cancel.
 Their wait timeout reports wait_cancelled with exit code 3; the operation may still be running.
 Errors are JSON: {"error":{"code","message","nextStep"}}.
 
@@ -508,6 +509,8 @@ Documentation: https://vectis.kerd.dev/docs
     });
   else if (command === "operation" && subcommand === "cancel" && id)
     request = decodeCommand({ type: "operation.cancel", id });
+  else if (command === "activity" && subcommand === "cancel" && id)
+    request = decodeCommand({ type: "activity.cancel", id });
   else if (
     command === "repository" &&
     subcommand === "connect" &&

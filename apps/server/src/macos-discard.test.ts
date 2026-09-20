@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import { Store } from "./store.js";
 import { discardMacInstallation } from "./macos-discard.js";
+import { activityFor } from "./activities.js";
+import { Service } from "./service.js";
+import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "vectis-discard-"));
@@ -45,7 +48,12 @@ async function fixture() {
 test("discard uses immutable disk ownership after a later console attempt and preserves the source", async () => {
   const f = await fixture();
   try {
-    const operation = f.store.accept("install", "install", "environment.install-macos").operation;
+    const operation = f.store.accept(
+      "install",
+      "install",
+      "environment.install-macos",
+      activityFor("install", { type: "environment.resume-macos", id: "setup" }),
+    ).operation;
     f.store.update(operation, { status: "action_required", result: { setupId: "setup" } });
     await expect(discardMacInstallation(f.store, "setup", "wrong")).rejects.toMatchObject({
       code: "confirmation_mismatch",
@@ -53,11 +61,51 @@ test("discard uses immutable disk ownership after a later console attempt and pr
     await discardMacInstallation(f.store, "setup", "mac");
     expect(f.store.get("macInstallation", "setup")).toBeUndefined();
     expect(f.store.get("operation", operation.id)).toMatchObject({ status: "cancelled" });
+    expect(f.store.snapshot().activities?.find((item) => item.id === "setup")?.status).toBe(
+      "cancelled",
+    );
     expect(await readFile(f.record.configuration.restorePath, "utf8")).toBe("keep source");
     await expect(readFile(join(f.directory, "setup.json"))).rejects.toMatchObject({
       code: "ENOENT",
     });
   } finally {
+    await f.close();
+  }
+});
+
+test("a successful discard command cancels only the preparation intent", async () => {
+  const f = await fixture();
+  const service = new Service(f.store, new VmRuntime({ home: f.root }));
+  try {
+    const install = f.store.accept(
+      "install",
+      "install",
+      "environment.install-macos",
+      activityFor("install", { type: "environment.resume-macos", id: "setup" }),
+    ).operation;
+    f.store.update(install, { status: "action_required", result: { setupId: "setup" } });
+    const discard = service.submit("discard", {
+      type: "environment.discard-macos",
+      id: "setup",
+      environmentId: "mac",
+    });
+    await service.drain();
+    const snapshot = service.snapshot();
+    const operation = snapshot.operations.find((item) => item.id === discard.id);
+    expect(operation).toMatchObject({
+      status: "succeeded",
+      activityId: "setup",
+      result: { setupId: "setup" },
+    });
+    expect(snapshot.activities?.find((item) => item.id === "setup")).toMatchObject({
+      status: "cancelled",
+      message: "The unregistered macOS setup was explicitly discarded.",
+      completedAt: operation?.updatedAt,
+    });
+    expect(snapshot.operations.find((item) => item.id === install.id)?.status).toBe("cancelled");
+    expect(await readFile(f.record.configuration.restorePath, "utf8")).toBe("keep source");
+  } finally {
+    await service.close();
     await f.close();
   }
 });

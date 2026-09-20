@@ -2,9 +2,14 @@ import { expect, test } from "vitest";
 import { Store } from "./store.js";
 import { completeMacRegistration } from "./macos-registration.js";
 import type { Environment } from "../../../packages/protocol/src/index.js";
+import { activityFor } from "./activities.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
-test("registration resolves only its own completed setup after SSH is configured", () => {
-  const store = new Store(":memory:");
+test("registration resolves only its own completed setup after SSH is configured", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mac-registration-"));
+  const store = new Store(join(home, "state.sqlite"));
   try {
     store.put("macInstallation", "setup", {
       id: "setup",
@@ -24,7 +29,12 @@ test("registration resolves only its own completed setup after SSH is configured
         restorePath: "/isolated/restore.ipsw",
       },
     });
-    const op = store.accept("install", "install", "environment.install-macos").operation;
+    const op = store.accept(
+      "install",
+      "install",
+      "environment.install-macos",
+      activityFor("install", { type: "environment.resume-macos", id: "setup" }),
+    ).operation;
     store.update(op, { status: "action_required", result: { setupId: "setup" } });
     const other = store.accept("other", "other", "environment.install-macos").operation;
     store.update(other, { status: "action_required", result: { setupId: "other" } });
@@ -51,7 +61,11 @@ test("registration resolves only its own completed setup after SSH is configured
     expect(store.get("operation", op.id)).toMatchObject({ status: "succeeded" });
     expect(store.get("operation", other.id)).toMatchObject({ status: "action_required" });
     expect(store.get("macInstallation", "setup")).toMatchObject({ phase: "registered" });
+    expect(store.snapshot().activities?.find((item) => item.id === "setup")?.status).toBe(
+      "succeeded",
+    );
   } finally {
     store.close();
+    await rm(home, { recursive: true, force: true });
   }
 });

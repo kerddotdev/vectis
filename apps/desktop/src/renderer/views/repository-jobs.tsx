@@ -31,8 +31,8 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
   const [jobId, setJobId] = useState("");
   const [notice, setNotice] = useState<string>();
   // The service raises its revision when GitHub reports something new for this repository, so the
-  // list follows the jobs by itself.
-  const revision = snapshot?.revision;
+  // list follows the jobs by itself. A service too old to report one still moves its operations.
+  const revision = snapshot?.revision ?? `${snapshot?.operations.length ?? 0}`;
   useEffect(() => {
     let cancelled = false;
     const timer = setTimeout(() => {

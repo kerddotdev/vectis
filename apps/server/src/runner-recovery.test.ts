@@ -3,8 +3,21 @@ import { Service } from "./service.js";
 import { Store } from "./store.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
+import { activityFor } from "./activities.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach } from "vitest";
+
+const homes: string[] = [];
+afterEach(async () => {
+  for (const home of homes) await rm(home, { recursive: true, force: true });
+  homes.length = 0;
+});
 
 async function fixture() {
+  const home = await mkdtemp(join(tmpdir(), "vectis-runner-recovery-"));
+  homes.push(home);
   const store = new Store(":memory:");
   const broker = {
     connectRepository: vi.fn(async () => "binding"),
@@ -33,12 +46,14 @@ async function fixture() {
     releaseRunner: vi.fn<RunnerBroker["releaseRunner"]>(async () => {}),
     repositories: async () => [],
   };
-  const service = new Service(
-    store,
-    new VmRuntime({ home: "/unused-isolated-home" }),
-    () => broker,
-  );
-  const interrupted = store.accept("original", "fingerprint", "runner.run").operation;
+  const service = new Service(store, new VmRuntime({ home }), () => broker);
+  const interrupted = store.accept(
+    "original",
+    "fingerprint",
+    "runner.run",
+    activityFor("runner", { type: "runner.run", bindingId: "binding" }),
+    "runner",
+  ).operation;
   store.update(interrupted, {
     status: "action_required",
     result: {
@@ -71,6 +86,10 @@ test("reconciles a lost registration response without preparing another runner",
     );
     expect(broker.prepareRunner).not.toHaveBeenCalled();
     expect(broker.releaseRunner).toHaveBeenCalledWith("lease", expect.any(AbortSignal));
+    expect(store.snapshot().activities?.find((item) => item.id === interrupted.id)?.status).toBe(
+      "cancelled",
+    );
+    expect(store.get("operation", operation.id)).toMatchObject({ activityId: interrupted.id });
   } finally {
     await service.close();
     store.close();

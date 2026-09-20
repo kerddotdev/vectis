@@ -10,11 +10,14 @@ import { executeGuest } from "../../../packages/runner/src/guest.js";
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
 vi.mock("../../../packages/runner/src/guest.js", () => ({ executeGuest: vi.fn() }));
 
-test
-  .skipIf(process.platform !== "darwin" || process.arch !== "arm64")
-  .each(["starting", "listening"] as const)(
-  "a %s runner does not block pause, cancellation or ordered VM cleanup",
-  async (phase) => {
+test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
+  ["starting", "operation.cancel"],
+  ["listening", "operation.cancel"],
+  ["starting", "activity.cancel"],
+  ["listening", "activity.cancel"],
+] as const)(
+  "a %s runner does not block pause, %s or ordered VM cleanup",
+  async (phase, cancelType) => {
     const home = await mkdtemp(join(tmpdir(), "vectis-runner-task-"));
     const store = new Store(":memory:");
     const helper = join(home, "helper");
@@ -38,9 +41,9 @@ test
       scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
       refreshJob: vi.fn(async () => ({
         jobId: 1,
-        labels: [],
-        status: "completed" as const,
-        conclusion: "success",
+        labels: ["vectis-test"],
+        status: "queued" as const,
+        conclusion: null,
       })),
       findRunner: vi.fn(async () => null),
       repositories: async () => [
@@ -105,10 +108,10 @@ test
         phase === "starting"
           ? vi.spyOn(runtime, "validate").mockImplementationOnce(() => pending)
           : undefined;
-      const run = service.submit("run", { type: "runner.run", bindingId: "binding" });
+      const run = service.submit("run", { type: "runner.run", bindingId: "binding", jobId: 1 });
       if (validation) await vi.waitFor(() => expect(validation).toHaveBeenCalledOnce());
       else await vi.waitFor(() => expect(broker.prepareRunner).toHaveBeenCalledOnce());
-      const replay = service.submit("run", { type: "runner.run", bindingId: "binding" });
+      const replay = service.submit("run", { type: "runner.run", bindingId: "binding", jobId: 1 });
       expect(replay.id).toBe(run.id);
       service.submit("pause", { type: "machine.pause", paused: true });
       await service.drain();
@@ -116,7 +119,7 @@ test
       expect(store.snapshot().instances[0]?.status).toBe(
         phase === "starting" ? "interrupted" : "running",
       );
-      service.submit("cancel", { type: "operation.cancel", id: run.id });
+      service.submit("cancel", { type: cancelType, id: run.id });
       if (phase === "starting") {
         await vi.waitFor(() =>
           expect(
@@ -125,7 +128,7 @@ test
               .operations.filter(
                 (item) => item.command === "operation.cancel" && item.status === "succeeded",
               ),
-          ).toHaveLength(2),
+          ).toHaveLength(cancelType === "operation.cancel" ? 2 : 1),
         );
         release();
       }
@@ -137,6 +140,28 @@ test
       expect(broker.prepareRunner).toHaveBeenCalledTimes(phase === "starting" ? 0 : 1);
       expect(broker.releaseRunner).toHaveBeenCalledTimes(phase === "starting" ? 0 : 1);
       expect(store.snapshot().instances).toHaveLength(1);
+      const snapshot = store.snapshot();
+      expect(snapshot.activities).toHaveLength(1);
+      expect(snapshot.activities?.[0]).toMatchObject({
+        id: run.id,
+        kind: "github",
+        status: "cancelled",
+        bindingId: "binding",
+        environmentId: "test",
+        repository: { id: 1, name: "test/repo" },
+        subject: { type: "runner", requestedJob: { jobId: 1, status: "queued", conclusion: null } },
+      });
+      expect(snapshot.operations.find((item) => item.key === `${run.id}:start`)?.activityId).toBe(
+        run.id,
+      );
+      if (phase === "listening")
+        expect(snapshot.operations.find((item) => item.key === `${run.id}:stop`)?.activityId).toBe(
+          run.id,
+        );
+      else
+        expect(
+          snapshot.operations.find((item) => item.key === `${run.id}:cancel-start`)?.activityId,
+        ).toBe(run.id);
     } finally {
       release();
       await service.close();
