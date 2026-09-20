@@ -50,6 +50,14 @@ pnpm exec convex env set VECTIS_GITHUB_APP_NAME "Vectis"
 pnpm exec convex env set CLERK_JWT_ISSUER_DOMAIN https://your-app.clerk.accounts.dev
 ```
 
+4. Add a webhook in Clerk that sends `user.deleted` to `${CONVEX_SITE_URL}/clerk/webhook`, then store its signing secret:
+
+```sh
+pnpm exec convex env set CLERK_WEBHOOK_SECRET whsec_your_signing_secret
+```
+
+Without it, deleting an account inside Clerk would leave its machines and repository connections behind. Vectis verifies every delivery signature and ignores other events.
+
 For production, also turn on bot sign-up protection. Anyone can create an account on a public deployment.
 
 ## 3. Cloudflare Worker

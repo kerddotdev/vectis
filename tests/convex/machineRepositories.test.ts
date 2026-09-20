@@ -24,7 +24,6 @@ async function fixture() {
       owner: "owner",
       localId: "local",
       name: "Mac",
-      revoked: false,
       createdAt: 1,
       environments: [
         { id: "windows", name: "Windows", os: "windows", cpu: 4, memoryMiB: 8192, state: "ready" },

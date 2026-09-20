@@ -18,7 +18,6 @@ test("durable claims reject conflicting reuse and never expose stored JIT creden
       owner: "owner",
       localId: "local",
       name: "Mac",
-      revoked: false,
       createdAt: Date.now(),
       environments: [
         { id: "mac", name: "Mac", os: "macos", cpu: 2, memoryMiB: 4096, state: "ready" },
@@ -88,7 +87,6 @@ test("stored runner configurations are deleted when their lifetime ends", async 
       owner: "owner",
       localId: "local",
       name: "Mac",
-      revoked: false,
       createdAt: Date.now(),
       environments: [
         { id: "mac", name: "Mac", os: "macos", cpu: 2, memoryMiB: 4096, state: "ready" },

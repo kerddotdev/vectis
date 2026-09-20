@@ -23,7 +23,6 @@ export const Machines = Schema.Array(
     id: Identifier,
     name: Schema.String,
     online: Schema.Boolean,
-    revoked: Schema.Boolean,
   }),
 );
 
@@ -105,17 +104,17 @@ export function MachineSwitcher() {
               </DropdownMenuRadioItem>
             )}
             {machines?.map((machine) => (
-              <DropdownMenuRadioItem key={machine.id} value={machine.id} disabled={machine.revoked}>
+              <DropdownMenuRadioItem key={machine.id} value={machine.id}>
                 <span className="flex-1 truncate">{machine.name}</span>
                 <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   <span
                     className={cn(
                       "size-1.5 rounded-full",
-                      machine.online && !machine.revoked ? "bg-success" : "bg-neutral",
+                      machine.online ? "bg-success" : "bg-neutral",
                     )}
                     aria-hidden
                   />
-                  {machine.revoked ? "Revoked" : machine.online ? "Online" : "Offline"}
+                  {machine.online ? "Online" : "Offline"}
                 </span>
               </DropdownMenuRadioItem>
             ))}

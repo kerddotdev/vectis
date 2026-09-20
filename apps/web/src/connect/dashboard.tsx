@@ -1,23 +1,28 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
 import {
   CircleCheckIcon,
+  EllipsisIcon,
   FolderGit2Icon,
   KeyRoundIcon,
   LaptopIcon,
   LayoutGridIcon,
+  UserRoundIcon,
   type LucideIcon,
 } from "lucide-react";
 import { site } from "@vectis/design/site";
 import { api } from "../../../../convex/_generated/api.js";
 import { AccessTab } from "./access.js";
+import { AccountTab } from "./account.js";
 import { GitHubMark, GitHubTab, useLinkGitHub } from "./github.js";
 import { RepositoriesTab } from "./repositories.js";
 import {
+  ActionMenu,
   Button,
   buttonClass,
   Code,
+  Confirm,
   cx,
   Empty,
   Notice,
@@ -38,6 +43,7 @@ const tabs = [
   { id: "github", label: "GitHub", icon: null },
   { id: "repositories", label: "Repositories", icon: FolderGit2Icon },
   { id: "access", label: "Remote access", icon: KeyRoundIcon },
+  { id: "account", label: "Account", icon: UserRoundIcon },
 ] as const satisfies ReadonlyArray<{ id: string; label: string; icon: LucideIcon | null }>;
 export type Tab = (typeof tabs)[number]["id"];
 
@@ -50,7 +56,7 @@ function initialTab(): Tab {
 }
 
 export const online = (machine: Machines[number]) =>
-  !machine.revoked && machine.lastSeenAt !== undefined && Date.now() - machine.lastSeenAt < 90000;
+  machine.lastSeenAt !== undefined && Date.now() - machine.lastSeenAt < 90000;
 
 export function Header({
   title,
@@ -81,9 +87,8 @@ export function Dashboard() {
   useEffect(() => {
     history.replaceState(null, "", tab === "overview" ? "/connect" : `/connect?tab=${tab}`);
   }, [tab]);
-  const activeMachines = machines?.filter((machine) => !machine.revoked);
   const counts: Partial<Record<Tab, number | undefined>> = {
-    machines: activeMachines?.length,
+    machines: machines?.length,
     github: identity?.accounts.length,
     repositories: bindings?.filter((binding) => binding.enabled).length,
     access: controllers?.length,
@@ -112,19 +117,15 @@ export function Dashboard() {
       </nav>
       <div key={tab} className="enter flex min-w-0 flex-col gap-8">
         {tab === "overview" && (
-          <Overview
-            machines={activeMachines}
-            identity={identity}
-            bindings={bindings}
-            onOpen={setTab}
-          />
+          <Overview machines={machines} identity={identity} bindings={bindings} onOpen={setTab} />
         )}
-        {tab === "machines" && <MachinesTab machines={activeMachines} />}
-        {tab === "github" && <GitHubTab identity={identity} />}
+        {tab === "machines" && <MachinesTab machines={machines} />}
+        {tab === "github" && <GitHubTab identity={identity} bindings={bindings} />}
         {tab === "repositories" && (
-          <RepositoriesTab bindings={bindings} identity={identity} machines={activeMachines} />
+          <RepositoriesTab bindings={bindings} identity={identity} machines={machines} />
         )}
         {tab === "access" && <AccessTab controllers={controllers} />}
+        {tab === "account" && <AccountTab />}
       </div>
     </div>
   );
@@ -304,6 +305,8 @@ function Overview({
 }
 
 function MachinesTab({ machines }: { machines: Machines | undefined }) {
+  const remove = useMutation(api.machines.remove);
+  const [removing, setRemoving] = useState<Machines[number] | null>(null);
   return (
     <>
       <Header
@@ -344,6 +347,17 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
                 ) : (
                   <Status tone="neutral">Offline</Status>
                 )}
+                <ActionMenu
+                  label={`Actions for ${machine.name}`}
+                  trigger={<EllipsisIcon className="size-4" />}
+                  items={[
+                    {
+                      label: "Remove this Mac",
+                      danger: true,
+                      onSelect: () => setRemoving(machine),
+                    },
+                  ]}
+                />
               </div>
               <div className="flex flex-col gap-2">
                 <p className="text-[14px] text-muted">Prepared environments</p>
@@ -373,6 +387,17 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
           ))}
         </div>
       )}
+      <Confirm
+        open={removing !== null}
+        onOpenChange={(open) => setRemoving(open ? removing : null)}
+        title={removing ? `Remove ${removing.name}?` : "Remove this Mac"}
+        description="This deletes the Mac, its repository connections and its runner records from your account. The Mac itself keeps its environments and VMs; run vectis cloud disconnect on it, then pair it again whenever you want."
+        phrase="remove"
+        label="Remove Mac"
+        onConfirm={async () => {
+          if (removing) await remove({ id: removing._id });
+        }}
+      />
     </>
   );
 }

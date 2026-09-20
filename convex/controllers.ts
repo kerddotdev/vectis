@@ -141,18 +141,15 @@ export const execute = internalMutation({
           .query("machines")
           .withIndex("by_owner", (q) => q.eq("owner", owner))
           .take(100);
-        return machines.map(
-          ({ _id, localId, name, revoked, lastSeenAt, environments, paused }) => ({
-            id: _id,
-            localId,
-            name,
-            revoked,
-            lastSeenAt: lastSeenAt ?? null,
-            online: !revoked && lastSeenAt !== undefined && Date.now() - lastSeenAt < 90000,
-            environments: environments ?? [],
-            paused: paused ?? false,
-          }),
-        );
+        return machines.map(({ _id, localId, name, lastSeenAt, environments, paused }) => ({
+          id: _id,
+          localId,
+          name,
+          lastSeenAt: lastSeenAt ?? null,
+          online: lastSeenAt !== undefined && Date.now() - lastSeenAt < 90000,
+          environments: environments ?? [],
+          paused: paused ?? false,
+        }));
       }
       case "operation.submit": {
         const machineId = ctx.db.normalizeId("machines", request.machineId);

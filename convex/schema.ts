@@ -44,7 +44,8 @@ export default defineSchema({
   })
     .index("by_request", ["requestDigest"])
     .index("by_owner", ["owner"])
-    .index("by_owner_active", ["owner", "revoked"]),
+    .index("by_owner_active", ["owner", "revoked"])
+    .index("by_expiry", ["expiresAt"]),
   migrationPreviews: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),
@@ -68,7 +69,8 @@ export default defineSchema({
     user: v.optional(verifiedUser),
   })
     .index("by_owner", ["owner"])
-    .index("by_digest", ["digest"]),
+    .index("by_digest", ["digest"])
+    .index("by_expiry", ["expiresAt"]),
   githubAccounts: defineTable({
     owner: v.string(),
     githubId: v.number(),
@@ -116,12 +118,12 @@ export default defineSchema({
     configExpiresAt: v.optional(v.number()),
   })
     .index("by_machine_key", ["machineId", "key"])
-    .index("by_machine_phase", ["machineId", "phase"]),
+    .index("by_machine_phase", ["machineId", "phase"])
+    .index("by_updated", ["updatedAt"]),
   machines: defineTable({
     owner: v.string(),
     localId: v.string(),
     name: v.string(),
-    revoked: v.boolean(),
     credentialVersion: v.optional(v.number()),
     createdAt: v.number(),
     lastSeenAt: v.optional(v.number()),
@@ -140,7 +142,9 @@ export default defineSchema({
     operationId: v.id("operations"),
     attempt: v.number(),
     updatedAt: v.number(),
-  }).index("by_job", ["installationId", "repositoryId", "jobId"]),
+  })
+    .index("by_job", ["installationId", "repositoryId", "jobId"])
+    .index("by_binding", ["bindingId"]),
   githubJobs: defineTable({
     installationId: v.number(),
     repositoryId: v.number(),
@@ -156,7 +160,8 @@ export default defineSchema({
   })
     .index("by_job", ["installationId", "repositoryId", "jobId"])
     .index("by_repository", ["installationId", "repositoryId", "updatedAt"])
-    .index("by_repository_status", ["installationId", "repositoryId", "status", "updatedAt"]),
+    .index("by_repository_status", ["installationId", "repositoryId", "status", "updatedAt"])
+    .index("by_updated", ["updatedAt"]),
   githubDeliveries: defineTable({
     deliveryId: v.string(),
     event: v.string(),
@@ -165,7 +170,9 @@ export default defineSchema({
     installationId: v.optional(v.number()),
     jobId: v.optional(v.number()),
     receivedAt: v.number(),
-  }).index("by_delivery", ["deliveryId"]),
+  })
+    .index("by_delivery", ["deliveryId"])
+    .index("by_received", ["receivedAt"]),
   githubAppSetups: defineTable({
     stateDigest: v.string(),
     ownerId: v.number(),
@@ -210,5 +217,6 @@ export default defineSchema({
     cancelRequested: v.optional(v.boolean()),
   })
     .index("by_owner_key", ["owner", "key"])
-    .index("by_machine_phase", ["machineId", "phase"]),
+    .index("by_machine_phase", ["machineId", "phase"])
+    .index("by_updated", ["updatedAt"]),
 });

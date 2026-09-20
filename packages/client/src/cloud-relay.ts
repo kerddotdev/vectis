@@ -27,6 +27,7 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
               code: Schema.Literals([
                 "public_runner_approval_required",
                 "repository_admin_required",
+                "machine_revoked",
               ]),
               message: Schema.String,
               nextStep: Schema.String,
@@ -41,11 +42,13 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
   });
 }
 
+const removalCodes = ["machine_rejected", "machine_revoked"];
+
 export function startCloudRelay(
   connection: CloudConnection,
   local: VectisClient,
   credentials: Pick<KeychainCredentials, "get">,
-  onState: (state: "connecting" | "connected" | "unavailable") => void,
+  onState: (state: "connecting" | "connected" | "unavailable" | "removed") => void,
 ) {
   const abort = new AbortController();
   const fetchToken = machineTokenFetcher(connection, credentials, abort.signal);
@@ -56,7 +59,20 @@ export function startCloudRelay(
   let tokenRequest: Promise<string | null> | undefined;
   let lastHeartbeat = 0;
   let rerun = false;
-  onState("connecting");
+  let removed = false;
+  let interval: ReturnType<typeof setInterval> | undefined;
+  const report = (state: "connecting" | "connected" | "unavailable" | "removed") => {
+    if (!removed) onState(state);
+  };
+  // A rejected credential means the account no longer has this machine. Retrying cannot fix that,
+  // so the relay stops and the surfaces tell the user to disconnect and pair again.
+  const machineRemoved = () => {
+    if (removed) return;
+    onState("removed");
+    removed = true;
+    if (interval) clearInterval(interval);
+  };
+  report("connecting");
   const authenticate = () => {
     if (refreshing || abort.signal.aborted) return;
     refreshing = true;
@@ -65,8 +81,9 @@ export function startCloudRelay(
         try {
           tokenRequest = fetchToken(options);
           return await tokenRequest;
-        } catch {
-          onState("unavailable");
+        } catch (error) {
+          if (error instanceof VectisError && removalCodes.includes(error.code)) machineRemoved();
+          else report("unavailable");
           return null;
         } finally {
           refreshing = false;
@@ -75,7 +92,7 @@ export function startCloudRelay(
       },
       (value) => {
         authenticated = value;
-        if (!value) onState("unavailable");
+        if (!value) report("unavailable");
         else tick();
       },
     );
@@ -152,10 +169,10 @@ export function startCloudRelay(
         abort.signal,
       );
     }
-    onState(cloud.client.connectionState().isWebSocketConnected ? "connected" : "unavailable");
+    report(cloud.client.connectionState().isWebSocketConnected ? "connected" : "unavailable");
   }
   function tick() {
-    if (abort.signal.aborted) return;
+    if (abort.signal.aborted || removed) return;
     if (!authenticated) {
       authenticate();
       return;
@@ -165,8 +182,9 @@ export function startCloudRelay(
       return;
     }
     active = reconcile()
-      .catch(() => {
-        if (!abort.signal.aborted) onState("unavailable");
+      .catch((error: unknown) => {
+        if (error instanceof VectisError && removalCodes.includes(error.code)) machineRemoved();
+        else if (!abort.signal.aborted) report("unavailable");
       })
       .finally(() => {
         active = undefined;
@@ -176,16 +194,14 @@ export function startCloudRelay(
         }
       });
   }
-  const unsubscribe = cloud.onUpdate(api.operations.pending, {}, tick, () =>
-    onState("unavailable"),
-  );
+  const unsubscribe = cloud.onUpdate(api.operations.pending, {}, tick, () => report("unavailable"));
   const unsubscribeInspections = cloud.onUpdate(api.inspections.pending, {}, tick, () =>
-    onState("unavailable"),
+    report("unavailable"),
   );
   const disconnect = cloud.client.subscribeToConnectionState((state) => {
-    if (!state.isWebSocketConnected) onState("unavailable");
+    if (!state.isWebSocketConnected) report("unavailable");
   });
-  const interval = setInterval(tick, 2000);
+  interval = setInterval(tick, 2000);
   authenticate();
   function requireConnection() {
     if (!authenticated || abort.signal.aborted)
@@ -332,7 +348,7 @@ export function startCloudRelay(
     async close() {
       const pendingToken = tokenRequest;
       abort.abort();
-      clearInterval(interval);
+      if (interval) clearInterval(interval);
       unsubscribe();
       unsubscribeInspections();
       disconnect();

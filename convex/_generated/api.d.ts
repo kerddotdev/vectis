@@ -8,10 +8,13 @@
  * @module
  */
 
+import type * as account from "../account.js";
 import type * as auth from "../auth.js";
+import type * as clerkWebhook from "../clerkWebhook.js";
 import type * as controllerHttp from "../controllerHttp.js";
 import type * as controllers from "../controllers.js";
 import type * as credentials from "../credentials.js";
+import type * as crons from "../crons.js";
 import type * as githubAccess from "../githubAccess.js";
 import type * as githubAppSetup from "../githubAppSetup.js";
 import type * as githubDeliveries from "../githubDeliveries.js";
@@ -35,7 +38,9 @@ import type * as machines from "../machines.js";
 import type * as migrationPreviews from "../migrationPreviews.js";
 import type * as operations from "../operations.js";
 import type * as pairings from "../pairings.js";
+import type * as purge from "../purge.js";
 import type * as repositoryBindings from "../repositoryBindings.js";
+import type * as retention from "../retention.js";
 import type * as runnerDemand from "../runnerDemand.js";
 import type * as runnerLeases from "../runnerLeases.js";
 import type * as site from "../site.js";
@@ -47,10 +52,13 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  account: typeof account;
   auth: typeof auth;
+  clerkWebhook: typeof clerkWebhook;
   controllerHttp: typeof controllerHttp;
   controllers: typeof controllers;
   credentials: typeof credentials;
+  crons: typeof crons;
   githubAccess: typeof githubAccess;
   githubAppSetup: typeof githubAppSetup;
   githubDeliveries: typeof githubDeliveries;
@@ -74,7 +82,9 @@ declare const fullApi: ApiFromModules<{
   migrationPreviews: typeof migrationPreviews;
   operations: typeof operations;
   pairings: typeof pairings;
+  purge: typeof purge;
   repositoryBindings: typeof repositoryBindings;
+  retention: typeof retention;
   runnerDemand: typeof runnerDemand;
   runnerLeases: typeof runnerLeases;
   site: typeof site;

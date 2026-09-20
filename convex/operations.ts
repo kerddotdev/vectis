@@ -18,8 +18,7 @@ export async function submitForOwner(
   args: { machineId: Id<"machines">; key: string; commandJson: string },
 ) {
   const target = await ctx.db.get("machines", args.machineId);
-  if (!target || target.owner !== owner || target.revoked)
-    throw new ConvexError({ code: "machine_unavailable" });
+  if (!target || target.owner !== owner) throw new ConvexError({ code: "machine_unavailable" });
   if (!args.key || args.key.length > 200 || args.commandJson.length > 65536)
     throw new ConvexError({ code: "invalid_request" });
   let commandJson: string;

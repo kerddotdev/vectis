@@ -47,7 +47,12 @@ export function machineTokenFetcher(
       redirect: "error",
       signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
     });
-    if (response.status === 401) return null;
+    if (response.status === 401)
+      throw new VectisError(
+        "machine_rejected",
+        "This machine is no longer connected to the account.",
+        "Run vectis cloud disconnect on this Mac, then pair it again.",
+      );
     if (!response.ok)
       throw new VectisError(
         "cloud_unavailable",

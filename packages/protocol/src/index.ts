@@ -104,7 +104,7 @@ export const Instance = Schema.Struct({
 });
 export type Instance = typeof Instance.Type;
 export const CloudStatus = Schema.Struct({
-  state: Schema.Literals(["unconfigured", "connecting", "connected", "unavailable"]),
+  state: Schema.Literals(["unconfigured", "connecting", "connected", "unavailable", "removed"]),
   message: Schema.optional(Schema.String),
 });
 export type CloudStatus = typeof CloudStatus.Type;

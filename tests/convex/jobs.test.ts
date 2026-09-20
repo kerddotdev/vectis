@@ -15,7 +15,6 @@ test("job discovery is bound to the machine, repository, installation and curren
       owner: "owner",
       localId: "local",
       name: "Mac",
-      revoked: false,
       createdAt: 1,
     });
     const accountId = await ctx.db.insert("githubAccounts", {

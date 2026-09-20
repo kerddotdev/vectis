@@ -165,7 +165,7 @@ test("human, foreign and revoked identities cannot obtain machine grants", async
     credentialVersion: 0,
   });
   await expect(foreign.action(api.githubRunners.prepare, args)).rejects.toThrow();
-  await owner.mutation(api.machines.revoke, { id: machineId });
+  await owner.mutation(api.machines.remove, { id: machineId });
   await expect(device.action(api.githubRunners.prepare, args)).rejects.toThrow();
   expect(fetch).not.toHaveBeenCalled();
 });

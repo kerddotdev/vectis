@@ -57,7 +57,7 @@ test("polling requires the local secret and revocation invalidates a successful 
     t.fetch("/machine/pairing", { method: "POST", body: JSON.stringify({ secret: value }) });
   expect(await (await poll("z".repeat(43))).json()).toEqual({ state: "pending" });
   expect(await (await poll(secret)).json()).toEqual({ machineId, localId: "local" });
-  await owner.mutation(api.machines.revoke, { id: machineId });
+  await owner.mutation(api.machines.remove, { id: machineId });
   expect(await (await poll(secret)).json()).toEqual({ state: "pending" });
 });
 

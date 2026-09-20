@@ -36,7 +36,6 @@ export const approve = mutation({
         previous.owner !== owner ||
         previous.expiresAt !== args.expiresAt ||
         !machine ||
-        machine.revoked ||
         machine.localId !== args.localId ||
         machine.name !== args.name ||
         credential?.digest !== args.credentialDigest
@@ -66,7 +65,6 @@ export const approve = mutation({
       owner,
       localId: args.localId,
       name: args.name,
-      revoked: false,
       credentialVersion: 1,
       createdAt: Date.now(),
     });
@@ -95,8 +93,7 @@ export const resolve = internalQuery({
       .unique();
     if (!pairing || pairing.expiresAt <= Date.now()) return null;
     const machine = await ctx.db.get("machines", pairing.machineId);
-    if (!machine || machine.revoked || machine.credentialVersion !== pairing.credentialVersion)
-      return null;
+    if (!machine || machine.credentialVersion !== pairing.credentialVersion) return null;
     return { machineId: machine._id, localId: machine.localId };
   },
 });

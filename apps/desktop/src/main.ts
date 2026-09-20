@@ -9,7 +9,11 @@ import { Request, VectisError } from "../../../packages/protocol/src/index.js";
 import { localClient } from "../../../packages/client/src/local.js";
 import { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
-import { beginPairing, finishPairing } from "../../../packages/client/src/pairing.js";
+import {
+  beginPairing,
+  disconnectPairing,
+  finishPairing,
+} from "../../../packages/client/src/pairing.js";
 import { githubConnection } from "../../../packages/client/src/github.js";
 import { controllerClient } from "../../../packages/client/src/controller.js";
 import {
@@ -264,7 +268,8 @@ else {
               break;
             }
             case "cloud.pair":
-            case "cloud.finish": {
+            case "cloud.finish":
+            case "cloud.disconnect": {
               const helper = process.env.VECTIS_KEYCHAIN_HELPER;
               if (!helper)
                 throw new VectisError(
@@ -276,7 +281,8 @@ else {
                 const pairing = await beginPairing(home, cloudDeployment(), credentials);
                 await shell.openExternal(pairing.url);
                 data = { state: pairing.state, verificationCode: pairing.verificationCode };
-              } else data = await finishPairing(home, credentials);
+              } else if (action === "cloud.finish") data = await finishPairing(home, credentials);
+              else data = await disconnectPairing(home, credentials);
               break;
             }
             case "open.pull":

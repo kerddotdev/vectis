@@ -2,7 +2,7 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, expect, test, vi } from "vitest";
-import { beginPairing, finishPairing } from "./pairing.js";
+import { beginPairing, disconnectPairing, finishPairing } from "./pairing.js";
 import { startService } from "../../../apps/server/src/http.js";
 
 const cloud = { convexUrl: "https://pairing-test.convex.cloud", webUrl: "https://vectis.test" };
@@ -56,6 +56,13 @@ test("pairing retries preserve the local secret and approval links never contain
     expect(await readFile(join(home, "cloud.json"), "utf8")).not.toContain("test-token");
     expect(service.store.snapshot().machine.id).toBe(descriptor.localId);
     await expect(readFile(join(home, "pairing.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await disconnectPairing(home, credentials)).toMatchObject({ state: "disconnected" });
+    expect(stored.size).toBe(0);
+    await expect(readFile(join(home, "cloud.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(disconnectPairing(home, credentials)).rejects.toMatchObject({
+      code: "cloud_unconfigured",
+    });
+    expect((await beginPairing(home, cloud, credentials)).state).toBe("action_required");
   } finally {
     await service.close();
     await rm(home, { recursive: true, force: true });

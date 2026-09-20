@@ -218,3 +218,23 @@ export async function finishPairing(
     cloud: (await api.status(signal)).cloud,
   };
 }
+
+// Clearing the local side of a pairing. The cloud record is removed by its owner on the account
+// page; this frees the Mac to pair again, and is also the way out when the record is already gone.
+export async function disconnectPairing(home: string, credentials: Credentials) {
+  const contents = await readFile(join(home, "cloud.json"), "utf8").catch((error: unknown) => {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (contents === null)
+    throw new VectisError(
+      "cloud_unconfigured",
+      "This machine has no cloud connection to disconnect.",
+    );
+  const connection = Schema.decodeUnknownSync(CloudConnection)(JSON.parse(contents));
+  await credentials.remove(credentialAccount(connection));
+  await rm(join(home, "cloud.json"), { force: true });
+  await rm(join(home, "pairing.json"), { force: true });
+  await (await localClient(home)).reloadCloud();
+  return { state: "disconnected", machineId: connection.machineId };
+}

@@ -34,7 +34,6 @@ async function fixture() {
       owner: "owner",
       localId: "local",
       name: "Mac",
-      revoked: false,
       createdAt: 1,
       environments: [
         {
@@ -137,7 +136,7 @@ test("preview reads and writes recheck ownership, expiry and machine revocation"
   ).rejects.toThrow();
   await t.run(async (ctx) => ctx.db.patch("migrationPreviews", previewId, { expiresAt: 1 }));
   await expect(device.query(internal.migrationPreviews.owned, { previewId })).rejects.toThrow();
-  await t.run(async (ctx) => ctx.db.patch("machines", machineId, { revoked: true }));
+  await t.run(async (ctx) => ctx.db.delete("machines", machineId));
   await expect(device.mutation(internal.migrationPreviews.save, args)).rejects.toThrow();
 });
 
