@@ -19,6 +19,16 @@ Use **Environments > Prepare a guest image**, with **Ubuntu 24.04 ARM64** select
 
 The service downloads a pinned official Ubuntu QCOW2 image, checks its exact size and SHA-256, converts it to a bootable raw disk, and performs guest configuration locally. The source revision is recorded beside the completed image. Installed package versions are available inside the guest at `/etc/vectis/toolchain-versions.txt`. No host home directory, Docker socket or GitHub App key is shared with the guest.
 
+## What the image contains
+
+A prepared image is a runner host, not a copy of a GitHub-hosted runner. GitHub's images carry hundreds of preinstalled tools and tens of gigabytes; Vectis instead gives a workflow what it needs to install its own toolchain at job time:
+
+- Git, Docker, OpenSSH and the official runner's dependencies.
+- The archive tools and certificates setup actions use: `tar`, `gzip`, `xz-utils`, `zip`, `unzip`, `zstd`, `ca-certificates`, `jq`, `curl`, `rsync`.
+- The shared libraries prebuilt toolchains link against, including `libatomic1`, `libicu`, `libssl`, `libstdc++` and `zlib`.
+
+So `actions/setup-node`, `actions/setup-python`, `actions/setup-java`, `pnpm/action-setup`, `actions/cache` and similar actions work. A job that expects a preinstalled compiler, database or cloud CLI has to install it in a step, or run it in a container, because every VM starts from the same base image and nothing a job installs survives it. The base image cannot be customized yet.
+
 ## Cancel and resume
 
 ```sh

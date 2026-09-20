@@ -33,9 +33,10 @@ trap 'poweroff' EXIT
 test "$(uname -m)" = aarch64
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-# libatomic1 is missing from the Ubuntu cloud image but present on GitHub-hosted runners, and
-# prebuilt tools that setup actions download, pnpm among them, fail to start without it.
-apt-get install -y curl git openssh-server docker.io libatomic1
+# The image guarantees a runner host, not a toolchain: setup actions download what a workflow
+# needs, so the guest has to provide what those downloads need. Everything else on that list is
+# already in the Ubuntu cloud image; these three are not, and GitHub-hosted runners have them.
+apt-get install -y curl git openssh-server docker.io libatomic1 unzip zip
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
