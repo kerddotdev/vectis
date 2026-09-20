@@ -14,7 +14,7 @@ concurrency:
 jobs:
   preflight:
     name: preflight
-    runs-on: vectis-ubuntu-24-arm64
+    runs-on: vectis-ubuntu
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,7 +33,7 @@ jobs:
   backend:
     name: backend
     needs: check
-    runs-on: vectis-ubuntu-24-arm64
+    runs-on: vectis-ubuntu
     timeout-minutes: 15
     # Deployed before the apps so released clients never reach an older backend.
     environment: production
@@ -110,7 +110,7 @@ jobs:
   publish:
     name: publish
     needs: desktop
-    runs-on: vectis-ubuntu-24-arm64
+    runs-on: vectis-ubuntu
     timeout-minutes: 10
     permissions:
       contents: write
