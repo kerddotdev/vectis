@@ -20,12 +20,21 @@ function setup(store: Store, id: string) {
   if (!value) throw new VectisError("setup_missing", "This macOS installation was not found.");
   return Schema.decodeUnknownSync(MacInstallationRecord)(value);
 }
+// Reported as one pipe-separated line so a guest without developer tools still answers: every one
+// of these commands exists on a bare macOS as an xcrun shim and fails when nothing backs it.
+export const macToolchainProbe =
+  "developer=$(/usr/bin/xcode-select -p 2>/dev/null || true)\n" +
+  "git=$(/usr/bin/git --version 2>/dev/null || true)\n" +
+  "clang=$(/usr/bin/clang --version 2>/dev/null | /usr/bin/head -1 || true)\n" +
+  "swift=$(/usr/bin/swift --version 2>/dev/null | /usr/bin/head -1 || true)\n" +
+  'printf \'%s|%s|%s|%s\\n\' "${developer:-none}" "${git:-none}" "${clang:-none}" "${swift:-none}"';
+
 export function verifyMacSetupOutput(output: string) {
   const lines = output
     .trim()
     .split("\n")
     .map((line) => line.trim());
-  if (lines.length !== 3 || !lines[2]?.startsWith("26."))
+  if (lines.length !== 4 || !lines[2]?.startsWith("26."))
     throw new VectisError("guest_os_version", "This setup requires a macOS 26 guest.");
   verifyGuestReadiness(lines[0] ?? "");
   if (lines[1] !== "FileVault is Off.")
@@ -34,6 +43,18 @@ export function verifyMacSetupOutput(output: string) {
       "Guest FileVault prevents unattended clone startup.",
       "Disable FileVault inside this CI guest, wait for decryption, then verify again. Do not change host encryption.",
     );
+  const [developer = "none", git = "none", clang = "none", swift = "none"] = (lines[3] ?? "").split(
+    "|",
+  );
+  // Without a developer directory there is no git, so actions/checkout cannot run and almost no
+  // workflow would get past its first step.
+  if (developer === "none" || !git.startsWith("git version"))
+    throw new VectisError(
+      "guest_developer_tools",
+      "The guest has no developer toolchain, so git is unavailable to jobs.",
+      "In the guest's setup console, run xcode-select --install for the Command Line Tools, or install Xcode and open it once to accept its license, then verify again.",
+    );
+  return { developer, git, clang, swift };
 }
 export async function startMacGuestAccess(
   store: Store,
@@ -117,7 +138,8 @@ export async function startMacGuestAccess(
     }
     const result = await executeGuest(
       connection,
-      'set -eu\nprintf \'%s %s\\n\' "$(uname -m)" "$(date -u +%s)"\n/usr/bin/fdesetup status\n/usr/bin/sw_vers -productVersion',
+      'set -eu\nprintf \'%s %s\\n\' "$(uname -m)" "$(date -u +%s)"\n/usr/bin/fdesetup status\n/usr/bin/sw_vers -productVersion\n' +
+        macToolchainProbe,
       { signal },
     );
     if (result.exitCode !== 0)
@@ -126,7 +148,7 @@ export async function startMacGuestAccess(
         "The guest readiness commands did not complete.",
         "Complete guest SSH enrollment and inspect guest settings before retrying.",
       );
-    verifyMacSetupOutput(result.stdout);
+    const toolchain = verifyMacSetupOutput(result.stdout);
     const current = setup(store, record.id);
     if (current.phase !== "setup_running" || current.attemptId !== record.attemptId)
       throw new VectisError(
@@ -136,10 +158,12 @@ export async function startMacGuestAccess(
     store.put("macInstallation", record.id, { ...current, sshVerifiedAttempt: record.attemptId });
     store.update(operation, {
       status: "action_required",
-      message: "Guest SSH, macOS version, architecture, clock and FileVault state verified.",
+      message:
+        "Guest SSH, macOS version, architecture, clock, FileVault state and developer toolchain verified.",
       result: {
         setupId: record.id,
         phase: "ssh_verified",
+        toolchain,
         nextStep:
           "Shut down the guest from its Apple menu, then finish macOS setup in Vectis. The environment is not registered yet.",
       },
