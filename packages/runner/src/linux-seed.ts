@@ -33,7 +33,10 @@ trap 'poweroff' EXIT
 test "$(uname -m)" = aarch64
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y curl git openssh-server docker.io
+# The image guarantees a runner host, not a toolchain: setup actions download what a workflow
+# needs, so the guest has to provide what those downloads need. Everything else on that list is
+# already in the Ubuntu cloud image; these three are not, and GitHub-hosted runners have them.
+apt-get install -y curl git openssh-server docker.io libatomic1 unzip zip
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
