@@ -29,6 +29,18 @@ The app shows the same in **Overview** and the service log in **Diagnostics**. `
 
 An operation that stays in **Needs you** after you have read it, usually because the service restarted before it finished, can be closed with **Dismiss** in the app or `vectis operation cancel <operation-id>`. It ends as `cancelled` and nothing else changes. Two cases keep their own way out instead: an interrupted runner is closed by `vectis runner reconcile <operation-id>` once its VM is confirmed stopped, and an image preparation by resuming or discarding the setup.
 
+## A job fails because a tool is missing in the guest
+
+A prepared environment is a runner host, not a copy of a GitHub-hosted runner. It provides what a workflow needs to install its own toolchain: git, Docker, archive tools, a C and C++ toolchain and the libraries prebuilt binaries link against. Language runtimes, databases, browsers and cloud CLIs are not there. Each guide lists what its guest contains: [Linux](/docs/guides/linux-setup#what-the-image-contains), [macOS](/docs/guides/macos-setup#what-the-guest-contains), [Windows](/docs/guides/windows-setup#what-the-guest-contains).
+
+Three ways out, in the order worth trying:
+
+1. Use the matching `actions/setup-*` action. That is how hosted runners get their toolchains too.
+2. Install it in a step. On Linux, `sudo apt-get install -y <package>` works without an `apt-get update` first.
+3. Run the job in a container with `container:` in the workflow. The Linux guest runs Docker, so a job can bring a complete image of its own.
+
+Nothing a job installs survives it: every VM is a fresh clone of the base image. On Linux the exact contents are in the guest at `/etc/vectis/toolchain-versions.txt`, on Windows at `C:\ProgramData\Vectis\toolchain.json`.
+
 ## The Mac says it was removed from its account
 
 `vectis status --json` reports `cloud.state` as `removed`, and the app shows "Removed from account". Someone deleted this Mac on the account page, so its credential no longer works and Vectis stops retrying. Nothing local is lost.

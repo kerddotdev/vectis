@@ -53,7 +53,13 @@ The service creates a dedicated disk, UEFI variables, TPM state and setup identi
 
 The recipe creates a local `vectis` account, disables automatic login after bootstrap, installs OpenSSH Server, restricts guest SSH to the QEMU host address and uses dedicated pinned keys. It does not share host directories or credentials with the guest. Windows setup and OpenSSH installation can require internet access.
 
-The service reports success only after checking guest ARM64 architecture, clock synchronization and the setup marker over SSH, then observing a completed guest shutdown. It removes temporary setup media after completion. A successful setup registers the base environment; connecting a repository and observing its first Actions job are separate steps. Additional build tools are not implicitly installed.
+The service reports success only after checking guest ARM64 architecture, clock synchronization and the setup marker over SSH, then observing a completed guest shutdown. It removes temporary setup media after completion. A successful setup registers the base environment; connecting a repository and observing its first Actions job are separate steps.
+
+## What the guest contains
+
+Windows installs unattended from start to finish, so nobody is ever inside the guest to add anything by hand. Preparation therefore installs one thing a workflow cannot do without: Git. It downloads the pinned MinGit ARM64 build published by Git for Windows, the same portable build GitHub's own runner images use, verifies its SHA-256, unpacks it into `C:\Program Files\Git` and puts it on the machine `Path`. Without it `actions/checkout` has no `git`. The installed version is recorded in the guest at `C:\ProgramData\Vectis\toolchain.json` together with the Windows build.
+
+Everything else comes from the workflow. Windows 11 provides PowerShell, `curl` and `tar`; `actions/setup-*` actions download their own toolchains at job time; build tools, SDKs and package managers are a job's own step. Nothing a job installs survives it, because every VM starts from the same base image.
 
 ## Interruption and recovery
 
