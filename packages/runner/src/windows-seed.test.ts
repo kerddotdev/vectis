@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { windowsSeed } from "./windows-seed.js";
+import { windowsGit, windowsSeed } from "./windows-seed.js";
 
 const configuration = {
   id: "isolated-setup",
@@ -13,6 +13,17 @@ test("Windows answer media requires explicit license acceptance and safe script 
   expect(() => windowsSeed({ ...configuration, id: "'; Invoke-Expression '" })).toThrow();
   expect(() => windowsSeed({ ...configuration, password: "short" })).toThrow();
   expect(() => windowsSeed({ ...configuration, imageName: "Windows\u0000Pro" })).toThrow();
+});
+
+test("guest git is checked against its pinned hash before anything uses it", () => {
+  const { script } = windowsSeed(configuration);
+  const download = script.indexOf(windowsGit.url);
+  const verify = script.indexOf(windowsGit.sha256);
+  const use = script.indexOf("git.exe");
+  expect(download).toBeGreaterThan(-1);
+  expect(verify).toBeGreaterThan(download);
+  expect(use).toBeGreaterThan(verify);
+  expect(script).toContain("throw 'Git checksum mismatch'");
 });
 
 test("answer-file values cannot inject XML or leak the password into the bootstrap script", () => {
