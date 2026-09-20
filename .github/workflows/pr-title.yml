@@ -14,7 +14,7 @@ concurrency:
 jobs:
   pr-title:
     name: pr-title
-    runs-on: vectis-ubuntu
+    runs-on: vectis-ubuntu-24-arm64
     timeout-minutes: 5
     steps:
       # Reads only event data. Never check out or run code from the pull request here.

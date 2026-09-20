@@ -14,7 +14,7 @@ concurrency:
 jobs:
   preflight:
     name: preflight
-    runs-on: vectis-ubuntu
+    runs-on: vectis-ubuntu-24-arm64
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,7 +33,7 @@ jobs:
   backend:
     name: backend
     needs: check
-    runs-on: vectis-ubuntu
+    runs-on: vectis-ubuntu-24-arm64
     timeout-minutes: 15
     # Deployed before the apps so released clients never reach an older backend.
     environment: production
@@ -53,7 +53,7 @@ jobs:
     name: desktop
     needs: backend
     # A disposable macOS VM with Xcode. Signing material exists only inside this job's VM.
-    runs-on: vectis-macos
+    runs-on: vectis-macos-26-arm64
     timeout-minutes: 120
     environment: release
     env:
@@ -110,7 +110,7 @@ jobs:
   publish:
     name: publish
     needs: desktop
-    runs-on: vectis-ubuntu
+    runs-on: vectis-ubuntu-24-arm64
     timeout-minutes: 10
     permissions:
       contents: write

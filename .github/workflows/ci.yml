@@ -16,8 +16,8 @@ concurrency:
 jobs:
   check:
     name: check
-    # Vectis runs its own CI: a disposable Ubuntu VM prepared as the "ubuntu" environment.
-    runs-on: vectis-ubuntu
+    # Vectis runs its own CI: a disposable Ubuntu VM prepared as the "ubuntu-24-arm64" environment.
+    runs-on: vectis-ubuntu-24-arm64
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

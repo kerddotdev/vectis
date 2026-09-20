@@ -14,7 +14,7 @@ concurrency:
 jobs:
   deploy:
     name: deploy
-    runs-on: vectis-ubuntu
+    runs-on: vectis-ubuntu-24-arm64
     timeout-minutes: 30
     environment: production
     steps:
