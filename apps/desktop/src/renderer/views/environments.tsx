@@ -116,7 +116,7 @@ function EnvironmentRow({ environment }: { environment: Environment }) {
           <Reason
             reason={
               environment.state !== "ready" &&
-              "Finish preparing this environment first. Its next step is in Overview."
+              "Finish preparing this environment first. Its next step is in Activity."
             }
           >
             <Button

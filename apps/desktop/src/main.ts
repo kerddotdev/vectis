@@ -290,6 +290,19 @@ else {
               else data = await disconnectPairing(home, credentials);
               break;
             }
+            case "open.url":
+              // Only a GitHub page, and only one the service reported: a job link is data that
+              // came from the cloud, not something the window may open freely.
+              if (
+                typeof input !== "string" ||
+                !/^https:\/\/github\.com\/[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+\/[A-Za-z0-9/_.-]*$/.test(
+                  input,
+                )
+              )
+                throw new VectisError("invalid_url", "Expected a GitHub URL.");
+              await shell.openExternal(input);
+              data = null;
+              break;
             case "open.pull":
               if (
                 typeof input !== "string" ||
@@ -351,6 +364,7 @@ else {
     }
     const destinations: ReadonlyArray<{ label: string; route: Route }> = [
       { label: "Overview", route: "/" },
+      { label: "Activity", route: "/activities" },
       { label: "Environments", route: "/environments" },
       { label: "Repositories", route: "/repositories" },
       { label: "Connections", route: "/connections" },

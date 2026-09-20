@@ -26,6 +26,7 @@ export type DesktopAction =
   | "cloud.finish"
   | "cloud.disconnect"
   | "open.pull"
+  | "open.url"
   | "open.docs"
   | "open.github"
   | "cli.status"

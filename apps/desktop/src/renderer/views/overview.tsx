@@ -1,22 +1,11 @@
-import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { CircleStopIcon, EllipsisIcon, PauseIcon, PlayIcon } from "lucide-react";
-import type { Instance, Operation } from "../../../../../packages/protocol/src/index.js";
-import {
-  Details,
-  EmptyState,
-  ExpandableRow,
-  List,
-  Mono,
-  Notice,
-  Page,
-  Row,
-  Section,
-  StatCard,
-  usePages,
-} from "@/components/layout";
+import type { Instance } from "../../../../../packages/protocol/src/index.js";
+import { ActivityRow } from "@/components/activity-row";
+import { EmptyState, List, Notice, Page, Row, Section, StatCard } from "@/components/layout";
 import { Reason } from "@/components/hint";
 import { OsTile } from "@/components/os-icon";
-import { InstanceStatus, OperationStatus } from "@/components/status";
+import { InstanceStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -25,19 +14,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatDateTime, formatRelative } from "@/lib/format";
-import { cancellableCommands, commandLabels, preparationCommands } from "@/lib/operations";
-import { MigrationResult } from "@/views/migration-result";
-import { PreparationResult } from "@/views/preparation-result";
+import { formatRelative } from "@/lib/format";
 import { useStateApi } from "@/state";
-
-const filters = {
-  all: () => true,
-  active: (operation: Operation) => ["accepted", "running"].includes(operation.status),
-  failed: (operation: Operation) => ["failed", "cancelled"].includes(operation.status),
-} as const;
 
 const cloudLabels = {
   connected: "Cloud connected",
@@ -49,15 +28,14 @@ const cloudLabels = {
 
 export function Overview() {
   const { snapshot, submit, perform, machineId } = useStateApi();
-  const [filter, setFilter] = useState<keyof typeof filters>("all");
+  const navigate = useNavigate();
   const paused = snapshot?.machine.paused;
-  const operations = snapshot?.operations ?? [];
-  const attention = operations.filter((operation) => operation.status === "action_required");
-  const active = operations.filter(filters.active);
-  const history = operations.filter(
-    (operation) => operation.status !== "action_required" && filters[filter](operation),
-  );
-  const { items, pager, reset } = usePages(history, 8);
+  const activities = snapshot?.activities ?? [];
+  const attention = activities.filter((activity) => activity.status === "action_required");
+  const active = activities.filter((activity) => ["accepted", "running"].includes(activity.status));
+  const recentActivity = activities
+    .filter((activity) => activity.status !== "action_required")
+    .slice(0, 8);
   const instances = snapshot?.instances ?? [];
   const running = instances.filter((instance) => instance.status === "running");
   const interrupted = instances.filter((instance) => instance.status === "interrupted");
@@ -151,7 +129,7 @@ export function Overview() {
           }
         />
         <StatCard
-          label="Operations"
+          label="Activity"
           value={active.length + attention.length}
           tone={attention.length ? "attention" : active.length ? "running" : undefined}
           detail={
@@ -182,54 +160,30 @@ export function Overview() {
         </Notice>
       )}
       {attention.length > 0 && (
-        <Section
-          title="Needs you"
-          description="These operations are paused until you finish a step."
-        >
+        <Section title="Needs you" description="These are paused until you finish a step.">
           <List>
-            {attention.map((operation) => (
-              <OperationRow key={operation.id} operation={operation} defaultOpen />
+            {attention.map((activity) => (
+              <ActivityRow key={activity.id} activity={activity} defaultOpen />
             ))}
           </List>
         </Section>
       )}
       <div className="grid items-start gap-10 @4xl:grid-cols-[minmax(0,1fr)_320px] @4xl:gap-8">
         <Section
-          title="Operations"
+          title="Recent activity"
           actions={
-            <Tabs
-              value={filter}
-              onValueChange={(value: keyof typeof filters) => {
-                setFilter(value);
-                reset();
-              }}
-            >
-              <TabsList className="group-data-horizontal/tabs:h-7">
-                <TabsTrigger value="all" className="px-2.5 text-xs">
-                  All
-                </TabsTrigger>
-                <TabsTrigger value="active" className="px-2.5 text-xs">
-                  Active
-                </TabsTrigger>
-                <TabsTrigger value="failed" className="px-2.5 text-xs">
-                  Failed
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <Button variant="ghost" size="sm" onClick={() => void navigate({ to: "/activities" })}>
+              See all
+            </Button>
           }
         >
-          {!history.length ? (
-            <EmptyState>
-              {operations.length
-                ? "No operations match this filter."
-                : "Operations you start appear here with their progress."}
-            </EmptyState>
+          {!recentActivity.length ? (
+            <EmptyState>What you ask this Mac to do appears here with its progress.</EmptyState>
           ) : (
             <List>
-              {items.map((operation) => (
-                <OperationRow key={operation.id} operation={operation} />
+              {recentActivity.map((activity) => (
+                <ActivityRow key={activity.id} activity={activity} />
               ))}
-              {pager}
             </List>
           )}
         </Section>
@@ -246,7 +200,7 @@ export function Overview() {
               {olderInstances > 0 && (
                 <p className="px-1 text-xs text-muted-foreground">
                   {olderInstances} older {olderInstances === 1 ? "VM is" : "VMs are"} kept with the
-                  operations that started them.
+                  activity that started {olderInstances === 1 ? "it" : "them"}.
                 </p>
               )}
             </>
@@ -308,103 +262,5 @@ function InstanceRow({ instance }: { instance: Instance }) {
         ) : undefined
       }
     />
-  );
-}
-
-function OperationRow({
-  operation,
-  defaultOpen = false,
-}: {
-  operation: Operation;
-  defaultOpen?: boolean;
-}) {
-  const { submit } = useStateApi();
-  const preparation = preparationCommands.includes(operation.command);
-  const migration =
-    (operation.command === "migration.analyze" || operation.command === "migration.publish") &&
-    operation.status === "succeeded";
-  const cancellable =
-    cancellableCommands.includes(operation.command) && operation.status === "running";
-  const reconcilable = operation.command === "runner.run" && operation.status === "action_required";
-  // Preparations resume or discard, an interrupted runner reconciles; everything else that waits
-  // for a person can only be read and closed.
-  const dismissable = operation.status === "action_required" && !preparation && !reconcilable;
-  const result: unknown = operation.result;
-  const nextStep =
-    typeof result === "object" &&
-    result &&
-    "nextStep" in result &&
-    typeof result.nextStep === "string"
-      ? result.nextStep
-      : undefined;
-  return (
-    <ExpandableRow
-      defaultOpen={defaultOpen}
-      title={commandLabels[operation.command] ?? operation.command}
-      summary={operation.message}
-      aside={
-        <>
-          <span className="hidden text-xs text-muted-foreground tabular-nums @2xl:inline">
-            {formatRelative(operation.updatedAt)}
-          </span>
-          <OperationStatus status={operation.status} />
-        </>
-      }
-    >
-      <p className="max-w-[72ch] text-foreground/85" data-selectable>
-        {operation.message}
-      </p>
-      {nextStep && (
-        <p className="max-w-[72ch] text-muted-foreground" data-selectable>
-          {nextStep}
-        </p>
-      )}
-      {preparation && (
-        <PreparationResult
-          result={operation.result}
-          macos={operation.command.includes("macos")}
-          windows={operation.command.includes("windows")}
-          resumable={operation.status === "action_required"}
-        />
-      )}
-      {migration && <MigrationResult result={operation.result} />}
-      <Details
-        items={[
-          ["Started", formatDateTime(operation.createdAt)],
-          ["Last update", formatDateTime(operation.updatedAt)],
-          ["Operation ID", <Mono key="id">{operation.id}</Mono>],
-        ]}
-      />
-      {(cancellable || reconcilable || dismissable) && (
-        <div className="flex flex-wrap gap-2">
-          {dismissable && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void submit({ type: "operation.cancel", id: operation.id })}
-            >
-              Dismiss
-            </Button>
-          )}
-          {reconcilable && (
-            <Button
-              size="sm"
-              onClick={() => void submit({ type: "runner.reconcile", id: operation.id })}
-            >
-              Reconcile runner
-            </Button>
-          )}
-          {cancellable && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => void submit({ type: "operation.cancel", id: operation.id })}
-            >
-              Cancel operation
-            </Button>
-          )}
-        </div>
-      )}
-    </ExpandableRow>
   );
 }
