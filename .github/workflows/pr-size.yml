@@ -14,7 +14,7 @@ concurrency:
 jobs:
   label:
     name: label
-    runs-on: vectis-ubuntu-24-arm64
+    runs-on: vectis-ubuntu
     timeout-minutes: 10
     permissions:
       contents: read
