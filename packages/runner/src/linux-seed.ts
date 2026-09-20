@@ -33,7 +33,9 @@ trap 'poweroff' EXIT
 test "$(uname -m)" = aarch64
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y curl git openssh-server docker.io
+# libatomic1 is missing from the Ubuntu cloud image but present on GitHub-hosted runners, and
+# prebuilt tools that setup actions download, pnpm among them, fail to start without it.
+apt-get install -y curl git openssh-server docker.io libatomic1
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
