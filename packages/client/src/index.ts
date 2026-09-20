@@ -14,6 +14,20 @@ import {
   type ShutdownOptions,
 } from "../../protocol/src/index.js";
 
+// An activity and its operations both come from the snapshot, so every surface reads them the
+// same way, locally and through remote control.
+export function activitiesOf(snapshot: Snapshot) {
+  return snapshot.activities ?? [];
+}
+export function activityOf(snapshot: Snapshot, id: string) {
+  const activity = activitiesOf(snapshot).find((item) => item.id === id);
+  if (!activity) throw new VectisError("activity_missing", "The activity was not found.");
+  return {
+    activity,
+    operations: snapshot.operations.filter((operation) => operation.activityId === id),
+  };
+}
+
 export class VectisClient {
   constructor(readonly connection: Pick<Connection, "url" | "token">) {
     const url = new URL(connection.url);
@@ -83,6 +97,12 @@ export class VectisClient {
     const operation = (await this.status(signal)).operations.find((item) => item.id === id);
     if (!operation) throw new VectisError("operation_missing", "The operation was not found.");
     return operation;
+  }
+  async activities(signal?: AbortSignal) {
+    return activitiesOf(await this.status(signal));
+  }
+  async activity(id: string, signal?: AbortSignal) {
+    return activityOf(await this.status(signal), id);
   }
   async settle(command: Command, key: string, signal?: AbortSignal): Promise<Operation> {
     const operation = await this.submit(command, key, signal);

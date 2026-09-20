@@ -16,6 +16,7 @@ import {
   type Operation,
 } from "../../protocol/src/index.js";
 import { ControllerClient } from "./controller.js";
+import { activitiesOf, activityOf } from "./index.js";
 
 const Record = Schema.Struct({
   _id: Identifier,
@@ -170,6 +171,12 @@ export class RemoteClient {
   }
   async status(signal?: AbortSignal) {
     return Schema.decodeUnknownSync(Snapshot)(await this.inspect({ name: "status" }, signal));
+  }
+  async activities(signal?: AbortSignal) {
+    return activitiesOf(await this.status(signal));
+  }
+  async activity(id: string, signal?: AbortSignal) {
+    return activityOf(await this.status(signal), id);
   }
   async storage() {
     return Schema.decodeUnknownSync(StorageReport)(await this.inspect({ name: "storage" }));
