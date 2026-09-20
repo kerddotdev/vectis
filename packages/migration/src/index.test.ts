@@ -31,6 +31,18 @@ test("migrates a simple static matrix but refuses include/exclude expansions", (
   expect(previewMigration(source + "        include: []\n", targets).changed).toBe(false);
 });
 
+test("reports jobs that already run on a Vectis label instead of returning nothing", () => {
+  const preview = previewMigration(
+    "on: push\njobs:\n  build:\n    runs-on: vectis-ubuntu\n  other:\n    runs-on: ubuntu-24.04-arm\n",
+    targets,
+  );
+  expect(preview.changed).toBe(true);
+  expect(preview.source).toContain("runs-on: vectis-ubuntu");
+  expect(preview.findings).toEqual([
+    { job: "build", reason: expect.stringContaining("Already runs on vectis-ubuntu") },
+  ]);
+});
+
 test("aliased privileged triggers cannot bypass migration review", () => {
   for (const trigger of ["*event", "[*event, push]"]) {
     const source = `event: &event pull_request_target\non: ${trigger}\njobs:\n  test:\n    runs-on: ubuntu-24.04-arm\n`;

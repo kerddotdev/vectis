@@ -52,6 +52,11 @@ export function MigrationResult({ result }: { result: unknown }) {
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="flex flex-col gap-3 px-3 pb-3">
+              {!file.changed && file.findings.length === 0 && (
+                <p className="text-muted-foreground">
+                  No job in this file runs on a label this migration replaces.
+                </p>
+              )}
               {file.findings.map((finding, index) => (
                 <p key={index} className="text-muted-foreground">
                   <span className="text-foreground">{finding.job}</span>: {finding.reason}
