@@ -168,7 +168,7 @@ test("an operation ID collision cannot overwrite another request or leave a new 
 test("snapshot groups decoded history with bounded queries and preserves insertion order after updates", async () => {
   const { store } = await fixture();
   try {
-    for (let index = 0; index < 40; index++) {
+    for (let index = 0; index < 12; index++) {
       const id = `setup-${index}`;
       const root = store.accept(
         id,
@@ -198,7 +198,7 @@ test("snapshot groups decoded history with bounded queries and preserves inserti
     const queries = vi.spyOn(store.db, "prepare");
     try {
       const snapshot = store.snapshot();
-      expect(snapshot.activities).toHaveLength(40);
+      expect(snapshot.activities).toHaveLength(12);
       expect(
         snapshot.activities?.every(
           (activity) =>

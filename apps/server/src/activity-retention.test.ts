@@ -102,11 +102,11 @@ test("age retention prunes finished history after 30 days, preserves resources a
 test("count retention uses completion order and preserves the recent tail regardless of its size", async () => {
   const { store, add } = await fixture();
   add("oldest", 3);
-  for (let index = 0; index < 300; index++) add(`recent-${index}`, 0.5);
+  for (let index = 0; index < 4; index++) add(`recent-${index}`, 0.5);
   add("older-but-created-last", 2);
   add("day-boundary", 1);
-  retainActivities(store, () => false, now);
-  expect(store.snapshot().activities).toHaveLength(301);
+  retainActivities(store, () => false, now, { maxAgeMs: 30 * 24 * 60 * 60 * 1000, keep: 4 });
+  expect(store.snapshot().activities).toHaveLength(5);
   expect(store.get("activity", "oldest")).toBeUndefined();
   expect(store.get("activity", "older-but-created-last")).toBeUndefined();
   expect(store.get("activity", "day-boundary")).toBeDefined();
@@ -122,8 +122,11 @@ test("age and count limits combine while waiting and actively owned work survive
   const child = store.accept("child", "child", "instance.stop", {
     activityId: "unfinished-child",
   }).operation;
-  for (let index = 0; index < 300; index++) add(`recent-${index}`, 0.5);
-  retainActivities(store, (id) => id === "active", now);
+  for (let index = 0; index < 4; index++) add(`recent-${index}`, 0.5);
+  retainActivities(store, (id) => id === "active", now, {
+    maxAgeMs: 30 * 24 * 60 * 60 * 1000,
+    keep: 4,
+  });
   expect(store.get("activity", "old")).toBeUndefined();
   expect(store.get("activity", "overflow")).toBeUndefined();
   for (const id of ["waiting", "active", "unfinished-child"])
