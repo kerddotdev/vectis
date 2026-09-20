@@ -24,6 +24,16 @@ export class GitHubAdminError extends Error {
     super("Organization runners require verified repository administrator access.");
   }
 }
+export class GitHubInstallationError extends Error {
+  readonly code = "github_app_not_installed";
+  readonly nextStep =
+    "Install the Vectis GitHub App on the account or organization that owns the repository from the GitHub tab on the account page, then link the account again and retry.";
+  constructor(owner: string, repo: string) {
+    super(
+      `GitHub has no active Vectis installation for ${owner}/${repo} that the verified account can use.`,
+    );
+  }
+}
 export class GitHubApiError extends Error {
   constructor(readonly status: number) {
     super(`GitHub API request failed (${status}).`);
@@ -106,7 +116,13 @@ export class GitHubAppClient {
     const path = `/repos/${input.owner}/${input.repo}`;
     const jwt = this.jwt();
     const installation = Schema.decodeUnknownSync(Installation)(
-      await this.request(jwt, `${path}/installation`),
+      await this.request(jwt, `${path}/installation`).catch((error: unknown) => {
+        // GitHub answers 404 both for a repository the App cannot see and for one that does not
+        // exist, so the message has to cover the installation without claiming the repository.
+        if (error instanceof GitHubApiError && error.status === 404)
+          throw new GitHubInstallationError(input.owner, input.repo);
+        throw error;
+      }),
     );
     if (
       installation.app_id !== this.app.appId ||
@@ -114,9 +130,7 @@ export class GitHubAppClient {
       (installation.account.type === "User" && installation.account.id !== input.githubUserId) ||
       installation.suspended_at !== null
     )
-      throw new Error(
-        "This runner path requires an active installation authorized for the verified GitHub account.",
-      );
+      throw new GitHubInstallationError(input.owner, input.repo);
     const { token } = Schema.decodeUnknownSync(AccessToken)(
       await this.request(jwt, `/app/installations/${installation.id}/access_tokens`, {
         ...(input.repositoryId === undefined

@@ -74,7 +74,16 @@ export function previewMigration(
     const current = runner.value;
     const replace = (label: string): string | undefined => {
       const target = mapping.get(label);
-      if (!target) return undefined;
+      if (!target) {
+        // A workflow that already uses Vectis labels would otherwise be reported as unchanged
+        // without saying why.
+        if (/^vectis-[a-z0-9][a-z0-9-]*$/.test(label))
+          findings.push({
+            job: name,
+            reason: `Already runs on ${label}. Migration only replaces GitHub-hosted labels, so an existing Vectis label stays as it is.`,
+          });
+        return undefined;
+      }
       if (
         ![
           "ubuntu-24.04-arm",

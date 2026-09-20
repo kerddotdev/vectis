@@ -284,8 +284,10 @@ export class Service {
               });
             })
             .catch((error: unknown) => {
+              // Nothing in the service continues a refused connection: the person fixes the cause
+              // on GitHub and connects again, so this is a failure, not a paused operation.
               this.store.update(operation, {
-                status: "action_required",
+                status: "failed",
                 message:
                   error instanceof VectisError
                     ? error.message
@@ -540,13 +542,36 @@ export class Service {
         }
         case "operation.cancel": {
           const active = this.tasks.get(command.id);
-          if (!active)
+          if (active) {
+            active.abort.abort();
+            result = { operationId: command.id, cancellationRequested: true };
+            break;
+          }
+          // An operation nobody owns any more can still wait for a person. Closing it is the only
+          // way out, except where a dedicated recovery command has to observe it first.
+          const waiting = snapshot.operations.find((item) => item.id === command.id);
+          if (!waiting || waiting.status !== "action_required")
             throw new VectisError(
               "operation_not_cancellable",
               "No active cancellable task has this operation ID.",
             );
-          active.abort.abort();
-          result = { operationId: command.id, cancellationRequested: true };
+          if (waiting.command === "runner.run")
+            throw new VectisError(
+              "operation_not_cancellable",
+              "An interrupted runner is reconciled, not closed.",
+              "Confirm the VM stopped, then run runner reconcile with this operation ID.",
+            );
+          if (Schema.is(Schema.Struct({ setupId: Schema.String }))(waiting.result))
+            throw new VectisError(
+              "operation_not_cancellable",
+              "This image preparation still owns a setup.",
+              "Resume the preparation, or discard it, instead of closing its operation.",
+            );
+          this.store.update(waiting, {
+            status: "cancelled",
+            message: "Closed without confirming its result.",
+          });
+          result = { operationId: command.id, closed: true };
           break;
         }
         case "machine.pause":

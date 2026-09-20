@@ -137,12 +137,14 @@ function Step({
   title,
   children,
   action,
+  keepAction = false,
 }: {
   done: boolean;
   index: number;
   title: string;
   children: ReactNode;
   action?: ReactNode;
+  keepAction?: boolean;
 }) {
   return (
     <li className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:gap-6 sm:p-6">
@@ -158,7 +160,7 @@ function Step({
         <p className={cx("font-medium", done && "text-muted")}>{title}</p>
         <div className="mt-1 text-[15px] text-muted">{children}</div>
       </div>
-      {!done && action && <div className="shrink-0">{action}</div>}
+      {(!done || keepAction) && action && <div className="shrink-0">{action}</div>}
     </li>
   );
 }
@@ -224,6 +226,7 @@ function Overview({
           <Step
             done={steps.app}
             index={3}
+            keepAction
             title="Install the Vectis GitHub App"
             action={
               <span className="flex flex-wrap justify-end gap-2">
@@ -245,8 +248,8 @@ function Overview({
               </span>
             }
           >
-            Install it on the account or organization that owns your repositories, then link the
-            account again so Vectis sees the installation.
+            Install it on every account or organization that owns repositories you want to run, then
+            link the account again so Vectis sees the installation.
           </Step>
           <Step
             done={steps.repository}
@@ -331,8 +334,8 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
         <div className="grid gap-4 md:grid-cols-2">
           {machines.map((machine) => (
             <Panel key={machine._id} className="flex flex-col gap-5 p-5">
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
+              <div className="flex items-start gap-4">
+                <div className="min-w-0 flex-1">
                   <p className="truncate text-[17px] font-medium">{machine.name}</p>
                   <p className="text-[14px] text-muted">
                     {machine.lastSeenAt
@@ -340,24 +343,26 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
                       : "Not seen yet"}
                   </p>
                 </div>
-                {machine.paused ? (
-                  <Status tone="attention">New VMs paused</Status>
-                ) : online(machine) ? (
-                  <Status tone="success">Online</Status>
-                ) : (
-                  <Status tone="neutral">Offline</Status>
-                )}
-                <ActionMenu
-                  label={`Actions for ${machine.name}`}
-                  trigger={<EllipsisIcon className="size-4" />}
-                  items={[
-                    {
-                      label: "Remove this Mac",
-                      danger: true,
-                      onSelect: () => setRemoving(machine),
-                    },
-                  ]}
-                />
+                <div className="flex shrink-0 items-center gap-1">
+                  {machine.paused ? (
+                    <Status tone="attention">New VMs paused</Status>
+                  ) : online(machine) ? (
+                    <Status tone="success">Online</Status>
+                  ) : (
+                    <Status tone="neutral">Offline</Status>
+                  )}
+                  <ActionMenu
+                    label={`Actions for ${machine.name}`}
+                    trigger={<EllipsisIcon className="size-4" />}
+                    items={[
+                      {
+                        label: "Remove this Mac",
+                        danger: true,
+                        onSelect: () => setRemoving(machine),
+                      },
+                    ]}
+                  />
+                </div>
               </div>
               <div className="flex flex-col gap-2">
                 <p className="text-[14px] text-muted">Prepared environments</p>

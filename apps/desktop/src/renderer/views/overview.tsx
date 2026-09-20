@@ -307,6 +307,17 @@ function OperationRow({
   const cancellable =
     cancellableCommands.includes(operation.command) && operation.status === "running";
   const reconcilable = operation.command === "runner.run" && operation.status === "action_required";
+  // Preparations resume or discard, an interrupted runner reconciles; everything else that waits
+  // for a person can only be read and closed.
+  const dismissable = operation.status === "action_required" && !preparation && !reconcilable;
+  const result: unknown = operation.result;
+  const nextStep =
+    typeof result === "object" &&
+    result &&
+    "nextStep" in result &&
+    typeof result.nextStep === "string"
+      ? result.nextStep
+      : undefined;
   return (
     <ExpandableRow
       defaultOpen={defaultOpen}
@@ -324,6 +335,11 @@ function OperationRow({
       <p className="max-w-[72ch] text-foreground/85" data-selectable>
         {operation.message}
       </p>
+      {nextStep && (
+        <p className="max-w-[72ch] text-muted-foreground" data-selectable>
+          {nextStep}
+        </p>
+      )}
       {preparation && (
         <PreparationResult
           result={operation.result}
@@ -340,8 +356,17 @@ function OperationRow({
           ["Operation ID", <Mono key="id">{operation.id}</Mono>],
         ]}
       />
-      {(cancellable || reconcilable) && (
+      {(cancellable || reconcilable || dismissable) && (
         <div className="flex flex-wrap gap-2">
+          {dismissable && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => void submit({ type: "operation.cancel", id: operation.id })}
+            >
+              Dismiss
+            </Button>
+          )}
           {reconcilable && (
             <Button
               size="sm"
