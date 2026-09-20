@@ -21,13 +21,11 @@ The service downloads a pinned official Ubuntu QCOW2 image, checks its exact siz
 
 ## What the image contains
 
-A prepared image is a runner host, not a copy of a GitHub-hosted runner. GitHub's images carry hundreds of preinstalled tools and tens of gigabytes; Vectis instead gives a workflow what it needs to install its own toolchain at job time:
+A prepared image is a runner host, not a copy of a GitHub-hosted runner. GitHub's Ubuntu ARM64 image is built by 63 provisioning steps and carries hundreds of preinstalled tools, which does not belong in a disposable VM on a personal Mac. What a workflow actually depends on is narrower, because `actions/setup-*` actions download toolchains at job time. That is the layer Vectis matches, and it takes the list from the same place GitHub does: the `apt` section of [the Ubuntu 24.04 ARM64 toolset](https://github.com/actions/runner-images/blob/main/images/ubuntu/toolsets/toolset-2404-arm64.json) in `actions/runner-images`.
 
-- Git, Docker, OpenSSH and the official runner's dependencies.
-- The archive tools and certificates setup actions use: `tar`, `gzip`, `xz-utils`, `zip`, `unzip`, `zstd`, `ca-certificates`, `jq`, `curl`, `rsync`.
-- The shared libraries prebuilt toolchains link against, including `libatomic1`, `libicu`, `libssl`, `libstdc++` and `zlib`.
+So a prepared guest has Git, Docker, OpenSSH and the official runner's dependencies, the archive and shell tools that actions invoke (`tar`, `gzip`, `xz-utils`, `zip`, `unzip`, `zstd`, `p7zip-full`, `jq`, `curl`, `wget`, `rsync`, `shellcheck`), a C and C++ toolchain with the headers native modules build against (`gcc`, `g++`, `make`, `pkg-config`, `autoconf`, `automake`, `libtool`, `libssl-dev`, `libsqlite3-dev`, `libicu-dev`), and the shared libraries prebuilt binaries link against, `libatomic1` among them. Two packages differ from GitHub's list: `p7zip-rar` is left out because it is non-free, and `netcat` and `upx` are installed under their real package names. The complete inventory of a prepared image is in the guest at `/etc/vectis/toolchain-versions.txt`.
 
-So `actions/setup-node`, `actions/setup-python`, `actions/setup-java`, `pnpm/action-setup`, `actions/cache` and similar actions work. A job that expects a preinstalled compiler, database or cloud CLI has to install it in a step, or run it in a container, because every VM starts from the same base image and nothing a job installs survives it. The base image cannot be customized yet.
+Deliberately absent: language runtimes and their version managers, databases, browsers and drivers, cloud CLIs, Android and Java SDKs. A job that needs one installs it in a step, or runs in a container with `container:` in the workflow, which works because the guest runs Docker. Nothing a job installs survives it, since every VM starts from the same base image, and the base image itself cannot be customized yet.
 
 ## Cancel and resume
 
