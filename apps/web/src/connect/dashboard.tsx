@@ -137,12 +137,14 @@ function Step({
   title,
   children,
   action,
+  keepAction = false,
 }: {
   done: boolean;
   index: number;
   title: string;
   children: ReactNode;
   action?: ReactNode;
+  keepAction?: boolean;
 }) {
   return (
     <li className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:gap-6 sm:p-6">
@@ -158,7 +160,7 @@ function Step({
         <p className={cx("font-medium", done && "text-muted")}>{title}</p>
         <div className="mt-1 text-[15px] text-muted">{children}</div>
       </div>
-      {!done && action && <div className="shrink-0">{action}</div>}
+      {(!done || keepAction) && action && <div className="shrink-0">{action}</div>}
     </li>
   );
 }
@@ -224,6 +226,7 @@ function Overview({
           <Step
             done={steps.app}
             index={3}
+            keepAction
             title="Install the Vectis GitHub App"
             action={
               <span className="flex flex-wrap justify-end gap-2">
@@ -245,8 +248,8 @@ function Overview({
               </span>
             }
           >
-            Install it on the account or organization that owns your repositories, then link the
-            account again so Vectis sees the installation.
+            Install it on every account or organization that owns repositories you want to run, then
+            link the account again so Vectis sees the installation.
           </Step>
           <Step
             done={steps.repository}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useAction, useMutation } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { EllipsisIcon } from "lucide-react";
 import { api } from "../../../../convex/_generated/api.js";
 import { errorCode } from "./Connect.js";
@@ -7,6 +7,7 @@ import { Header, type Bindings, type Identity } from "./dashboard.js";
 import {
   ActionMenu,
   Button,
+  buttonClass,
   Confirm,
   cx,
   Empty,
@@ -55,6 +56,7 @@ export function GitHubTab({
   bindings: Bindings | undefined;
 }) {
   const link = useLinkGitHub();
+  const installation = useQuery(api.githubAppSetup.installation, {});
   const confirm = useMutation(api.githubIdentity.confirm);
   const discard = useMutation(api.githubIdentity.discard);
   const unlink = useMutation(api.githubIdentity.unlink);
@@ -78,12 +80,24 @@ export function GitHubTab({
     <>
       <Header
         title="GitHub"
-        description="Accounts you have proven are yours. Linking does not start jobs or change workflows; connecting a repository does."
+        description="Accounts you have proven are yours, and the accounts and organizations the Vectis GitHub App is installed on. Linking does not start jobs or change workflows; connecting a repository does."
         actions={
-          <Button disabled={link.working} onClick={link.start}>
-            <GitHubMark />
-            Link GitHub account
-          </Button>
+          <>
+            {installation && (
+              <a
+                className={buttonClass("secondary", true)}
+                href={installation.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Install App
+              </a>
+            )}
+            <Button disabled={link.working} onClick={link.start}>
+              <GitHubMark />
+              {identity?.accounts.length ? "Link or refresh account" : "Link GitHub account"}
+            </Button>
+          </>
         }
       />
       {(link.error || error) && (

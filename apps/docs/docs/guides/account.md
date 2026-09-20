@@ -17,7 +17,9 @@ Every Mac connected to your account, whether it is online (seen in the last 90 s
 
 ## GitHub
 
-The GitHub accounts you linked and the Vectis App installations each one can use. Linking proves which GitHub account is yours; it does not start jobs or change workflows. After installing the App or changing its repository access on GitHub, link the account again with **Link GitHub account** so Vectis sees the change.
+The GitHub accounts you linked and the Vectis App installations each one can use. Linking proves which GitHub account is yours; it does not start jobs or change workflows.
+
+**Install App** opens GitHub's installation page, where you choose the account or organization. One linked account can reach several installations, so repeat this for every organization whose repositories you want to run. After installing the App or changing its repository access on GitHub, use **Link or refresh account** so Vectis sees the change.
 
 **Unlink this account** removes the link and the repository connections that depend on it. The Vectis GitHub App stays installed until you remove it in your GitHub settings.
 
