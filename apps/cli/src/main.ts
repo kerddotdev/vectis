@@ -51,6 +51,7 @@ async function main() {
       "non-interactive": { type: "boolean" },
       timeout: { type: "string" },
       cpu: { type: "string" },
+      "max-runners": { type: "string" },
       "job-id": { type: "string" },
       account: { type: "string" },
       owner: { type: "string" },
@@ -132,6 +133,7 @@ Cloud and GitHub
   login finish                  Complete an approved remote control login
   logout                        Revoke this CLI's remote access and remove its credentials
   machine list                  List your machines and when they were last seen
+  machine configure --max-runners <N>  Set concurrent runner limit (1-16, default 5)
 
 Repositories and jobs
   repository list               List repositories connected to this machine, with their runs-on label
@@ -500,6 +502,11 @@ Documentation: https://vectis.kerd.dev/docs
   let request: Command;
   if (command === "pause" || command === "resume")
     request = { type: "machine.pause", paused: command === "pause" };
+  else if (command === "machine" && subcommand === "configure")
+    request = decodeCommand({
+      type: "machine.configure",
+      maxRunners: Number(values["max-runners"]),
+    });
   else if (
     command === "repository" &&
     (subcommand === "enable-auto" || subcommand === "disable-auto") &&

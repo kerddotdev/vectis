@@ -36,6 +36,9 @@ const transport = vi.hoisted(() => {
       vi.fn<
         (query: FunctionReference<"query">, args: Record<string, unknown>) => Promise<unknown>
       >(),
+    mutation: vi.fn(
+      async (_mutation: FunctionReference<"mutation">, _args: Record<string, unknown>) => null,
+    ),
     connectionState: vi.fn(() => ({ isWebSocketConnected: true })),
     disconnect: vi.fn(),
     close: vi.fn(async () => {}),
@@ -45,6 +48,7 @@ vi.mock("convex/browser", () => ({
   ConvexClient: class {
     onUpdate = transport.onUpdate;
     query = transport.query;
+    mutation = transport.mutation;
     close = transport.close;
     client = {
       connectionState: transport.connectionState,
@@ -60,6 +64,8 @@ const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const close of cleanup.reverse()) await close();
   cleanup.length = 0;
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   vi.clearAllMocks();
   transport.subscriptions.length = 0;
   delete transport.auth.changed;
@@ -76,13 +82,14 @@ async function fixture() {
     return [];
   });
   const onJobObservations = vi.fn();
+  const local = new VectisClient({ url: "http://127.0.0.1:1", token: "unused" });
   const relay = startCloudRelay(
     {
       deploymentUrl: "https://isolated-test.convex.cloud",
       machineId: "machine1",
       localId: store.snapshot().machine.id,
     },
-    new VectisClient({ url: "http://127.0.0.1:1", token: "unused" }),
+    local,
     { get: async () => null },
     vi.fn(),
     () => store.touch(),
@@ -98,6 +105,7 @@ async function fixture() {
   };
   return {
     relay,
+    local,
     onJobObservations,
     store,
     subscription,
@@ -249,4 +257,35 @@ test("lease observations use one subscription per set and release stale callback
   relay.watchLeases(["lease4"]);
   expect(onJobObservations).toHaveBeenCalledOnce();
   expect(transport.subscriptions.filter((item) => item.name === "jobs:forLeases")).toHaveLength(3);
+});
+
+test("slot changes send a heartbeat on the next tick without waiting for the cadence", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  let available = 2;
+  vi.spyOn(local, "status").mockImplementation(async () => ({
+    ...store.snapshot(),
+    runnerCapacity: { max: 5, active: 1, available },
+  }));
+  transport.query.mockImplementation(async (query) =>
+    getFunctionName(query) === "machines:self"
+      ? { id: "machine1", localId: store.snapshot().machine.id }
+      : [],
+  );
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  expect(transport.mutation.mock.calls[0]?.[1]).toMatchObject({ runnerSlots: 2, runnerIdle: true });
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  available = 0;
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+  expect(transport.mutation.mock.calls[1]?.[1]).toMatchObject({ runnerSlots: 0, runnerIdle: true });
+  vi.mocked(local.status).mockImplementation(async () => store.snapshot());
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  expect(transport.mutation.mock.calls[2]?.[1]).not.toHaveProperty("runnerSlots");
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
 });

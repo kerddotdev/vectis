@@ -43,6 +43,7 @@ Every change is an operation: `accepted`, `running`, `action_required`, `succeed
 - `vectis status --json` shows the machine, environments, VMs, recent operations, cloud connection and service version. MCP: `vectis_status`.
 - Status includes a `revision` for detecting changes and cached `repositories` when paired. Repository and job updates change the revision; job data stays available through `job list`.
 - `vectis service install|start|stop [--if-idle]|status|uninstall`. MCP: `vectis_service`. `--if-idle` refuses to interrupt VMs or operations.
+- `vectis machine configure --max-runners N` sets the concurrent runner limit (1-16, default 5); status includes `runnerCapacity` with max, active and available slots.
 - `vectis pause` stops new VMs; running work continues. `vectis resume` allows them again.
 - `cloud.state` in `status` is `unconfigured`, `connecting`, `connected`, `unavailable` or `removed`. `removed` means the account deleted this Mac: report it, and only disconnect when the user asks.
 - The default home is `~/.vectis` (`~/.vectis-dev` for development builds). Pass `--home` only to work with an isolated state directory.

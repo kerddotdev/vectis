@@ -127,10 +127,13 @@ export const Operation = Schema.Struct({
   result: Schema.optional(Schema.Unknown),
 });
 export type Operation = typeof Operation.Type;
+export const defaultMaxRunners = 5;
+const MaxRunners = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 16 }));
 export const Machine = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   paused: Schema.Boolean,
+  maxRunners: Schema.optional(MaxRunners),
 });
 export const Instance = Schema.Struct({
   id: Identifier,
@@ -154,6 +157,9 @@ export type CloudStatus = typeof CloudStatus.Type;
 export const Snapshot = Schema.Struct({
   revision: Schema.optional(Schema.String),
   preparationBusy: Schema.optional(Schema.Boolean),
+  runnerCapacity: Schema.optional(
+    Schema.Struct({ max: Schema.Int, active: Schema.Int, available: Schema.Int }),
+  ),
   protocolVersion: Schema.Literal(1),
   version: Schema.optional(Schema.String),
   machine: Machine,
@@ -217,6 +223,7 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("activity.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
+  Schema.Struct({ type: Schema.Literal("machine.configure"), maxRunners: MaxRunners }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
   Schema.Struct({
@@ -436,6 +443,12 @@ export const capabilities = [
     name: "status",
     kind: "query",
     description: "Read machine, environments, instances, activities, and recent operations.",
+  },
+  {
+    name: "machine.configure",
+    kind: "command",
+    activity: "setting",
+    description: "Set the maximum number of concurrent runners on this machine (1-16, default 5).",
   },
   {
     name: "machine.pause",

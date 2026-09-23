@@ -268,3 +268,37 @@ test("an accepted shutdown stops advertising readiness before the listener close
   });
   expect(response.status).toBe(503);
 });
+
+test("machine runner limits reject invalid values and survive a service restart", async () => {
+  const { home, server, client } = await fixture();
+  expect((await client.status()).runnerCapacity).toEqual({ max: 5, active: 0, available: 0 });
+  for (const maxRunners of [0, 17, -1, 1.5, "5"]) {
+    const response = await fetch(server.connection.url + "/v1/commands", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${server.connection.token}` },
+      body: JSON.stringify({
+        key: `invalid-${maxRunners}`,
+        command: { type: "machine.configure", maxRunners },
+      }),
+    });
+    expect(response.status).toBe(400);
+  }
+  for (const maxRunners of [1, 16, 3]) {
+    const operation = await client.settle(
+      { type: "machine.configure", maxRunners },
+      `limit-${maxRunners}`,
+    );
+    expect(operation.status).toBe("succeeded");
+    const state = await client.status();
+    expect(state.machine.maxRunners).toBe(maxRunners);
+    expect(state.runnerCapacity).toEqual({ max: maxRunners, active: 0, available: 0 });
+    expect(state.activities).toEqual([]);
+  }
+  await server.close();
+  cleanup.pop();
+  const restarted = await startService({ home });
+  cleanup.push(restarted.close);
+  const state = await new VectisClient(restarted.connection).status();
+  expect(state.machine.maxRunners).toBe(3);
+  expect(state.runnerCapacity?.max).toBe(3);
+});
