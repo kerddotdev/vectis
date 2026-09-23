@@ -7,6 +7,7 @@ import {
   type Command,
 } from "../../../../packages/protocol/src/index.js";
 import type { DesktopAction } from "../bridge.js";
+import { activityTitle, openActivity } from "@/lib/activities";
 import { notify } from "@/lib/notify";
 import { commandLabels, settingLabels } from "@/lib/operations";
 
@@ -63,6 +64,10 @@ export function StateProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [ready, setReady] = useState(false);
   const invalidate = useRef(() => {});
+  // Work started in this window is announced when it ends. History from before it, and the first
+  // sighting of an activity, are not news.
+  const opened = useRef(new Date().toISOString());
+  const announced = useRef(new Map<string, string>());
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -108,6 +113,22 @@ export function StateProvider({ children }: { children: ReactNode }) {
       document.removeEventListener("visibilitychange", wake);
     };
   }, [machineId]);
+  useEffect(() => {
+    if (!snapshot) return;
+    for (const activity of snapshot.activities ?? []) {
+      const previous = announced.current.get(activity.id);
+      announced.current.set(activity.id, activity.status);
+      if (previous === undefined || previous === activity.status) continue;
+      if (activity.createdAt < opened.current) continue;
+      const title = activityTitle(activity, snapshot);
+      const open = { action: { label: "View", onClick: () => openActivity(activity.id) } };
+      if (activity.status === "succeeded") notify.success(title, open);
+      else if (activity.status === "failed")
+        notify.error(title, { ...open, description: activity.message });
+      else if (activity.status === "action_required")
+        notify.attention(title, { ...open, description: activity.message });
+    }
+  }, [snapshot]);
   async function perform(action: DesktopAction, input?: unknown) {
     const generation = selection.current;
     try {
@@ -134,7 +155,13 @@ export function StateProvider({ children }: { children: ReactNode }) {
     });
     if (value === undefined) return undefined;
     const operation = Schema.decodeUnknownSync(Operation)(value);
-    if (!settles) notify.started(title, { description: "Started" });
+    if (!settles)
+      notify.started(title, {
+        description: "Started",
+        ...(operation.activityId
+          ? { action: { label: "View", onClick: () => openActivity(operation.activityId ?? "") } }
+          : {}),
+      });
     else if (operation.status === "succeeded")
       notify.success(success ?? settingLabels[command.type] ?? title);
     else if (operation.status === "action_required")
@@ -149,6 +176,7 @@ export function StateProvider({ children }: { children: ReactNode }) {
         machineId,
         selectMachine: (id) => {
           selection.current += 1;
+          announced.current.clear();
           setMachineId(id);
           setSnapshot(null);
           setReady(false);

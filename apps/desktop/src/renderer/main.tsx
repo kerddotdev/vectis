@@ -12,6 +12,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/shell/app-shell";
 import { WindowChromeProvider } from "@/shell/window-chrome";
 import { StateProvider } from "@/state";
+import { Activities } from "@/views/activities";
 import { Connections } from "@/views/connections";
 import { Environments } from "@/views/environments";
 import { Diagnostics, Storage } from "@/views/machine";
@@ -22,6 +23,15 @@ import "./style.css";
 const rootRoute = createRootRoute({ component: AppShell });
 const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/", component: Overview }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/activities",
+    component: Activities,
+    // A notification links straight to the activity it is about.
+    validateSearch: (search: Record<string, unknown>) => ({
+      id: typeof search.id === "string" ? search.id : undefined,
+    }),
+  }),
   createRoute({ getParentRoute: () => rootRoute, path: "/environments", component: Environments }),
   createRoute({ getParentRoute: () => rootRoute, path: "/repositories", component: Repositories }),
   createRoute({ getParentRoute: () => rootRoute, path: "/connections", component: Connections }),

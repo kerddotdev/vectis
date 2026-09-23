@@ -6,6 +6,7 @@ import {
   FolderGit2Icon,
   HardDriveIcon,
   LayoutGridIcon,
+  ListChecksIcon,
   MonitorIcon,
   PlugIcon,
   type LucideIcon,
@@ -20,6 +21,7 @@ const clamp = (value: number) => Math.min(320, Math.max(200, value));
 
 const primary = [
   { to: "/", label: "Overview", icon: LayoutGridIcon },
+  { to: "/activities", label: "Activity", icon: ListChecksIcon },
   { to: "/environments", label: "Environments", icon: MonitorIcon },
   { to: "/repositories", label: "Repositories", icon: FolderGit2Icon },
   { to: "/connections", label: "Connections", icon: PlugIcon },
@@ -91,8 +93,8 @@ function NavLink({
 
 export function Sidebar() {
   const { snapshot, perform } = useStateApi();
-  const active = snapshot?.operations.filter((operation) =>
-    ["accepted", "running", "action_required"].includes(operation.status),
+  const active = (snapshot?.activities ?? []).filter((activity) =>
+    ["accepted", "running", "action_required"].includes(activity.status),
   ).length;
   return (
     <aside className="flex h-full min-w-0 flex-col" aria-label="Sidebar">
@@ -103,7 +105,7 @@ export function Sidebar() {
             key={item.to}
             {...item}
             count={
-              item.to === "/"
+              item.to === "/activities"
                 ? active
                 : item.to === "/environments"
                   ? snapshot?.environments.length
