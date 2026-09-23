@@ -113,6 +113,11 @@ export class RemoteClient {
     );
     return this.operation(result.operationId, signal);
   }
+  async settle(command: Command, key: string, signal?: AbortSignal): Promise<Operation> {
+    const operation = await this.submit(command, key, signal);
+    if (operation.status !== "accepted" && operation.status !== "running") return operation;
+    return this.wait(operation.id, signal);
+  }
   async wait(id: string, signal: AbortSignal = AbortSignal.timeout(120000)) {
     try {
       while (!signal.aborted) {

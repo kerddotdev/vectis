@@ -7,6 +7,7 @@ import {
   createRouter,
   RouterProvider,
 } from "@tanstack/react-router";
+import { Toaster } from "@/components/ui/toast";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppShell } from "@/shell/app-shell";
 import { WindowChromeProvider } from "@/shell/window-chrome";
@@ -41,6 +42,7 @@ createRoot(root).render(
       <WindowChromeProvider>
         <TooltipProvider delay={300}>
           <RouterProvider router={router} />
+          <Toaster />
         </TooltipProvider>
       </WindowChromeProvider>
     </StateProvider>

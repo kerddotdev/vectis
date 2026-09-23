@@ -1,7 +1,9 @@
 import { ConvexError } from "convex/values";
+import type { FunctionReturnType } from "convex/server";
+import { isDeepStrictEqual } from "node:util";
 import { environmentRevision } from "./environment-revision.js";
 import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
-import type { RepositoryConnection } from "../../protocol/src/repositories.js";
+import { MachineRepositories, type RepositoryConnection } from "../../protocol/src/repositories.js";
 import { JobRefresh, JobScan } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
@@ -50,6 +52,7 @@ export function startCloudRelay(
   local: VectisClient,
   credentials: Pick<KeychainCredentials, "get">,
   onState: (state: "connecting" | "connected" | "unavailable" | "removed") => void,
+  onChange: () => void,
 ) {
   const abort = new AbortController();
   const fetchToken = machineTokenFetcher(connection, credentials, abort.signal);
@@ -62,6 +65,11 @@ export function startCloudRelay(
   let rerun = false;
   let removed = false;
   let interval: ReturnType<typeof setInterval> | undefined;
+  // Undefined until the first value arrives: an empty list means no repositories, which is not
+  // the same as not having heard from the cloud yet.
+  let repositorySnapshot: MachineRepositories | undefined;
+  const jobSubscriptions = new Map<string, () => void>();
+  const jobValues = new Map<string, FunctionReturnType<typeof api.jobs.list>>();
   const report = (state: "connecting" | "connected" | "unavailable" | "removed") => {
     if (!removed) onState(state);
   };
@@ -199,6 +207,54 @@ export function startCloudRelay(
   const unsubscribeInspections = cloud.onUpdate(api.inspections.pending, {}, tick, () =>
     report("unavailable"),
   );
+  const unsubscribeRepositories = cloud.onUpdate(
+    api.repositoryBindings.forMachine,
+    {},
+    (value) => {
+      if (abort.signal.aborted || removed) return;
+      const decoded = Schema.decodeUnknownOption(MachineRepositories)(value);
+      if (decoded._tag === "None") {
+        report("unavailable");
+        return;
+      }
+      if (isDeepStrictEqual(repositorySnapshot, decoded.value)) return;
+      repositorySnapshot = decoded.value;
+      onChange();
+      // forMachine returns bindings in ascending creation order.
+      const bindings = new Set(repositorySnapshot.slice(-20).map((binding) => binding.id));
+      for (const [bindingId, unsubscribe] of jobSubscriptions) {
+        if (bindings.has(bindingId)) continue;
+        unsubscribe();
+        jobSubscriptions.delete(bindingId);
+        jobValues.delete(bindingId);
+      }
+      for (const bindingId of bindings) {
+        if (jobSubscriptions.has(bindingId)) continue;
+        const unsubscribe = cloud.onUpdate(
+          api.jobs.list,
+          { bindingId },
+          (jobs) => {
+            if (
+              abort.signal.aborted ||
+              removed ||
+              jobSubscriptions.get(bindingId) !== unsubscribe ||
+              isDeepStrictEqual(jobValues.get(bindingId), jobs)
+            )
+              return;
+            jobValues.set(bindingId, jobs);
+            onChange();
+          },
+          () => {
+            if (jobSubscriptions.get(bindingId) !== unsubscribe) return;
+            jobValues.delete(bindingId);
+            report("unavailable");
+          },
+        );
+        jobSubscriptions.set(bindingId, unsubscribe);
+      }
+    },
+    () => report("unavailable"),
+  );
   const disconnect = cloud.client.subscribeToConnectionState((state) => {
     if (!state.isWebSocketConnected) report("unavailable");
   });
@@ -213,6 +269,9 @@ export function startCloudRelay(
       );
   }
   return {
+    get repositorySnapshot() {
+      return repositorySnapshot;
+    },
     async analyzeMigration(bindingId: string, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();
@@ -287,6 +346,9 @@ export function startCloudRelay(
     },
     async jobs(bindingId: string) {
       requireConnection();
+      const cached = jobValues.get(bindingId);
+      if (cached !== undefined && !removed && cloud.client.connectionState().isWebSocketConnected)
+        return cached;
       try {
         return await interruptible(
           cloud.query(api.jobs.list, { bindingId }),
@@ -352,6 +414,10 @@ export function startCloudRelay(
       if (interval) clearInterval(interval);
       unsubscribe();
       unsubscribeInspections();
+      unsubscribeRepositories();
+      for (const unsubscribe of jobSubscriptions.values()) unsubscribe();
+      jobSubscriptions.clear();
+      jobValues.clear();
       disconnect();
       await cloud.close();
       await pendingToken?.catch(() => {});

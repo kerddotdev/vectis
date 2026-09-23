@@ -12,6 +12,8 @@ import {
 
 export class Store {
   readonly db: DatabaseSync;
+  readonly startId = randomUUID();
+  private changes = 0;
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
@@ -39,15 +41,21 @@ export class Store {
         "INSERT INTO records(kind,id,body) VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",
       )
       .run(kind, id, JSON.stringify(body));
+    this.touch();
   }
   remove(kind: string, id: string) {
     this.db.prepare("DELETE FROM records WHERE kind=? AND id=?").run(kind, id);
+    this.touch();
+  }
+  touch() {
+    this.changes++;
   }
   snapshot(): Snapshot {
     const machine = Schema.decodeUnknownSync(
       Schema.Struct({ id: Schema.String, name: Schema.String, paused: Schema.Boolean }),
     )(this.get("machine", "self"));
     return {
+      revision: `${this.startId}:${this.changes}`,
       preparationBusy: [
         ...this.list("preparation"),
         ...this.list("macInstallation"),

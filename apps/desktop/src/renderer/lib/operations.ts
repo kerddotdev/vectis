@@ -53,5 +53,19 @@ export const commandLabels: Record<string, string> = {
   "job.scan": "Discover missing jobs",
   "migration.analyze": "Analyze workflow migration",
   "migration.publish": "Publish migration pull request",
+  "migration.preview": "Preview workflow migration",
+  "environment.remove": "Remove environment",
+  "operation.cancel": "Close operation",
   "machine.pause": "Change VM intake",
+};
+// A setting is confirmed after it happened, so its message is what changed, not what was asked.
+export const settingLabels: Record<string, string> = {
+  "repository.automatic": "Automatic runners updated",
+  "environment.configure": "Environment updated",
+  "environment.register": "Environment registered",
+  "environment.remove": "Environment removed",
+  "instance.stop": "VM stopped",
+  "instance.reconcile": "VM reconciled",
+  "operation.cancel": "Operation closed",
+  "machine.pause": "VM intake updated",
 };

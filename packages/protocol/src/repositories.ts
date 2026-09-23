@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { Identifier } from "./index.js";
+import { Identifier } from "./identifier.js";
 export const MachineRepositories = Schema.Array(
   Schema.Struct({
     id: Schema.NonEmptyString,
@@ -16,4 +16,10 @@ export const GitHubAccounts = Schema.Array(
   Schema.Struct({ id: Identifier, githubId: Schema.Int, login: Schema.NonEmptyString }),
 );
 export type GitHubAccounts = typeof GitHubAccounts.Type;
-export { RepositoryConnection } from "./index.js";
+export const RepositoryConnection = Schema.Struct({
+  repositoryOwner: Schema.optional(Schema.String.check(Schema.isPattern(/^[A-Za-z0-9-]+$/))),
+  accountId: Identifier,
+  repositoryName: Schema.NonEmptyString,
+  environmentId: Identifier,
+});
+export type RepositoryConnection = typeof RepositoryConnection.Type;

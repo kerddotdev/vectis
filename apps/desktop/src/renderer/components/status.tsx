@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-const tones = {
+export const tones = {
   queued: { icon: ClockIcon, className: "text-neutral bg-neutral/12" },
   running: { icon: CircleDotIcon, className: "text-running bg-running/12" },
   attention: { icon: TriangleAlertIcon, className: "text-attention bg-attention/12" },

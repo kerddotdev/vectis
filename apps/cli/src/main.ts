@@ -9,6 +9,7 @@ import { randomUUID } from "node:crypto";
 import { Schema } from "effect";
 import {
   capabilities,
+  commandActivity,
   Environment,
   VectisError,
   decodeCommand,
@@ -176,7 +177,7 @@ Options
   --machine <id>                Send commands and queries to a remote machine after vectis login
   --json                        Print compact JSON (output is always JSON)
   --key <id>                    Idempotency key; retrying with the same key never repeats work
-  --wait                        Wait for the operation's terminal state
+  --wait                        Wait for the operation's terminal state (automatic for setting commands)
   --timeout <milliseconds>      Wait timeout (default: 120000)
   --name <text>                 Environment or login name (defaults: Ubuntu 24.04 ARM64, macOS 26 ARM64,
                                 Windows 11 ARM64, Vectis CLI)
@@ -201,6 +202,9 @@ Options
   -h, --help                    Show this help
 
 Exit codes: 0 success, 1 failure or cancellation, 3 action required or still pending.
+Setting commands always wait: pause/resume, repository enable-auto/disable-auto,
+environment register/configure/remove, instance stop/reconcile, and operation cancel.
+Their wait timeout reports wait_cancelled with exit code 3; the operation may still be running.
 Errors are JSON: {"error":{"code","message","nextStep"}}.
 
 Examples
@@ -619,13 +623,20 @@ Documentation: https://vectis.kerd.dev/docs
       "Unknown command or missing argument.",
       "Run vectis --help.",
     );
-  const accepted = await api.submit(request, values.key ?? randomUUID());
-  const result = values.wait ? await waitFor(accepted.id) : accepted;
+  const setting = commandActivity[request.type] === "setting";
+  const accepted = setting
+    ? await api.settle(
+        request,
+        values.key ?? randomUUID(),
+        AbortSignal.timeout(Number(values.timeout ?? 120000)),
+      )
+    : await api.submit(request, values.key ?? randomUUID());
+  const result = values.wait && !setting ? await waitFor(accepted.id) : accepted;
   output(result);
   if (result.status === "failed" || result.status === "cancelled") process.exitCode = 1;
   if (
     result.status === "action_required" ||
-    (values.wait &&
+    ((values.wait || setting) &&
       result.status !== "succeeded" &&
       result.status !== "failed" &&
       result.status !== "cancelled")
@@ -650,5 +661,5 @@ main().catch((error) => {
       error: { code: issue.code, message: issue.message, nextStep: issue.nextStep },
     }) + "\n",
   );
-  process.exitCode = 1;
+  process.exitCode = issue.code === "wait_cancelled" ? 3 : 1;
 });

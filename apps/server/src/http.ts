@@ -1,4 +1,5 @@
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
+import { isDeepStrictEqual } from "node:util";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
@@ -94,6 +95,7 @@ export async function startService(
       return relay;
     },
     options.keychainHelper ? new KeychainCredentials(options.keychainHelper) : undefined,
+    () => relay?.repositorySnapshot,
   );
   let cloud: CloudStatus = { state: "unconfigured" };
   let relay: Awaited<ReturnType<typeof configuredRelay>>;
@@ -117,14 +119,21 @@ export async function startService(
     const current = relayUpdate.then(async () => {
       if (closing || !connection) throw new Error("Service is not ready for cloud reload.");
       await relay?.close();
+      if (relay) {
+        relay = undefined;
+        store.touch();
+      }
       relay = await configuredRelay(
         options.home,
         new VectisClient(connection),
         options.keychainHelper,
         (value) => {
+          if (!isDeepStrictEqual(cloud, value)) store.touch();
           cloud = value;
         },
+        () => store.touch(),
       );
+      if (relay) store.touch();
     });
     relayUpdate = current.catch(() => {});
     return current;
@@ -204,7 +213,7 @@ export async function startService(
             message: "The service is shutting down.",
             nextStep: "Wait for shutdown to finish, then start the service again.",
           });
-        return reply(response, 200, { ...store.snapshot(), version: buildInfo().version, cloud });
+        return reply(response, 200, { ...service.snapshot(), version: buildInfo().version, cloud });
       }
       if (request.method === "GET" && request.url === "/v1/capabilities")
         return reply(response, 200, { protocolVersion: 1, capabilities });

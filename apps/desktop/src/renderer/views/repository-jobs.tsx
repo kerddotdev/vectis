@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Schema } from "effect";
-import { EllipsisIcon, RefreshCwIcon } from "lucide-react";
+import { EllipsisIcon } from "lucide-react";
 import { Jobs } from "../../../../../packages/protocol/src/jobs.js";
 import { Notice } from "@/components/layout";
 import { JobStatus } from "@/components/status";
@@ -22,58 +22,39 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
-import { cn } from "@/lib/utils";
 import { useStateApi } from "@/state";
 
 export function RepositoryJobs({ bindingId }: { bindingId: string }) {
-  const { perform, submit } = useStateApi();
+  const { perform, submit, snapshot } = useStateApi();
   const [jobs, setJobs] = useState<Jobs | null>(null);
-  const [pending, setPending] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [jobId, setJobId] = useState("");
-  const [notice, setNotice] = useState<{ tone: "info" | "danger"; text: string }>();
-  async function refresh() {
-    setPending(true);
-    try {
-      const value = await perform("jobs", bindingId);
-      if (value !== undefined) setJobs(Schema.decodeUnknownSync(Jobs)(value));
-    } catch {
-      setNotice({ tone: "danger", text: "GitHub job records could not be read." });
-    } finally {
-      setPending(false);
-    }
-  }
+  const [notice, setNotice] = useState<string>();
+  // The service raises its revision when GitHub reports something new for this repository, so the
+  // list follows the jobs by itself.
+  const revision = snapshot?.revision;
   useEffect(() => {
-    void refresh();
-  }, []);
-  function requested(value: unknown) {
-    if (value !== undefined)
-      setNotice({
-        tone: "info",
-        text: "Requested. Follow the operation in Overview, then refresh this list.",
-      });
-  }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        try {
+          const value = await perform("jobs", bindingId);
+          if (value !== undefined && !cancelled) setJobs(Schema.decodeUnknownSync(Jobs)(value));
+        } catch {
+          if (!cancelled) setNotice("GitHub job records could not be read.");
+        }
+      })();
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [bindingId, revision]);
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center justify-between gap-3">
         <p className="text-xs font-medium text-muted-foreground">Latest GitHub jobs</p>
         <div className="flex items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Refresh GitHub jobs"
-                  disabled={pending}
-                  onClick={() => void refresh()}
-                />
-              }
-            >
-              <RefreshCwIcon className={cn(pending && "animate-spin")} />
-            </TooltipTrigger>
-            <TooltipContent>Refresh GitHub jobs</TooltipContent>
-          </Tooltip>
           <DropdownMenu>
             <DropdownMenuTrigger
               render={<Button variant="ghost" size="icon-xs" aria-label="Job recovery actions" />}
@@ -81,9 +62,7 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
               <EllipsisIcon />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-60">
-              <DropdownMenuItem
-                onClick={() => void submit({ type: "job.scan", bindingId }).then(requested)}
-              >
+              <DropdownMenuItem onClick={() => void submit({ type: "job.scan", bindingId })}>
                 Discover missing jobs
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setRecovering(true)}>
@@ -94,8 +73,8 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
         </div>
       </div>
       {notice && (
-        <Notice tone={notice.tone} role={notice.tone === "danger" ? "alert" : "status"}>
-          {notice.text}
+        <Notice tone="danger" role="alert">
+          {notice}
         </Notice>
       )}
       {jobs?.length === 0 && (
@@ -142,7 +121,6 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
               const id = Number(jobId);
               if (!Number.isSafeInteger(id) || id <= 0) return;
               void submit({ type: "job.refresh", bindingId, jobId: id }).then((value) => {
-                requested(value);
                 if (value !== undefined) setRecovering(false);
               });
             }}

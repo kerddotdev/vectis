@@ -1,0 +1,219 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getFunctionName, type FunctionReference } from "convex/server";
+import { afterEach, expect, test, vi } from "vitest";
+import { Store } from "../../../apps/server/src/store.js";
+import { VectisClient } from "./index.js";
+import { startCloudRelay } from "./cloud-relay.js";
+
+type Subscription = {
+  name: string;
+  args: Record<string, unknown>;
+  deliver: (value: unknown) => void;
+  fail: () => void;
+  unsubscribe: ReturnType<typeof vi.fn>;
+};
+const transport = vi.hoisted(() => {
+  const subscriptions: Subscription[] = [];
+  const auth: { changed?: (authenticated: boolean) => void } = {};
+  return {
+    subscriptions,
+    auth,
+    onUpdate: vi.fn(
+      (
+        query: FunctionReference<"query">,
+        args: Record<string, unknown>,
+        deliver: (value: unknown) => void,
+        fail: () => void,
+      ) => {
+        const unsubscribe = vi.fn();
+        subscriptions.push({ name: getFunctionName(query), args, deliver, fail, unsubscribe });
+        return unsubscribe;
+      },
+    ),
+    query:
+      vi.fn<
+        (query: FunctionReference<"query">, args: Record<string, unknown>) => Promise<unknown>
+      >(),
+    connectionState: vi.fn(() => ({ isWebSocketConnected: true })),
+    disconnect: vi.fn(),
+    close: vi.fn(async () => {}),
+  };
+});
+vi.mock("convex/browser", () => ({
+  ConvexClient: class {
+    onUpdate = transport.onUpdate;
+    query = transport.query;
+    close = transport.close;
+    client = {
+      connectionState: transport.connectionState,
+      subscribeToConnectionState: () => transport.disconnect,
+    };
+    setAuth(_fetchToken: unknown, changed: (authenticated: boolean) => void) {
+      transport.auth.changed = changed;
+    }
+  },
+}));
+
+const cleanup: Array<() => Promise<void>> = [];
+afterEach(async () => {
+  for (const close of cleanup.reverse()) await close();
+  cleanup.length = 0;
+  vi.clearAllMocks();
+  transport.subscriptions.length = 0;
+  delete transport.auth.changed;
+});
+
+async function fixture() {
+  const home = await mkdtemp(join(tmpdir(), "vectis-relay-"));
+  cleanup.push(() => rm(home, { recursive: true, force: true }));
+  const store = new Store(join(home, "state.sqlite"));
+  cleanup.push(async () => store.close());
+  transport.connectionState.mockReturnValue({ isWebSocketConnected: true });
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self") return new Promise(() => {});
+    return [];
+  });
+  const relay = startCloudRelay(
+    {
+      deploymentUrl: "https://isolated-test.convex.cloud",
+      machineId: "machine1",
+      localId: store.snapshot().machine.id,
+    },
+    new VectisClient({ url: "http://127.0.0.1:1", token: "unused" }),
+    { get: async () => null },
+    vi.fn(),
+    () => store.touch(),
+  );
+  cleanup.push(() => relay.close());
+  const subscription = (name: string, bindingId?: string) => {
+    const found = transport.subscriptions.findLast(
+      (item) => item.name === name && item.args.bindingId === bindingId,
+    );
+    if (!found) throw new Error(`Missing subscription: ${name} ${bindingId ?? ""}`);
+    return found;
+  };
+  return {
+    relay,
+    store,
+    subscription,
+    repositories: subscription("repositoryBindings:forMachine"),
+  };
+}
+
+const binding = (id: string) => ({
+  id,
+  repositoryId: 1,
+  repositoryName: "owner/repo",
+  environmentId: "linux",
+  automatic: false,
+});
+const job = {
+  jobId: 1,
+  runId: 2,
+  name: "Build",
+  status: "queued",
+  conclusion: null,
+  labels: ["vectis-linux"],
+  runnerId: null,
+  runnerName: null,
+  updatedAt: 1,
+};
+
+test("repository and job changes invalidate snapshots without repeating identical updates", async () => {
+  const { relay, store, repositories, subscription } = await fixture();
+  const initial = store.snapshot().revision;
+  repositories.deliver([binding("binding1")]);
+  expect(relay.repositorySnapshot).toEqual([binding("binding1")]);
+  const connected = store.snapshot().revision;
+  expect(connected).not.toBe(initial);
+  repositories.deliver([Object.fromEntries(Object.entries(binding("binding1")).reverse())]);
+  expect(store.snapshot().revision).toBe(connected);
+  const jobs = subscription("jobs:list", "binding1");
+  jobs.deliver([job]);
+  const queued = store.snapshot().revision;
+  expect(queued).not.toBe(connected);
+  jobs.deliver([{ ...job }]);
+  expect(store.snapshot().revision).toBe(queued);
+  jobs.deliver([{ ...job, status: "completed", conclusion: "success", updatedAt: 2 }]);
+  expect(store.snapshot().revision).not.toBe(queued);
+  expect(store.snapshot()).not.toHaveProperty("jobs");
+  const beforeInvalid = store.snapshot().revision;
+  repositories.deliver([{ ...binding("binding1"), environmentId: "invalid/id" }]);
+  expect(relay.repositorySnapshot).toEqual([binding("binding1")]);
+  expect(store.snapshot().revision).toBe(beforeInvalid);
+  repositories.deliver([]);
+  expect(relay.repositorySnapshot).toEqual([]);
+  expect(store.snapshot().revision).not.toBe(beforeInvalid);
+  expect(jobs.unsubscribe).toHaveBeenCalledOnce();
+});
+
+test("job subscriptions keep the newest 20 bindings and release removed bindings and shutdown resources", async () => {
+  const { relay, store, repositories, subscription } = await fixture();
+  const bindings = Array.from({ length: 22 }, (_, index) => binding(`binding${index}`));
+  repositories.deliver(bindings);
+  expect(
+    transport.subscriptions
+      .filter((item) => item.name === "jobs:list")
+      .map((item) => item.args.bindingId),
+  ).toEqual(bindings.slice(2).map((item) => item.id));
+  const removed = subscription("jobs:list", "binding21");
+  repositories.deliver(bindings.slice(0, -1));
+  expect(removed.unsubscribe).toHaveBeenCalledOnce();
+  expect(subscription("jobs:list", "binding1").unsubscribe).not.toHaveBeenCalled();
+  const revision = store.snapshot().revision;
+  removed.deliver([job]);
+  expect(store.snapshot().revision).toBe(revision);
+  await relay.close();
+  cleanup.pop();
+  for (const item of transport.subscriptions) expect(item.unsubscribe).toHaveBeenCalledOnce();
+  expect(transport.disconnect).toHaveBeenCalledOnce();
+  expect(transport.close).toHaveBeenCalledOnce();
+  repositories.deliver([binding("late")]);
+  subscription("jobs:list", "binding1").deliver([job]);
+  expect(store.snapshot().revision).toBe(revision);
+});
+
+test("jobs use live subscription values and query when uncached, disconnected or invalidated", async () => {
+  const { relay, repositories, subscription } = await fixture();
+  transport.auth.changed?.(true);
+  repositories.deliver([binding("binding1")]);
+  const jobs = subscription("jobs:list", "binding1");
+  const queries = () =>
+    transport.query.mock.calls.filter(([query]) => getFunctionName(query) === "jobs:list");
+  expect(await relay.jobs("binding1")).toEqual([]);
+  expect(queries()).toHaveLength(1);
+  jobs.deliver([job]);
+  expect(await relay.jobs("binding1")).toEqual([job]);
+  expect(await relay.jobs("binding1")).toEqual([job]);
+  expect(queries()).toHaveLength(1);
+  jobs.deliver([]);
+  expect(await relay.jobs("binding1")).toEqual([]);
+  expect(queries()).toHaveLength(1);
+  transport.connectionState.mockReturnValue({ isWebSocketConnected: false });
+  await relay.jobs("binding1");
+  expect(queries()).toHaveLength(2);
+  transport.connectionState.mockReturnValue({ isWebSocketConnected: true });
+  jobs.fail();
+  await relay.jobs("binding1");
+  expect(queries()).toHaveLength(3);
+  jobs.deliver([job]);
+  repositories.deliver([]);
+  await relay.jobs("binding1");
+  expect(queries()).toHaveLength(4);
+});
+
+test("cached jobs still require authentication and query failures retain their error contract", async () => {
+  const { relay, repositories, subscription } = await fixture();
+  repositories.deliver([binding("binding1")]);
+  subscription("jobs:list", "binding1").deliver([job]);
+  await expect(relay.jobs("binding1")).rejects.toMatchObject({ code: "cloud_unavailable" });
+  transport.auth.changed?.(true);
+  transport.query.mockRejectedValueOnce(new Error("Access denied"));
+  await expect(relay.jobs("unsubscribed")).rejects.toMatchObject({
+    code: "job_access_unavailable",
+  });
+  transport.auth.changed?.(false);
+  await expect(relay.jobs("binding1")).rejects.toMatchObject({ code: "cloud_unavailable" });
+});

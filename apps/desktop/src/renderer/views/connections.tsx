@@ -8,6 +8,7 @@ import { StatusBadge, type Tone } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { notify } from "@/lib/notify";
 import { Machines } from "@/shell/machine-switcher";
 import { request, RequestError, useStateApi } from "@/state";
 
@@ -69,7 +70,7 @@ function VerificationCode({ value, children }: { value: string; children: ReactN
 }
 
 export function Connections() {
-  const { perform, machineId, selectMachine, snapshot } = useStateApi();
+  const { perform, machineId, selectMachine, snapshot, invalidate } = useStateApi();
   const [pairCode, setPairCode] = useState(codes.pair);
   const [loginCode, setLoginCode] = useState(codes.login);
   const [account, setAccount] = useState<
@@ -78,7 +79,6 @@ export function Connections() {
   const [keychainMissing, setKeychainMissing] = useState(false);
   const [disconnect, setDisconnect] = useState("");
   const [pending, setPending] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ tone: "success" | "info" | "danger"; text: string }>();
   useEffect(() => {
     codes.pair = pairCode;
     codes.login = loginCode;
@@ -97,16 +97,13 @@ export function Connections() {
   }, []);
   async function run(name: string, work: () => Promise<void>) {
     setPending(name);
-    setMessage(undefined);
     try {
       await work();
     } catch (issue) {
-      setMessage({
-        tone: "danger",
-        text: issue instanceof Error ? issue.message : "The request failed.",
-      });
+      notify.error(issue instanceof Error ? issue.message : "The request failed.");
     } finally {
       setPending(null);
+      invalidate();
     }
   }
   const cloud = snapshot?.cloud?.state ?? "unconfigured";
@@ -118,11 +115,6 @@ export function Connections() {
       title="Connections"
       description="Vectis works locally without an account. Connect it to your Vectis account when you want GitHub to start jobs here, or to control your other Macs."
     >
-      {message && (
-        <Notice tone={message.tone} role={message.tone === "danger" ? "alert" : "status"}>
-          {message.text}
-        </Notice>
-      )}
       <div className="flex flex-col gap-4">
         <Card
           icon={<LaptopIcon className="size-[18px]" />}
@@ -189,7 +181,7 @@ export function Connections() {
                     void run("finish", async () => {
                       await request("cloud.finish");
                       setPairCode("");
-                      setMessage({ tone: "success", text: "This Mac is connected." });
+                      notify.success("This Mac is connected.");
                     })
                   }
                 >
@@ -207,7 +199,7 @@ export function Connections() {
                 onClick={() =>
                   void run("check", async () => {
                     await request("cloud.finish");
-                    setMessage({ tone: "success", text: "The connection was verified." });
+                    notify.success("The connection was verified.");
                   })
                 }
               >
@@ -223,9 +215,9 @@ export function Connections() {
                 void run("disconnect", async () => {
                   await request("cloud.disconnect");
                   setDisconnect("");
-                  setMessage({
-                    tone: "success",
-                    text: "This Mac no longer has a cloud connection. Remove it on the account page too, then connect again whenever you want.",
+                  notify.success("This Mac no longer has a cloud connection.", {
+                    description:
+                      "Remove it on the account page too, then connect again whenever you want.",
                   });
                 });
               }}
@@ -325,18 +317,12 @@ export function Connections() {
                         Schema.Struct({ state: Schema.String }),
                       )(await request("controller.finish"));
                       if (result.state !== "linked") {
-                        setMessage({
-                          tone: "info",
-                          text: "The browser has not approved this sign-in yet.",
-                        });
+                        notify.attention("The browser has not approved this sign-in yet.");
                         return;
                       }
                       setLoginCode("");
                       await checkAccount();
-                      setMessage({
-                        tone: "success",
-                        text: "Signed in. Choose a machine from the sidebar.",
-                      });
+                      notify.success("Signed in. Choose a machine from the sidebar.");
                     })
                   }
                 >
@@ -360,10 +346,7 @@ export function Connections() {
                     await request("controller.logout");
                     selectMachine(undefined);
                     setAccount({ state: "signed-out" });
-                    setMessage({
-                      tone: "success",
-                      text: "Signed out. This window controls this Mac again.",
-                    });
+                    notify.success("Signed out. This window controls this Mac again.");
                   })
                 }
               >

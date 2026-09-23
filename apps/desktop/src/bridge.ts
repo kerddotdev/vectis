@@ -12,6 +12,7 @@ export type DesktopAction =
   | "github.accounts"
   | "jobs"
   | "command"
+  | "command.settle"
   | "service.install"
   | "service.update"
   | "service.recover-update"

@@ -9,12 +9,18 @@ The app is a window onto the background service. Closing it leaves the service a
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
 | **Overview**     | The service, running VMs, operations that need you and the operation history. Pause or resume new VMs, stop or reconcile VMs, cancel operations. The menu stops the service when idle or removes the login service. | `status`, `pause`, `resume`, `operation`   |
 | **Environments** | Your guest images. Prepare Ubuntu, macOS or Windows, register an existing image, start a clean VM, and set default CPU, memory and VM folder.                                                                       | `environment`                              |
-| **Repositories** | Connections on this Mac with their `runs-on` label, the **Automatic** switch, **Start runner**, recent jobs, workflow migration and disconnecting.                                                                  | `repository`, `runner`, `job`, `migration` |
+| **Repositories** | Your repositories, each with the environments it runs on, their `runs-on` label, the **Automatic** switch, **Start runner**, recent jobs, workflow migration and disconnecting.                                     | `repository`, `runner`, `job`, `migration` |
 | **Connections**  | Connect this Mac to your account, link GitHub, and sign in to control your other Macs.                                                                                                                              | `cloud`, `github`, `login`                 |
 | **Storage**      | Disk usage of images and VMs, including blocks shared between copies.                                                                                                                                               | `storage`                                  |
 | **Diagnostics**  | Host support, runtime components, the service log and the command line tools installer.                                                                                                                             | `doctor`, `logs`                           |
 
 Keyboard: **Cmd+1** to **Cmd+6** switch views, **Cmd+B** toggles the sidebar.
+
+## What the app tells you
+
+Every view follows the service by itself: a change you make anywhere, and a change GitHub reports, appear without refreshing or switching views.
+
+A setting that applies immediately, such as the **Automatic** switch, is confirmed by a notification once the service has applied it. Work that takes longer, such as preparing an image or running a job, is confirmed as started and then continues in **Overview**. Notifications about something that worked disappear on their own; a failure, or anything waiting for you, stays until you dismiss it.
 
 ## Control another Mac
 

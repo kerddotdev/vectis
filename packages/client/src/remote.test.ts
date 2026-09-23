@@ -25,6 +25,41 @@ const record = {
   createdAt: 1000,
   updatedAt: 1000,
 };
+test.each(["succeeded", "failed", "cancelled", "action_required"])(
+  "settle follows a queued remote command to %s without treating failure as a submit error",
+  async (phase) => {
+    const { request, client } = fixture();
+    request
+      .mockResolvedValueOnce({ operationId: "remote1" })
+      .mockResolvedValueOnce(record)
+      .mockResolvedValueOnce({ ...record, phase });
+    expect(await client.settle({ type: "machine.pause", paused: true }, "stable")).toMatchObject({
+      id: "remote1",
+      key: "stable",
+      status: phase,
+    });
+    expect(request.mock.calls[0]?.[0]).toEqual({
+      type: "operation.submit",
+      machineId: "machine1",
+      key: "stable",
+      command: { type: "machine.pause", paused: true },
+    });
+  },
+);
+test("settle propagates remote submission rejection and times out without cancelling execution", async () => {
+  const { request, client } = fixture();
+  const error = new Error("Submission rejected");
+  request.mockRejectedValueOnce(error);
+  await expect(client.settle({ type: "machine.pause", paused: true }, "stable")).rejects.toBe(
+    error,
+  );
+  request.mockClear();
+  request.mockResolvedValueOnce({ operationId: "remote1" }).mockResolvedValue(record);
+  await expect(
+    client.settle({ type: "machine.pause", paused: true }, "stable", AbortSignal.timeout(50)),
+  ).rejects.toMatchObject({ code: "wait_cancelled" });
+  expect(request.mock.calls.some(([command]) => command.type === "operation.cancel")).toBe(false);
+});
 test("queued remote commands do not report success and cancellation stays on the remote target", async () => {
   const { request, client } = fixture();
   request.mockResolvedValueOnce({ operationId: "remote1" }).mockResolvedValueOnce(record);

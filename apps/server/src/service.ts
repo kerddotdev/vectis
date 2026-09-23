@@ -37,6 +37,7 @@ import {
   Preparation,
   VectisError,
   type Operation,
+  type Snapshot,
 } from "../../../packages/protocol/src/index.js";
 import { previewMigration } from "../../../packages/migration/src/index.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
@@ -63,8 +64,16 @@ export class Service {
       throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
     },
     readonly setupCredentials?: SetupCredentials,
+    readonly repositorySnapshot: () => MachineRepositories | undefined = () => undefined,
   ) {
     store.recover();
+  }
+  snapshot(): Snapshot {
+    const repositories = this.repositorySnapshot();
+    return {
+      ...this.store.snapshot(),
+      ...(repositories === undefined ? {} : { repositories }),
+    };
   }
   async initialize() {
     await recoverWindowsInstallations(this.store);
