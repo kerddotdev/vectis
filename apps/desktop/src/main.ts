@@ -378,6 +378,12 @@ else {
           submenu: [
             { label: "About Vectis", role: "about" },
             { type: "separator" },
+            {
+              label: "Settings...",
+              accelerator: "CmdOrCtrl+,",
+              click: () => send("navigate:/settings"),
+            },
+            { type: "separator" },
             { label: "Hide Vectis", role: "hide" },
             { label: "Hide Others", role: "hideOthers" },
             { label: "Show All", role: "unhide" },

@@ -9,6 +9,7 @@ import {
   ListChecksIcon,
   MonitorIcon,
   PlugIcon,
+  SettingsIcon,
   type LucideIcon,
 } from "lucide-react";
 import { useStateApi } from "@/state";
@@ -29,6 +30,7 @@ const primary = [
 const machine = [
   { to: "/storage", label: "Storage", icon: HardDriveIcon },
   { to: "/diagnostics", label: "Diagnostics", icon: ActivityIcon },
+  { to: "/settings", label: "Settings", icon: SettingsIcon },
 ] as const;
 
 export function useSidebarWidth() {

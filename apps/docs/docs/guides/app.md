@@ -14,8 +14,9 @@ The app is a window onto the background service. Closing it leaves the service a
 | **Connections**  | Connect this Mac to your account, link GitHub, and sign in to control your other Macs.                                                                                              | `cloud`, `github`, `login`                 |
 | **Storage**      | Disk usage of images and VMs, including blocks shared between copies.                                                                                                               | `storage`                                  |
 | **Diagnostics**  | Host support, runtime components, the service log and the command line tools installer.                                                                                             | `doctor`, `logs`                           |
+| **Settings**     | How many VMs this Mac runs at once, and whether it takes on new VMs.                                                                                                                | `machine configure`, `pause`, `resume`     |
 
-Keyboard: **Cmd+1** to **Cmd+7** switch views, **Cmd+B** toggles the sidebar.
+Keyboard: **Cmd+1** to **Cmd+7** switch views, **Cmd+,** opens Settings, **Cmd+B** toggles the sidebar.
 
 ## Activities and their steps
 

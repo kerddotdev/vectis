@@ -57,6 +57,7 @@ export const commandLabels: Record<string, string> = {
   "environment.remove": "Remove environment",
   "operation.cancel": "Close operation",
   "machine.pause": "Change VM intake",
+  "machine.configure": "Change concurrent VMs",
 };
 // A setting is confirmed after it happened, so its message is what changed, not what was asked.
 export const settingLabels: Record<string, string> = {
@@ -68,4 +69,5 @@ export const settingLabels: Record<string, string> = {
   "instance.reconcile": "VM reconciled",
   "operation.cancel": "Operation closed",
   "machine.pause": "VM intake updated",
+  "machine.configure": "Concurrent VMs updated",
 };

@@ -14,7 +14,9 @@ vectis repository enable-auto <binding-id>
 vectis repository disable-auto <binding-id>
 ```
 
-With automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts a runner when it is connected, not paused and idle. A Mac runs one automatic runner at a time; the next job starts after the previous VM is gone.
+With automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts runners when it is connected and not paused, one per queued job, and a new job also starts one right away instead of waiting for the next heartbeat.
+
+A Mac runs up to five runners at once by default; change it in **Settings** or with `vectis machine configure --max-runners <N>` (1 to 16). The Mac also never starts more than its CPU and memory allow: all running VMs together get at most every CPU core and 75 percent of the memory, and at most two macOS VMs run at a time. It counts with your largest ready environment, so with a 6 CPU environment on a 14 core Mac two jobs run at once, whatever the limit says. `vectis status` and the Settings view show how many fit right now; give the environment fewer CPUs or less memory with `vectis environment configure` to run more.
 
 Before booting a VM, and again before registering the runner, Vectis checks with GitHub that the job is still queued. GitHub may hand the runner a different job with the same labels. If the original job is still waiting after a successful run, Vectis tries again, at most three times. It never retries a failed, interrupted or cancelled runner on its own.
 
