@@ -61,6 +61,17 @@ export function Overview() {
   const instances = snapshot?.instances ?? [];
   const running = instances.filter((instance) => instance.status === "running");
   const interrupted = instances.filter((instance) => instance.status === "interrupted");
+  // Every operation starts a VM, so the full list grows without bound. A VM that still runs or
+  // needs cleanup always stays visible; the rest of the room goes to the newest finished ones.
+  const newest = (list: readonly Instance[]) =>
+    [...list].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  const recent = [
+    ...newest([...running, ...interrupted]),
+    ...newest(
+      instances.filter((instance) => !["running", "interrupted"].includes(instance.status)),
+    ),
+  ].slice(0, 8);
+  const olderInstances = instances.length - recent.length;
   const environments = snapshot?.environments ?? [];
   const ready = environments.filter((environment) => environment.state === "ready");
   return (
@@ -222,15 +233,23 @@ export function Overview() {
             </List>
           )}
         </Section>
-        <Section title="Virtual machines">
+        <Section title="Recent virtual machines">
           {!instances.length ? (
             <EmptyState>No virtual machines are running.</EmptyState>
           ) : (
-            <List>
-              {instances.map((instance) => (
-                <InstanceRow key={instance.id} instance={instance} />
-              ))}
-            </List>
+            <>
+              <List>
+                {recent.map((instance) => (
+                  <InstanceRow key={instance.id} instance={instance} />
+                ))}
+              </List>
+              {olderInstances > 0 && (
+                <p className="px-1 text-xs text-muted-foreground">
+                  {olderInstances} older {olderInstances === 1 ? "VM is" : "VMs are"} kept with the
+                  operations that started them.
+                </p>
+              )}
+            </>
           )}
         </Section>
       </div>
