@@ -13,14 +13,16 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { activityMatches } from "@/lib/activities";
+import { activityJob, activityMatches } from "@/lib/activities";
 import { useStateApi } from "@/state";
 
 const statuses = {
   all: () => true,
   active: (activity: Activity) => ["accepted", "running"].includes(activity.status),
   attention: (activity: Activity) => activity.status === "action_required",
-  failed: (activity: Activity) => ["failed", "cancelled"].includes(activity.status),
+  failed: (activity: Activity) =>
+    ["failed", "cancelled"].includes(activity.status) ||
+    ["failure", "timed_out"].includes(activityJob(activity)?.conclusion ?? ""),
 } as const;
 
 const dayLabel = (value: string) => {
