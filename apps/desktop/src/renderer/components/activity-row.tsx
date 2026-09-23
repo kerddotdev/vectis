@@ -38,6 +38,8 @@ export function ActivityRow({
       ? steps.at(-1)
       : steps.find((step) => step.id === activity.rootOperationId);
   const job = activityJob(activity);
+  // A runner that did its part is not news once GitHub reports the job; the job outcome is.
+  const runnerQuiet = activity.status === "succeeded" && job?.status !== undefined;
   const running = activity.status === "accepted" || activity.status === "running";
   const cancellable = steps.some(
     (step) =>
@@ -77,7 +79,7 @@ export function ActivityRow({
             {formatRelative(activity.updatedAt)}
           </span>
           {job?.status && <JobStatus status={job.status} conclusion={job.conclusion ?? null} />}
-          <OperationStatus status={activity.status} />
+          {!runnerQuiet && <OperationStatus status={activity.status} />}
         </>
       }
     >
