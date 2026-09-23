@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from "node:util";
 import { environmentRevision } from "./environment-revision.js";
 import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
 import { MachineRepositories, type RepositoryConnection } from "../../protocol/src/repositories.js";
-import { JobRefresh, JobScan } from "../../protocol/src/jobs.js";
+import { JobRefresh, JobScan, JobObservations } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
@@ -53,6 +53,7 @@ export function startCloudRelay(
   credentials: Pick<KeychainCredentials, "get">,
   onState: (state: "connecting" | "connected" | "unavailable" | "removed") => void,
   onChange: () => void,
+  onJobObservations: (entries: JobObservations) => void,
 ) {
   const abort = new AbortController();
   const fetchToken = machineTokenFetcher(connection, credentials, abort.signal);
@@ -70,6 +71,8 @@ export function startCloudRelay(
   let repositorySnapshot: MachineRepositories | undefined;
   const jobSubscriptions = new Map<string, () => void>();
   const jobValues = new Map<string, FunctionReturnType<typeof api.jobs.list>>();
+  let watchedLeaseIds: readonly string[] = [];
+  let unsubscribeLeases: (() => void) | undefined;
   const report = (state: "connecting" | "connected" | "unavailable" | "removed") => {
     if (!removed) onState(state);
   };
@@ -269,6 +272,33 @@ export function startCloudRelay(
       );
   }
   return {
+    watchLeases(ids: readonly string[]) {
+      if (abort.signal.aborted || removed) return;
+      const leaseIds = [...new Set(ids)].sort();
+      if (isDeepStrictEqual(watchedLeaseIds, leaseIds)) return;
+      if (leaseIds.length > 20)
+        throw new VectisError("invalid_lease_ids", "Watch at most 20 runner leases.");
+      unsubscribeLeases?.();
+      unsubscribeLeases = undefined;
+      watchedLeaseIds = leaseIds;
+      if (!leaseIds.length) return;
+      unsubscribeLeases = cloud.onUpdate(
+        api.jobs.forLeases,
+        { leaseIds },
+        (value) => {
+          if (abort.signal.aborted || removed || watchedLeaseIds !== leaseIds) return;
+          const decoded = Schema.decodeUnknownOption(JobObservations)(value);
+          if (decoded._tag === "None") {
+            report("unavailable");
+            return;
+          }
+          onJobObservations(decoded.value);
+        },
+        () => {
+          if (watchedLeaseIds === leaseIds) report("unavailable");
+        },
+      );
+    },
     get repositorySnapshot() {
       return repositorySnapshot;
     },
@@ -415,6 +445,7 @@ export function startCloudRelay(
       unsubscribe();
       unsubscribeInspections();
       unsubscribeRepositories();
+      unsubscribeLeases?.();
       for (const unsubscribe of jobSubscriptions.values()) unsubscribe();
       jobSubscriptions.clear();
       jobValues.clear();

@@ -31,6 +31,10 @@ An operation that stays in **Needs you** after you have read it, usually because
 
 `vectis status --json` groups related operations into `activities`. A preparation keeps one activity across setup attempts; a runner activity includes its VM start and cleanup. Preparation status follows the latest attempt, while a runner follows its root operation. A successful discard cancels the preparation activity; the discard operation itself stays `succeeded`. Operation IDs and request keys stay unchanged.
 
+Runner activities keep two separate optional facts: `subject.requestedJob` is the job that requested capacity, and `subject.actualJob` is the job observed on that registered runner. GitHub can assign a different job. Each may include `name`, `workflowName` and `htmlUrl` when GitHub provides them; a missing actual job means its identity is still unknown. Job failure does not make a successful runner lifecycle fail, and job success does not hide a cleanup failure.
+
+Actual job observation continues after the runner operation finishes and across service restarts. The service watches up to 20 of the newest eligible leases for activities created within the last 48 hours, stopping when the actual job completes. Already stored observations remain in activity history.
+
 Use `vectis activity cancel <activity-id> --json` to request cancellation of every background task that activity still owns, then inspect its final status. It can also close an activity that only waits for a person, with the same preparation and runner recovery restrictions as `operation cancel`. The command works through remote control and MCP too.
 
 Finished activity history expires after 30 days. Beyond the newest 300 completions, entries older than 24 hours expire too; the entire recent 24-hour tail stays. Unfinished or actively owned work stays. Terminal settings and automatic scans expire after 24 hours. Resource records, prepared environments and disks are unaffected. Reusing a pruned operation's request key returns `operation_expired`; use a new key for new work.

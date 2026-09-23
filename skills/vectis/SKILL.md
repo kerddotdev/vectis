@@ -75,6 +75,8 @@ An environment is a prepared guest image. Its ID becomes the runner label.
 ## Runners and jobs
 
 - `vectis runner run <binding-id> --key <key> [--job-id <id>] --json` starts one disposable runner. Its success means the VM ran and was cleaned up, not that the job passed. Read job results with `vectis job list <binding-id> --json` or MCP `vectis_jobs`.
+- A runner activity's `subject.requestedJob` identifies the job that requested capacity; `subject.actualJob` identifies the job observed on its registered runner. Both are optional and can differ. Never infer the actual job from the requested job. Use their `name`, `workflowName` and `htmlUrl` only when present. The activity status still reports the runner lifecycle, including cleanup, independently of the GitHub job result.
+- Actual job observation survives runner completion and service restarts. It watches up to 20 of the newest eligible leases from activities created within the last 48 hours, until each actual job completes. Missing observations remain unknown; stored observations stay in activity history.
 - `job scan <binding-id>` finds queued or running jobs Vectis missed; `job refresh <binding-id> <job-id>` rereads one job from GitHub.
 - An interrupted runner or VM needs `runner reconcile <operation-id>` or `instance reconcile <id>` after the VM is confirmed stopped. Do not start new runners to hide an uncertain cleanup.
 

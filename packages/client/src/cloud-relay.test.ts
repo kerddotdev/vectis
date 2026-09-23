@@ -75,6 +75,7 @@ async function fixture() {
     if (getFunctionName(query) === "machines:self") return new Promise(() => {});
     return [];
   });
+  const onJobObservations = vi.fn();
   const relay = startCloudRelay(
     {
       deploymentUrl: "https://isolated-test.convex.cloud",
@@ -85,6 +86,7 @@ async function fixture() {
     { get: async () => null },
     vi.fn(),
     () => store.touch(),
+    onJobObservations,
   );
   cleanup.push(() => relay.close());
   const subscription = (name: string, bindingId?: string) => {
@@ -96,6 +98,7 @@ async function fixture() {
   };
   return {
     relay,
+    onJobObservations,
     store,
     subscription,
     repositories: subscription("repositoryBindings:forMachine"),
@@ -216,4 +219,34 @@ test("cached jobs still require authentication and query failures retain their e
   });
   transport.auth.changed?.(false);
   await expect(relay.jobs("binding1")).rejects.toMatchObject({ code: "cloud_unavailable" });
+});
+
+test("lease observations use one subscription per set and release stale callbacks", async () => {
+  const { relay, subscription, onJobObservations } = await fixture();
+  relay.watchLeases(["lease2", "lease1", "lease1"]);
+  const first = subscription("jobs:forLeases");
+  expect(first.args).toEqual({ leaseIds: ["lease1", "lease2"] });
+  relay.watchLeases(["lease1", "lease2"]);
+  expect(transport.subscriptions.filter((item) => item.name === "jobs:forLeases")).toHaveLength(1);
+  const observations = [{ leaseId: "lease1", job }];
+  first.deliver(observations);
+  expect(onJobObservations).toHaveBeenCalledWith(observations);
+  relay.watchLeases(["lease2"]);
+  expect(first.unsubscribe).toHaveBeenCalledOnce();
+  first.deliver(observations);
+  expect(onJobObservations).toHaveBeenCalledOnce();
+  const second = subscription("jobs:forLeases");
+  second.deliver([{ leaseId: "lease2", job: { ...job, status: "unknown" } }]);
+  expect(onJobObservations).toHaveBeenCalledOnce();
+  relay.watchLeases([]);
+  expect(second.unsubscribe).toHaveBeenCalledOnce();
+  relay.watchLeases(["lease3"]);
+  const last = subscription("jobs:forLeases");
+  await relay.close();
+  cleanup.pop();
+  expect(last.unsubscribe).toHaveBeenCalledOnce();
+  last.deliver(observations);
+  relay.watchLeases(["lease4"]);
+  expect(onJobObservations).toHaveBeenCalledOnce();
+  expect(transport.subscriptions.filter((item) => item.name === "jobs:forLeases")).toHaveLength(3);
 });

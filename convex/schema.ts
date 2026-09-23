@@ -151,6 +151,8 @@ export default defineSchema({
     jobId: v.number(),
     runId: v.number(),
     name: v.string(),
+    htmlUrl: v.optional(v.string()),
+    workflowName: v.optional(v.string()),
     status: v.union(v.literal("queued"), v.literal("in_progress"), v.literal("completed")),
     conclusion: v.union(v.string(), v.null()),
     labels: v.array(v.string()),
@@ -159,6 +161,7 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_job", ["installationId", "repositoryId", "jobId"])
+    .index("by_runner", ["installationId", "repositoryId", "runnerName"])
     .index("by_repository", ["installationId", "repositoryId", "updatedAt"])
     .index("by_repository_status", ["installationId", "repositoryId", "status", "updatedAt"])
     .index("by_updated", ["updatedAt"]),

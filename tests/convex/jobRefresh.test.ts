@@ -2,7 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
-import { api } from "../../convex/_generated/api.js";
+import { api, internal } from "../../convex/_generated/api.js";
 const modules = {
   "../../convex/jobs.ts": () => import("../../convex/jobs.js"),
   "../../convex/githubJobs.ts": () => import("../../convex/githubJobs.js"),
@@ -100,6 +100,11 @@ test("recovers a completely missing webhook using the authorized repository API"
   const { device, bindingId, t } = await fixture();
   expect(await device.action(api.githubJobs.refresh, { bindingId, jobId: 4 })).toEqual({
     jobId: 4,
+    runId: 5,
+    name: "Build",
+    runnerId: 6,
+    runnerName: "vectis-test",
+    updatedAt: expect.any(Number),
     labels: ["vectis-mac"],
     status: "completed",
     conclusion: "success",
@@ -169,4 +174,52 @@ test("repository scans reject disabled access before requesting GitHub", async (
   await t.run(async (ctx) => ctx.db.patch("repositoryBindings", bindingId, { enabled: false }));
   await expect(device.action(api.githubJobs.scan, { bindingId })).rejects.toThrow();
   expect(fetch).not.toHaveBeenCalled();
+});
+
+test("refresh returns the merged stored job when an API response trails a completed webhook", async () => {
+  const { device, bindingId, fetch } = await fixture();
+  const completed = {
+    id: 4,
+    run_id: 5,
+    name: "Build",
+    status: "completed" as const,
+    conclusion: "failure",
+    labels: ["vectis-mac"],
+    runner_id: 6,
+    runner_name: "vectis-test",
+  };
+  await device.mutation(internal.jobs.save, {
+    bindingId,
+    installationId: 3,
+    repositoryId: 2,
+    job: completed,
+  });
+  const original = fetch.getMockImplementation();
+  if (!original) throw new Error("Missing test fetch");
+  fetch.mockImplementation(async (url) =>
+    url.endsWith("/actions/jobs/4")
+      ? Response.json({
+          ...completed,
+          status: "queued",
+          conclusion: null,
+          runner_id: null,
+          runner_name: null,
+          html_url: "https://github.com/owner/sandbox/actions/runs/5/job/4",
+          workflow_name: "CI",
+        })
+      : original(url),
+  );
+  const result = await device.action(api.githubJobs.refresh, { bindingId, jobId: 4 });
+  expect(result).toEqual((await device.query(api.jobs.list, { bindingId }))[0]);
+  expect(result).toMatchObject({
+    jobId: 4,
+    runId: 5,
+    name: "Build",
+    status: "completed",
+    conclusion: "failure",
+    runnerId: 6,
+    runnerName: "vectis-test",
+    workflowName: "CI",
+    htmlUrl: "https://github.com/owner/sandbox/actions/runs/5/job/4",
+  });
 });

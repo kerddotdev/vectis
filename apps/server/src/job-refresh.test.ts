@@ -55,6 +55,11 @@ test("disabling automatic admission cancels a queued demand before guest startup
   const store = new Store(":memory:");
   const refreshJob = vi.fn(async () => ({
     jobId: 4,
+    runId: 2,
+    name: "Build",
+    runnerId: null,
+    runnerName: null,
+    updatedAt: 1,
     status: "queued" as const,
     conclusion: null,
     labels: ["vectis-mac"],
@@ -128,7 +133,17 @@ test("incomplete repository scans require attention instead of claiming full rec
       throw new Error("unused");
     }),
     scanJobs,
-    refreshJob: async () => ({ jobId: 1, labels: [], status: "queued", conclusion: null }),
+    refreshJob: async () => ({
+      jobId: 1,
+      runId: 2,
+      name: "Build",
+      runnerId: null,
+      runnerName: null,
+      updatedAt: 1,
+      labels: [],
+      status: "queued",
+      conclusion: null,
+    }),
     repositories: async () => [],
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},

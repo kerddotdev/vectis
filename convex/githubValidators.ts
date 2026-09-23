@@ -10,9 +10,11 @@ export const githubJob = v.object({
   id: v.number(),
   run_id: v.number(),
   name: v.string(),
+  html_url: v.optional(v.string()),
+  workflow_name: v.optional(v.union(v.string(), v.null())),
   status: v.union(v.literal("queued"), v.literal("in_progress"), v.literal("completed")),
   conclusion: v.union(v.string(), v.null()),
   labels: v.array(v.string()),
-  runner_id: v.union(v.number(), v.null()),
-  runner_name: v.union(v.string(), v.null()),
+  runner_id: v.optional(v.union(v.number(), v.null())),
+  runner_name: v.optional(v.union(v.string(), v.null())),
 });

@@ -32,6 +32,11 @@ async function fixture() {
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob: vi.fn(async () => ({
       jobId: 1,
+      runId: 2,
+      name: "Build",
+      runnerId: null,
+      runnerName: null,
+      updatedAt: 1,
       labels: [],
       status: "completed" as const,
       conclusion: "success",
