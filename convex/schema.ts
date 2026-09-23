@@ -96,7 +96,8 @@ export default defineSchema({
   })
     .index("by_owner", ["owner"])
     .index("by_machine", ["machineId"])
-    .index("by_target", ["machineId", "repositoryId", "environmentId"]),
+    .index("by_target", ["machineId", "repositoryId", "environmentId"])
+    .index("by_automatic_repository", ["installationId", "repositoryId", "enabled", "automatic"]),
   runnerLeases: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),
@@ -165,6 +166,7 @@ export default defineSchema({
     .index("by_runner", ["installationId", "repositoryId", "runnerName"])
     .index("by_repository", ["installationId", "repositoryId", "updatedAt"])
     .index("by_repository_status", ["installationId", "repositoryId", "status", "updatedAt"])
+    .index("by_repository_queue", ["installationId", "repositoryId", "status"])
     .index("by_updated", ["updatedAt"]),
   githubDeliveries: defineTable({
     deliveryId: v.string(),

@@ -5,6 +5,7 @@ import { storeJob } from "../../convex/jobStore.js";
 import type { GitHubJob } from "../../packages/github/src/job.js";
 
 const modules = {
+  "../../convex/runnerDemand.ts": () => import("../../convex/runnerDemand.js"),
   "../../convex/_generated/server.js": () => import("../../convex/_generated/server.js"),
 };
 const completed: GitHubJob = {

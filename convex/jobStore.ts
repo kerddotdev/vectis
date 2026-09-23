@@ -1,3 +1,4 @@
+import { internal } from "./_generated/api.js";
 import { Schema } from "effect";
 import { GitHubJob } from "../packages/github/src/job.js";
 import type { Job } from "../packages/protocol/src/jobs.js";
@@ -86,7 +87,13 @@ export async function storeJob(
     )
       return previous._id;
     await ctx.db.patch("githubJobs", previous._id, { ...record, updatedAt: Date.now() });
-    return previous._id;
   }
-  return ctx.db.insert("githubJobs", { ...record, updatedAt: Date.now() });
+  const id =
+    previous?._id ?? (await ctx.db.insert("githubJobs", { ...record, updatedAt: Date.now() }));
+  if (record.status === "queued")
+    await ctx.scheduler.runAfter(0, internal.runnerDemand.forRepository, {
+      installationId,
+      repositoryId,
+    });
+  return id;
 }

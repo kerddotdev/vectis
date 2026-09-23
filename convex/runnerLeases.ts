@@ -1,3 +1,4 @@
+import { scheduleRunnerDemand } from "./runnerDemand.js";
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, query } from "./_generated/server.js";
 import type { QueryCtx } from "./_generated/server.js";
@@ -173,6 +174,7 @@ export const released = internalMutation({
       configExpiresAt: undefined,
       updatedAt: Date.now(),
     });
+    if (lease.phase !== "released") await scheduleRunnerDemand(ctx, lease.machineId);
   },
 });
 export const list = query({
