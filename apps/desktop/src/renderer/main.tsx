@@ -18,6 +18,7 @@ import { Environments } from "@/views/environments";
 import { Diagnostics, Storage } from "@/views/machine";
 import { Overview } from "@/views/overview";
 import { Repositories } from "@/views/repositories";
+import { Settings } from "@/views/settings";
 import "./style.css";
 
 const rootRoute = createRootRoute({ component: AppShell });
@@ -37,6 +38,7 @@ const routeTree = rootRoute.addChildren([
   createRoute({ getParentRoute: () => rootRoute, path: "/connections", component: Connections }),
   createRoute({ getParentRoute: () => rootRoute, path: "/storage", component: Storage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/diagnostics", component: Diagnostics }),
+  createRoute({ getParentRoute: () => rootRoute, path: "/settings", component: Settings }),
 ]);
 const router = createRouter({ routeTree, history: createHashHistory() });
 declare module "@tanstack/react-router" {

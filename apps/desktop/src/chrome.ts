@@ -8,6 +8,7 @@ export const routes = [
   "/connections",
   "/storage",
   "/diagnostics",
+  "/settings",
 ] as const;
 export type Route = (typeof routes)[number];
 export type WindowEvent =
