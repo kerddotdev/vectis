@@ -29,6 +29,14 @@ The app shows the same in **Overview** and the service log in **Diagnostics**. `
 
 An operation that stays in **Needs you** after you have read it, usually because the service restarted before it finished, can be closed with **Dismiss** in the app or `vectis operation cancel <operation-id>`. It ends as `cancelled` and nothing else changes. Two cases keep their own way out instead: an interrupted runner is closed by `vectis runner reconcile <operation-id>` once its VM is confirmed stopped, and an image preparation by resuming or discarding the setup.
 
+`vectis status --json` groups related operations into `activities`. A preparation keeps one activity across setup attempts; a runner activity includes its VM start and cleanup. Preparation status follows the latest attempt, while a runner follows its root operation. A successful discard cancels the preparation activity; the discard operation itself stays `succeeded`. Operation IDs and request keys stay unchanged.
+
+Use `vectis activity cancel <activity-id> --json` to request cancellation of every background task that activity still owns, then inspect its final status. It can also close an activity that only waits for a person, with the same preparation and runner recovery restrictions as `operation cancel`. The command works through remote control and MCP too.
+
+Finished activity history expires after 30 days. Beyond the newest 300 completions, entries older than 24 hours expire too; the entire recent 24-hour tail stays. Unfinished or actively owned work stays. Terminal settings and automatic scans expire after 24 hours. Resource records, prepared environments and disks are unaffected. Reusing a pruned operation's request key returns `operation_expired`; use a new key for new work.
+
+During an app update, an older service may omit `activities` and `revision`. Clients treat absent activities as an empty list and an absent revision as unknown change state.
+
 ## A job fails because a tool is missing in the guest
 
 A prepared environment is a runner host, not a copy of a GitHub-hosted runner. It provides what a workflow needs to install its own toolchain: git, Docker, archive tools, a C and C++ toolchain and the libraries prebuilt binaries link against. Language runtimes, databases, browsers and cloud CLIs are not there. Each guide lists what its guest contains: [Linux](/docs/guides/linux-setup#what-the-image-contains), [macOS](/docs/guides/macos-setup#what-the-guest-contains), [Windows](/docs/guides/windows-setup#what-the-guest-contains).

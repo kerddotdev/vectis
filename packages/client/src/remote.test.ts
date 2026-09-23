@@ -25,6 +25,23 @@ const record = {
   createdAt: 1000,
   updatedAt: 1000,
 };
+test("activity cancellation is replayed on the machine with the local activity identity", async () => {
+  const { request, client } = fixture();
+  const command = { type: "activity.cancel", id: "local-activity" } as const;
+  request
+    .mockResolvedValueOnce({ operationId: "remote1" })
+    .mockResolvedValueOnce({ ...record, commandJson: JSON.stringify(command) });
+  expect(await client.submit(command, "cancel-activity")).toMatchObject({
+    status: "accepted",
+    command: "activity.cancel",
+  });
+  expect(request.mock.calls[0]?.[0]).toEqual({
+    type: "operation.submit",
+    machineId: "machine1",
+    key: "cancel-activity",
+    command,
+  });
+});
 test.each(["succeeded", "failed", "cancelled", "action_required"])(
   "settle follows a queued remote command to %s without treating failure as a submit error",
   async (phase) => {

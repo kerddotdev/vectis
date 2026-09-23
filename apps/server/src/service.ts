@@ -28,7 +28,7 @@ import type {
   RepositoryConnection,
 } from "../../../packages/protocol/src/repositories.js";
 import { runRunnerTask } from "./runner-task.js";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { cpus, totalmem } from "node:os";
 import { Schema } from "effect";
 import {
@@ -42,12 +42,15 @@ import {
 import { previewMigration } from "../../../packages/migration/src/index.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { Store } from "./store.js";
+import { activityFor, decidingMember, type ActivityLink } from "./activities.js";
+import { retainActivities } from "./activity-retention.js";
 
 export class Service {
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
   private preparing: string | undefined;
   private tasks = new Map<string, { abort: AbortController; done: Promise<void> }>();
+  private retentionTimer: ReturnType<typeof setInterval> | undefined;
   constructor(
     readonly store: Store,
     readonly runtime: VmRuntime,
@@ -93,16 +96,67 @@ export class Service {
       )
         this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
     }
+    if (!this.closing && !this.retentionTimer) {
+      const sweep = () => retainActivities(this.store, (id) => this.tasks.has(id));
+      sweep();
+      this.retentionTimer = setInterval(
+        () => {
+          try {
+            sweep();
+          } catch (error) {
+            console.error("Activity retention failed:", error);
+          }
+        },
+        60 * 60 * 1000,
+      );
+      this.retentionTimer.unref();
+    }
   }
   submit(key: string, command: Command): Operation {
+    const operationId = randomUUID();
+    return this.acceptSubmission(operationId, key, command, activityFor(operationId, command));
+  }
+  private submitChild(activityId: string, key: string, command: Command): Operation {
+    return this.acceptSubmission(randomUUID(), key, command, { activityId });
+  }
+  private acceptSubmission(
+    operationId: string,
+    key: string,
+    command: Command,
+    link?: ActivityLink,
+  ): Operation {
     if (this.closing && command.type !== "instance.stop")
       throw new VectisError("service_stopping", "The service is stopping.");
     if (key.length > 200) throw new VectisError("invalid_request", "The request key is too long.");
     const fingerprint = createHash("sha256").update(JSON.stringify(command)).digest("hex");
-    const accepted = this.store.accept(key, fingerprint, command.type);
+    const accepted = this.store.accept(key, fingerprint, command.type, link, operationId);
     if (accepted.fresh)
       this.queue = this.queue.then(() => this.execute(accepted.operation, command));
     return accepted.operation;
+  }
+  private closeWaitingOperation(waiting: Operation | undefined) {
+    if (!waiting || waiting.status !== "action_required")
+      throw new VectisError(
+        "operation_not_cancellable",
+        "No active cancellable task has this operation ID.",
+      );
+    if (waiting.command === "runner.run")
+      throw new VectisError(
+        "operation_not_cancellable",
+        "An interrupted runner is reconciled, not closed.",
+        "Confirm the VM stopped, then run runner reconcile with this operation ID.",
+      );
+    if (Schema.is(Schema.Struct({ setupId: Schema.String }))(waiting.result))
+      throw new VectisError(
+        "operation_not_cancellable",
+        "This image preparation still owns a setup.",
+        "Resume the preparation, or discard it, instead of closing its operation.",
+      );
+    this.store.update(waiting, {
+      status: "cancelled",
+      message: "Closed without confirming its result.",
+    });
+    return { operationId: waiting.id, closed: true };
   }
   private async execute(operation: Operation, command: Command) {
     operation = this.store.update(operation, { status: "running", message: "Running." });
@@ -376,6 +430,12 @@ export class Service {
           );
           if (!binding)
             throw new VectisError("repository_missing", "This repository binding is unavailable.");
+          this.store.updateActivity(operation.id, (base) => ({
+            ...base,
+            bindingId: binding.id,
+            environmentId: binding.environmentId,
+            repository: { id: binding.repositoryId, name: binding.repositoryName },
+          }));
           const environment = snapshot.environments.find(
             (item) => item.id === binding.environmentId,
           );
@@ -406,6 +466,18 @@ export class Service {
                         demandJobId,
                         abort.signal,
                       );
+                      this.store.updateActivity(operation.id, (base) => ({
+                        ...base,
+                        subject: {
+                          ...base.subject,
+                          type: "runner",
+                          requestedJob: {
+                            jobId: job.jobId,
+                            status: job.status,
+                            conclusion: job.conclusion,
+                          },
+                        },
+                      }));
                       if (job.status !== "queued") return false;
                       if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
                         throw new VectisError(
@@ -416,7 +488,7 @@ export class Service {
                     },
                   }),
               start: async () => {
-                const started = this.submit(`${operation.id}:start`, {
+                const started = this.submitChild(operation.id, `${operation.id}:start`, {
                   type: "environment.start",
                   id: environment.id,
                 });
@@ -424,7 +496,7 @@ export class Service {
                 const cancelStart = () => {
                   if (this.closing) this.tasks.get(started.id)?.abort.abort();
                   else
-                    this.submit(`${operation.id}:cancel-start`, {
+                    this.submitChild(operation.id, `${operation.id}:cancel-start`, {
                       type: "operation.cancel",
                       id: started.id,
                     });
@@ -447,7 +519,7 @@ export class Service {
                 if (!startId) return;
                 const current = this.store.snapshot().instances.find((item) => item.id === startId);
                 if (!current || current.status === "stopped") return;
-                const stopped = this.submit(`${operation.id}:stop`, {
+                const stopped = this.submitChild(operation.id, `${operation.id}:stop`, {
                   type: "instance.stop",
                   id: startId,
                 });
@@ -549,6 +621,30 @@ export class Service {
           result = { operationId: interrupted.id, leaseId: lease.id };
           break;
         }
+        case "activity.cancel": {
+          const activity = snapshot.activities?.find((item) => item.id === command.id);
+          if (!activity)
+            throw new VectisError(
+              "operation_not_cancellable",
+              "No cancellable activity has this ID.",
+            );
+          const members = this.store.activityMembers(activity.id);
+          const active = members.filter((member) => this.tasks.has(member.id));
+          if (active.length) {
+            for (const member of active) this.tasks.get(member.id)?.abort.abort();
+            result = {
+              activityId: activity.id,
+              operationIds: active.map((member) => member.id),
+              cancellationRequested: true,
+            };
+          } else {
+            result = {
+              activityId: activity.id,
+              ...this.closeWaitingOperation(decidingMember(activity, members)),
+            };
+          }
+          break;
+        }
         case "operation.cancel": {
           const active = this.tasks.get(command.id);
           if (active) {
@@ -556,31 +652,9 @@ export class Service {
             result = { operationId: command.id, cancellationRequested: true };
             break;
           }
-          // An operation nobody owns any more can still wait for a person. Closing it is the only
-          // way out, except where a dedicated recovery command has to observe it first.
-          const waiting = snapshot.operations.find((item) => item.id === command.id);
-          if (!waiting || waiting.status !== "action_required")
-            throw new VectisError(
-              "operation_not_cancellable",
-              "No active cancellable task has this operation ID.",
-            );
-          if (waiting.command === "runner.run")
-            throw new VectisError(
-              "operation_not_cancellable",
-              "An interrupted runner is reconciled, not closed.",
-              "Confirm the VM stopped, then run runner reconcile with this operation ID.",
-            );
-          if (Schema.is(Schema.Struct({ setupId: Schema.String }))(waiting.result))
-            throw new VectisError(
-              "operation_not_cancellable",
-              "This image preparation still owns a setup.",
-              "Resume the preparation, or discard it, instead of closing its operation.",
-            );
-          this.store.update(waiting, {
-            status: "cancelled",
-            message: "Closed without confirming its result.",
-          });
-          result = { operationId: command.id, closed: true };
+          result = this.closeWaitingOperation(
+            snapshot.operations.find((item) => item.id === command.id),
+          );
           break;
         }
         case "machine.pause":
@@ -868,6 +942,7 @@ export class Service {
   }
   async close() {
     this.closing = true;
+    if (this.retentionTimer) clearInterval(this.retentionTimer);
     for (const task of this.tasks.values()) task.abort.abort();
     await this.queue;
     await Promise.all([...this.tasks.values()].map((task) => task.done));

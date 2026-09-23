@@ -3,8 +3,20 @@ import { Service } from "./service.js";
 import { Store } from "./store.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { VectisError } from "../../../packages/protocol/src/index.js";
+import { activityFor } from "./activities.js";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach } from "vitest";
 
-function fixture() {
+const homes: string[] = [];
+afterEach(async () => {
+  for (const home of homes) await rm(home, { recursive: true, force: true });
+  homes.length = 0;
+});
+async function fixture() {
+  const home = await mkdtemp(join(tmpdir(), "vectis-operation-close-"));
+  homes.push(home);
   const store = new Store(":memory:");
   const broker = {
     connectRepository: vi.fn(async () => "binding"),
@@ -28,17 +40,13 @@ function fixture() {
     releaseRunner: vi.fn(async () => {}),
     repositories: async () => [],
   };
-  const service = new Service(
-    store,
-    new VmRuntime({ home: "/unused-isolated-home" }),
-    () => broker,
-  );
+  const service = new Service(store, new VmRuntime({ home }), () => broker);
   const status = (id: string) => store.snapshot().operations.find((item) => item.id === id);
   return { store, service, broker, status };
 }
 
 test("an operation left waiting by a restart can be closed", async () => {
-  const { store, service, status } = fixture();
+  const { store, service, status } = await fixture();
   try {
     const stranded = store.accept("scan", "fingerprint", "job.scan").operation;
     store.update(stranded, { status: "running" });
@@ -55,7 +63,7 @@ test("an operation left waiting by a restart can be closed", async () => {
 });
 
 test("closing never replaces reconciliation or preparation recovery", async () => {
-  const { store, service, status } = fixture();
+  const { store, service, status } = await fixture();
   try {
     const runner = store.accept("runner", "fingerprint", "runner.run").operation;
     store.update(runner, {
@@ -81,7 +89,7 @@ test("closing never replaces reconciliation or preparation recovery", async () =
 });
 
 test("a refused repository connection fails with its cause instead of waiting forever", async () => {
-  const { store, service, broker, status } = fixture();
+  const { store, service, broker, status } = await fixture();
   try {
     store.put("environment", "test", {
       id: "test",
@@ -108,6 +116,55 @@ test("a refused repository connection fails with its cause instead of waiting fo
     await service.drain();
     await vi.waitFor(() => expect(status(operation.id)?.status).toBe("failed"));
     expect(status(operation.id)?.result).toMatchObject({ code: "github_app_not_installed" });
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
+
+test("activity cancellation preserves setup ownership and runner reconciliation, but closes a waiting connection", async () => {
+  const { store, service, status } = await fixture();
+  try {
+    const commands = [
+      { type: "environment.resume-macos", id: "setup" },
+      { type: "runner.run", bindingId: "binding" },
+      {
+        type: "repository.connect",
+        accountId: "account",
+        repositoryName: "repo",
+        environmentId: "image",
+      },
+    ] as const;
+    for (const command of commands) {
+      const id = command.type;
+      const link = activityFor(id, command);
+      const waiting = store.accept(id, id, command.type, link, id).operation;
+      store.update(waiting, {
+        status: "action_required",
+        ...(command.type === "environment.resume-macos" ? { result: { setupId: "setup" } } : {}),
+      });
+      const close = service.submit(`close:${id}`, {
+        type: "activity.cancel",
+        id: link?.activityId ?? id,
+      });
+      await service.drain();
+      const closable = command.type === "repository.connect";
+      expect(status(close.id)?.status).toBe(closable ? "succeeded" : "failed");
+      expect(status(waiting.id)?.status).toBe(closable ? "cancelled" : "action_required");
+      expect(
+        store.snapshot().activities?.find((activity) => activity.id === link?.activityId)?.status,
+      ).toBe(closable ? "cancelled" : "action_required");
+      if (!closable)
+        expect(status(close.id)?.result).toMatchObject({ code: "operation_not_cancellable" });
+      else expect(status(waiting.id)?.message).toBe("Closed without confirming its result.");
+      expect(status(close.id)?.activityId).toBeUndefined();
+    }
+    const closedAgain = service.submit("close-again", {
+      type: "activity.cancel",
+      id: "repository.connect",
+    });
+    await service.drain();
+    expect(status(closedAgain.id)?.result).toMatchObject({ code: "operation_not_cancellable" });
   } finally {
     await service.close();
     store.close();

@@ -70,6 +70,10 @@ async function main() {
       "storage-path": { type: "string" },
       map: { type: "string", multiple: true },
       lines: { type: "string" },
+      limit: { type: "string" },
+      kind: { type: "string" },
+      status: { type: "string" },
+      repository: { type: "string" },
     },
   });
   const home = resolveHome(values.home);
@@ -165,8 +169,11 @@ Environments
   instance stop <id>            Stop a VM owned by this service
   instance reconcile <id>       Recheck an interrupted VM safely
 
-Operations
-  operation get <id>            Inspect an operation
+Activities and operations
+  activity list                 List activities, newest first; filter with --kind, --status, --repository, --limit
+  activity get <id>             Inspect one activity with the operations that belong to it
+  activity cancel <id>          Cancel work an activity owns, or close one that only waits for you
+  operation get <id>            Inspect one operation
   operation wait <id>           Wait for an operation's terminal state; on --timeout, print it as it is
   operation cancel <id>         Cancel an active operation, or close one that only waits for you
   command --file <path>         Submit any protocol command as JSON
@@ -177,6 +184,9 @@ Options
   --machine <id>                Send commands and queries to a remote machine after vectis login
   --json                        Print compact JSON (output is always JSON)
   --key <id>                    Idempotency key; retrying with the same key never repeats work
+  --kind <vectis|github>        Filter activities by what asked for them
+  --status <status>             Filter activities by status
+  --repository <owner/name>     Filter activities by repository
   --wait                        Wait for the operation's terminal state (automatic for setting commands)
   --timeout <milliseconds>      Wait timeout (default: 120000)
   --name <text>                 Environment or login name (defaults: Ubuntu 24.04 ARM64, macOS 26 ARM64,
@@ -203,7 +213,7 @@ Options
 
 Exit codes: 0 success, 1 failure or cancellation, 3 action required or still pending.
 Setting commands always wait: pause/resume, repository enable-auto/disable-auto,
-environment register/configure/remove, instance stop/reconcile, and operation cancel.
+environment register/configure/remove, instance stop/reconcile, operation cancel, and activity cancel.
 Their wait timeout reports wait_cancelled with exit code 3; the operation may still be running.
 Errors are JSON: {"error":{"code","message","nextStep"}}.
 
@@ -453,6 +463,27 @@ Documentation: https://vectis.kerd.dev/docs
     output(await api.status());
     return;
   }
+  if (command === "activity" && subcommand === "list") {
+    const limit = values.limit === undefined ? 50 : Number(values.limit);
+    if (!Number.isSafeInteger(limit) || limit <= 0)
+      throw new VectisError("invalid_argument", "--limit expects a positive whole number.");
+    output(
+      (await api.activities())
+        .filter((activity) => !values.kind || activity.kind === values.kind)
+        .filter((activity) => !values.status || activity.status === values.status)
+        .filter((activity) => !values.repository || activity.repository?.name === values.repository)
+        .slice(0, limit),
+    );
+    return;
+  }
+  if (command === "activity" && subcommand === "get") {
+    if (!id) throw new VectisError("missing_argument", "An activity ID is required.");
+    const { activity, operations } = await api.activity(id);
+    output({ activity, operations });
+    if (activity.status === "failed" || activity.status === "cancelled") process.exitCode = 1;
+    if (["action_required", "accepted", "running"].includes(activity.status)) process.exitCode = 3;
+    return;
+  }
   if (command === "operation" && subcommand !== "cancel") {
     if (!id) throw new VectisError("missing_argument", "An operation ID is required.");
     const operation = subcommand === "wait" ? await waitFor(id) : await api.operation(id);
@@ -508,6 +539,8 @@ Documentation: https://vectis.kerd.dev/docs
     });
   else if (command === "operation" && subcommand === "cancel" && id)
     request = decodeCommand({ type: "operation.cancel", id });
+  else if (command === "activity" && subcommand === "cancel" && id)
+    request = decodeCommand({ type: "activity.cancel", id });
   else if (
     command === "repository" &&
     subcommand === "connect" &&

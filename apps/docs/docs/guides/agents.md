@@ -49,18 +49,19 @@ The skill is a plain [`SKILL.md`](https://github.com/kerddotdev/vectis/blob/main
 
 ## MCP tools
 
-| Tool                                                           | Use                                                                                 |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `vectis_capabilities`                                          | Supported commands and queries, with the command schema                             |
-| `vectis_status`                                                | Machine, environments, VMs, recent operations and cloud connection                  |
-| `vectis_command`                                               | Submit a command with an idempotency key                                            |
-| `vectis_operation`, `vectis_wait`                              | Read one operation, or wait for it; a wait that times out returns the current state |
-| `vectis_logs`                                                  | The newest service log lines                                                        |
-| `vectis_repositories`, `vectis_jobs`, `vectis_github_accounts` | Connections with their labels, job results, linked accounts                         |
-| `vectis_storage`, `vectis_doctor`                              | Disk usage and runtime diagnostics                                                  |
-| `vectis_github_connect`                                        | The page that links GitHub and installs the App                                     |
-| `vectis_service`, `vectis_cloud`                               | Login service and pairing, on the Mac itself only                                   |
-| `vectis_machines`                                              | Your Macs, after `vectis login`                                                     |
+| Tool                                                           | Use                                                                                  |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `vectis_capabilities`                                          | Supported commands and queries, with the command schema                              |
+| `vectis_status`                                                | Machine, environments, VMs, recent operations and cloud connection                   |
+| `vectis_command`                                               | Submit a command with an idempotency key                                             |
+| `vectis_activities`, `vectis_activity`                         | What the machine was asked to do, and one intent with the operations that carried it |
+| `vectis_operation`, `vectis_wait`                              | Read one operation, or wait for it; a wait that times out returns the current state  |
+| `vectis_logs`                                                  | The newest service log lines                                                         |
+| `vectis_repositories`, `vectis_jobs`, `vectis_github_accounts` | Connections with their labels, job results, linked accounts                          |
+| `vectis_storage`, `vectis_doctor`                              | Disk usage and runtime diagnostics                                                   |
+| `vectis_github_connect`                                        | The page that links GitHub and installs the App                                      |
+| `vectis_service`, `vectis_cloud`                               | Login service and pairing, on the Mac itself only                                    |
+| `vectis_machines`                                              | Your Macs, after `vectis login`                                                      |
 
 To let an agent control another Mac, sign in once with `vectis login` and start the server with `vectis-mcp --machine <machine-id>`. A remote session never falls back to the local Mac.
 

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { startService } from "./http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
+import { Snapshot } from "../../../packages/protocol/src/index.js";
+import { Schema } from "effect";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -20,9 +22,39 @@ async function fixture() {
 test("an unpaired status snapshot decodes with a stable revision and no repositories", async () => {
   const { client, server } = await fixture();
   const snapshot = await client.status();
+  expect(snapshot.revision).toEqual(expect.any(String));
+  expect(snapshot.activities).toEqual([]);
   expect(snapshot.revision).toBe(server.service.snapshot().revision);
   expect(snapshot).not.toHaveProperty("repositories");
   expect((await client.status()).revision).toBe(snapshot.revision);
+});
+
+test("strict snapshot decoding accepts older services during an app update", async () => {
+  const { client, server } = await fixture();
+  const legacy = { ...server.service.snapshot() };
+  delete legacy.revision;
+  delete legacy.activities;
+  vi.spyOn(server.service, "snapshot").mockReturnValue(legacy);
+  const snapshot = await client.status();
+  expect(snapshot.revision).toBeUndefined();
+  expect(snapshot.activities ?? []).toEqual([]);
+  expect(() =>
+    Schema.decodeUnknownSync(Snapshot, { onExcessProperty: "error" })(snapshot),
+  ).not.toThrow();
+});
+
+test("HTTP callers cannot attach intents to another activity", async () => {
+  const { server, client } = await fixture();
+  const response = await fetch(`${server.connection.url}/v1/commands`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${server.connection.token}` },
+    body: JSON.stringify({
+      key: "foreign",
+      command: { type: "job.scan", bindingId: "binding", activityId: "someone-else" },
+    }),
+  });
+  expect(response.status).toBe(400);
+  expect((await client.status()).activities).toEqual([]);
 });
 
 test.each([

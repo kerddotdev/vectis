@@ -32,6 +32,16 @@ const jobInput = Schema.Struct({ bindingId: Identifier });
 const jobSchema = Schema.toJsonSchemaDocument(jobInput);
 const operationInput = Schema.Struct({ id: Identifier });
 const operationSchema = Schema.toJsonSchemaDocument(operationInput);
+const activitiesInput = Schema.Struct({
+  kind: Schema.optional(Schema.Literals(["vectis", "github"])),
+  status: Schema.optional(
+    Schema.Literals(["accepted", "running", "action_required", "succeeded", "failed", "cancelled"]),
+  ),
+  repository: Schema.optional(Schema.NonEmptyString),
+  limit: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+});
+const activitiesSchema = Schema.toJsonSchemaDocument(activitiesInput);
+const activitySchema = Schema.toJsonSchemaDocument(operationInput);
 const logSchema = Schema.toJsonSchemaDocument(LogRequest);
 const tools = [
   {
@@ -105,6 +115,20 @@ const tools = [
     annotations: { readOnlyHint: true },
   },
   {
+    name: "vectis_activities",
+    description:
+      "List what this machine was asked to do, newest first. An activity groups the operations of one intent: a guest preparation with its setup steps, or a runner with its VM. Filter by kind, status, repository or limit.",
+    inputSchema: { ...activitiesSchema.schema, $defs: activitiesSchema.definitions },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "vectis_activity",
+    description:
+      "Read one activity with the operations that belong to it, oldest first. Wait for an outcome with vectis_wait on the operation that matters.",
+    inputSchema: { ...activitySchema.schema, $defs: activitySchema.definitions },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "vectis_logs",
     description:
       "Read the newest lines of the Vectis service log (default 200, at most 1000) to diagnose failed or stuck operations.",
@@ -151,6 +175,8 @@ export function createMcpServer(
       | "shutdown"
       | "capabilities"
       | "operation"
+      | "activities"
+      | "activity"
       | "logs"
     >
   >,
@@ -196,7 +222,7 @@ export function createMcpServer(
     {
       capabilities: { tools: {} },
       instructions:
-        "Start with vectis_capabilities and vectis_status. Submit only capabilities of kind command through vectis_command; the rest have their own read tools. Reuse an idempotency key only for the same command. Inspect failed and action_required outcomes with vectis_operation and vectis_logs; never report an accepted operation as completed. Documentation for agents: https://vectis.kerd.dev/llms.txt",
+        "Start with vectis_capabilities and vectis_status. Submit only capabilities of kind command through vectis_command; the rest have their own read tools. Reuse an idempotency key only for the same command. Read what the machine was asked to do with vectis_activities, and one intent with its steps through vectis_activity. Inspect failed and action_required outcomes with vectis_operation and vectis_logs; never report an accepted operation as completed. Documentation for agents: https://vectis.kerd.dev/llms.txt",
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: availableTools }));
@@ -270,6 +296,26 @@ export function createMcpServer(
             request.params.arguments,
           );
           result = await (await connect()).operation(input.id);
+          break;
+        }
+        case "vectis_activities": {
+          const input = Schema.decodeUnknownSync(activitiesInput, { onExcessProperty: "error" })(
+            request.params.arguments ?? {},
+          );
+          result = (await (await connect()).activities())
+            .filter((activity) => !input.kind || activity.kind === input.kind)
+            .filter((activity) => !input.status || activity.status === input.status)
+            .filter(
+              (activity) => !input.repository || activity.repository?.name === input.repository,
+            )
+            .slice(0, input.limit ?? 50);
+          break;
+        }
+        case "vectis_activity": {
+          const input = Schema.decodeUnknownSync(operationInput, { onExcessProperty: "error" })(
+            request.params.arguments,
+          );
+          result = await (await connect()).activity(input.id);
           break;
         }
         case "vectis_logs": {

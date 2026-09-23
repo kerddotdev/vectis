@@ -68,18 +68,53 @@ export const Environment = Schema.Struct({
   tpmStatePath: Schema.optional(Schema.String),
 });
 export type Environment = typeof Environment.Type;
+export const OperationStatus = Schema.Literals([
+  "accepted",
+  "running",
+  "action_required",
+  "succeeded",
+  "failed",
+  "cancelled",
+]);
+export const ActivityKind = Schema.Literals(["vectis", "github"]);
+export const ActivityRepository = Schema.Struct({ id: Schema.Int, name: Schema.NonEmptyString });
+export const ActivityJob = Schema.Struct({
+  jobId: Schema.Int,
+  runId: Schema.optional(Schema.Int),
+  name: Schema.optional(Schema.String),
+  status: Schema.optional(Schema.Literals(["queued", "in_progress", "completed"])),
+  conclusion: Schema.optional(Schema.NullOr(Schema.String)),
+});
+export const ActivitySubject = Schema.Union([
+  Schema.Struct({ type: Schema.Literal("preparation"), setupId: Identifier, os: GuestOS }),
+  Schema.Struct({ type: Schema.Literal("runner"), requestedJob: Schema.optional(ActivityJob) }),
+  Schema.Struct({ type: Schema.Literal("command"), command: Schema.NonEmptyString }),
+]);
+export const ActivityBase = Schema.Struct({
+  id: Identifier,
+  kind: ActivityKind,
+  subject: ActivitySubject,
+  createdAt: Schema.String,
+  rootOperationId: Identifier,
+  environmentId: Schema.optional(Identifier),
+  bindingId: Schema.optional(Identifier),
+  repository: Schema.optional(ActivityRepository),
+});
+export type ActivityBase = typeof ActivityBase.Type;
+export const Activity = Schema.Struct({
+  ...ActivityBase.fields,
+  status: OperationStatus,
+  message: Schema.String,
+  updatedAt: Schema.String,
+  completedAt: Schema.optional(Schema.String),
+});
+export type Activity = typeof Activity.Type;
 export const Operation = Schema.Struct({
   id: Identifier,
   key: Schema.NonEmptyString,
   command: Schema.String,
-  status: Schema.Literals([
-    "accepted",
-    "running",
-    "action_required",
-    "succeeded",
-    "failed",
-    "cancelled",
-  ]),
+  activityId: Schema.optional(Identifier),
+  status: OperationStatus,
   createdAt: Schema.String,
   updatedAt: Schema.String,
   message: Schema.String,
@@ -111,7 +146,7 @@ export const CloudStatus = Schema.Struct({
 });
 export type CloudStatus = typeof CloudStatus.Type;
 export const Snapshot = Schema.Struct({
-  revision: Schema.String,
+  revision: Schema.optional(Schema.String),
   preparationBusy: Schema.optional(Schema.Boolean),
   protocolVersion: Schema.Literal(1),
   version: Schema.optional(Schema.String),
@@ -119,6 +154,7 @@ export const Snapshot = Schema.Struct({
   environments: Schema.Array(Environment),
   instances: Schema.Array(Instance),
   operations: Schema.Array(Operation),
+  activities: Schema.optional(Schema.Array(Activity)),
   cloud: Schema.optional(CloudStatus),
   repositories: Schema.optional(MachineRepositories),
 });
@@ -173,6 +209,7 @@ export const Command = Schema.Union([
     jobId: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
   }),
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
+  Schema.Struct({ type: Schema.Literal("activity.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
@@ -361,6 +398,13 @@ export const capabilities = [
       "Run one disposable repository runner; job results remain authoritative on GitHub.",
   },
   {
+    name: "activity.cancel",
+    kind: "command",
+    activity: "setting",
+    description:
+      "Stop work an activity still owns, or close an activity that only waits for a person. A preparation that still owns a setup must be resumed or discarded; an interrupted runner must be reconciled.",
+  },
+  {
     name: "operation.cancel",
     kind: "command",
     activity: "setting",
@@ -385,7 +429,7 @@ export const capabilities = [
   {
     name: "status",
     kind: "query",
-    description: "Read machine, environments, instances, and recent operations.",
+    description: "Read machine, environments, instances, activities, and recent operations.",
   },
   {
     name: "machine.pause",
