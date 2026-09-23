@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Tag matches the package version
         run: |
-          version=$(node -p 'require("./package.json").version')
+          version=$(jq -r .version package.json)
           test "${GITHUB_REF_NAME}" = "v${version}" || {
             echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${version}." >&2
             exit 1
