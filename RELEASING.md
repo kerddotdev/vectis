@@ -13,7 +13,7 @@ Vectis runs its own CI. Every workflow targets a Vectis runner on a maintainer's
 
 A runner label is always `vectis-` followed by the environment ID, so the CI Mac's environments have to carry exactly these IDs. Changing an ID means changing every `runs-on` in `.github/workflows` and the required checks in the `main` ruleset.
 
-The scheduler starts one automatic runner at a time per Mac, so workflows are few and cancel superseded runs.
+Each Mac runs as many automatic runners at once as its concurrency limit and CPU and memory allow, so workflows stay few and cancel superseded runs.
 
 ## Set up the CI Mac
 
