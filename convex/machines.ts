@@ -55,6 +55,7 @@ export const heartbeat = mutation({
     environments: v.optional(v.array(environmentSummary)),
     paused: v.optional(v.boolean()),
     runnerIdle: v.optional(v.boolean()),
+    runnerSlots: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const record = await machine(ctx);
@@ -83,6 +84,7 @@ export const heartbeat = mutation({
       ...(environments ? { environments } : {}),
       ...(args.paused === undefined ? {} : { paused: args.paused }),
       ...(args.runnerIdle === undefined ? {} : { runnerIdle: args.runnerIdle }),
+      ...(args.runnerSlots === undefined ? {} : { runnerSlots: args.runnerSlots }),
     });
     await scheduleRunnerDemand(ctx, record._id);
     await scheduleJobScan(ctx, record._id);

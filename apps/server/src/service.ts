@@ -46,6 +46,7 @@ import { Store } from "./store.js";
 import { activityFor, decidingMember, type ActivityLink } from "./activities.js";
 import { retainActivities } from "./activity-retention.js";
 import { observeRunnerJobs, watchRunnerJobs } from "./runner-job-observations.js";
+import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
 
 export class Service {
   private queue: Promise<void> = Promise.resolve();
@@ -81,8 +82,10 @@ export class Service {
   }
   snapshot(): Snapshot {
     const repositories = this.repositorySnapshot();
+    const snapshot = this.store.snapshot();
     return {
-      ...this.store.snapshot(),
+      ...snapshot,
+      runnerCapacity: runnerCapacity(snapshot, { cpus: cpus().length, memoryBytes: totalmem() }),
       ...(repositories === undefined ? {} : { repositories }),
     };
   }
@@ -661,6 +664,12 @@ export class Service {
           );
           break;
         }
+        case "machine.configure":
+          this.store.put("machine", "self", {
+            ...snapshot.machine,
+            maxRunners: command.maxRunners,
+          });
+          break;
         case "machine.pause":
           this.store.put("machine", "self", { ...snapshot.machine, paused: command.paused });
           break;
@@ -751,40 +760,11 @@ export class Service {
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
           };
           this.runtime.validateResources(environment);
-          const active = snapshot.instances.filter((instance) => instance.status === "running");
-          const memory = active.reduce(
-            (sum, instance) =>
-              sum +
-              (instance.memoryMiB ??
-                snapshot.environments.find((item) => item.id === instance.environmentId)
-                  ?.memoryMiB ??
-                0),
-            environment.memoryMiB,
-          );
-          const cpu = active.reduce(
-            (sum, instance) =>
-              sum +
-              (instance.cpu ??
-                snapshot.environments.find((item) => item.id === instance.environmentId)?.cpu ??
-                0),
-            environment.cpu,
-          );
-          if (cpu > cpus().length)
-            throw new VectisError("capacity_exceeded", "Requested VM CPUs exceed the host budget.");
-          if (memory * 1024 * 1024 > totalmem() * 0.75)
-            throw new VectisError(
-              "capacity_exceeded",
-              "Requested VM memory exceeds the host budget.",
-            );
-          if (
-            environment.os === "macos" &&
-            active.filter(
-              (instance) =>
-                snapshot.environments.find((item) => item.id === instance.environmentId)?.os ===
-                "macos",
-            ).length >= 2
-          )
-            throw new VectisError("macos_limit", "The two-instance macOS limit has been reached.");
+          const admissionError = instanceAdmissionError(snapshot, environment, {
+            cpus: cpus().length,
+            memoryBytes: totalmem(),
+          });
+          if (admissionError) throw admissionError;
           const id = operation.id;
           const record = {
             id,

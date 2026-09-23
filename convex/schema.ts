@@ -130,6 +130,7 @@ export default defineSchema({
     environments: v.optional(v.array(environmentSummary)),
     paused: v.optional(v.boolean()),
     runnerIdle: v.optional(v.boolean()),
+    runnerSlots: v.optional(v.number()),
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),

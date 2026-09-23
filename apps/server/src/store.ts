@@ -6,6 +6,7 @@ import {
   ActivityBase,
   Environment,
   Instance,
+  Machine,
   Operation,
   VectisError,
   type Snapshot,
@@ -109,9 +110,7 @@ export class Store {
       this.put("activity", id, update(Schema.decodeUnknownSync(ActivityBase)(current)));
   }
   snapshot(): Snapshot {
-    const machine = Schema.decodeUnknownSync(
-      Schema.Struct({ id: Schema.String, name: Schema.String, paused: Schema.Boolean }),
-    )(this.get("machine", "self"));
+    const machine = Schema.decodeUnknownSync(Machine)(this.get("machine", "self"));
     const operations = this.db
       .prepare("SELECT body FROM records WHERE kind='operation' ORDER BY rowid DESC")
       .all()
