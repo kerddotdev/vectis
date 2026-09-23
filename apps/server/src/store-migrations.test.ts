@@ -37,6 +37,7 @@ async function legacy() {
     db.prepare("INSERT INTO records VALUES('operation',?,?)").run(id, JSON.stringify(operation));
     db.prepare("INSERT INTO requests VALUES(?,?,?)").run(key, id, id);
   };
+  db.exec("BEGIN");
   for (const name of [
     "install-macos",
     "open-macos-setup",
@@ -57,6 +58,7 @@ async function legacy() {
   insert("reconcile", "runner.reconcile", { operationId: "runner" });
   insert("setting", "repository.automatic");
   insert("scan", "job.scan", undefined, "remote:scan");
+  db.exec("COMMIT");
   return { path, db, originals, insert };
 }
 
