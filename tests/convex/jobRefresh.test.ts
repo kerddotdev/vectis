@@ -4,6 +4,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api, internal } from "../../convex/_generated/api.js";
 const modules = {
+  "../../convex/runnerDemand.ts": () => import("../../convex/runnerDemand.js"),
   "../../convex/jobs.ts": () => import("../../convex/jobs.js"),
   "../../convex/githubJobs.ts": () => import("../../convex/githubJobs.js"),
   "../../convex/runnerLeases.ts": () => import("../../convex/runnerLeases.js"),
