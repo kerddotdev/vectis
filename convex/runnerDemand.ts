@@ -163,12 +163,18 @@ export async function scheduleJobScan(ctx: MutationCtx, target: Doc<"machines">)
   if (target.paused !== false) return;
   const now = Date.now();
   const interval = 300000;
-  const due = (await automaticBindings(ctx, target._id)).filter(
-    (binding) => binding.owner === target.owner && (binding.lastJobScanAt ?? 0) <= now - interval,
-  );
+  const due = [];
+  for (const binding of await automaticBindings(ctx, target._id)) {
+    if (binding.owner !== target.owner) continue;
+    const scan = await ctx.db
+      .query("jobScans")
+      .withIndex("by_binding", (q) => q.eq("bindingId", binding._id))
+      .unique();
+    if ((scan?.scannedAt ?? 0) <= now - interval) due.push({ binding, scan });
+  }
   if (!due.length || !(await ctx.db.query("githubApps").first())) return;
-  due.sort((left, right) => (left.lastJobScanAt ?? 0) - (right.lastJobScanAt ?? 0));
-  for (const binding of due) {
+  due.sort((left, right) => (left.scan?.scannedAt ?? 0) - (right.scan?.scannedAt ?? 0));
+  for (const { binding, scan } of due) {
     const account = await ctx.db.get("githubAccounts", binding.accountId);
     if (account?.owner !== target.owner) continue;
     const key = `job-scan:${binding.installationId}:${binding.repositoryId}:${Math.floor(now / interval)}`;
@@ -176,7 +182,8 @@ export async function scheduleJobScan(ctx: MutationCtx, target: Doc<"machines">)
       .query("operations")
       .withIndex("by_owner_key", (q) => q.eq("owner", target.owner).eq("key", key))
       .unique();
-    await ctx.db.patch("repositoryBindings", binding._id, { lastJobScanAt: now });
+    if (scan) await ctx.db.patch("jobScans", scan._id, { scannedAt: now });
+    else await ctx.db.insert("jobScans", { bindingId: binding._id, scannedAt: now });
     if (existing) continue;
     await ctx.db.insert("operations", {
       owner: target.owner,

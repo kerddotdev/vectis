@@ -91,6 +91,7 @@ export default defineSchema({
     environmentId: v.string(),
     enabled: v.boolean(),
     automatic: v.optional(v.boolean()),
+    // Legacy; jobScans holds scan times so scans do not rewrite the binding.
     lastJobScanAt: v.optional(v.number()),
     verifiedAt: v.number(),
   })
@@ -99,6 +100,10 @@ export default defineSchema({
     .index("by_machine_automatic", ["machineId", "enabled", "automatic"])
     .index("by_target", ["machineId", "repositoryId", "environmentId"])
     .index("by_automatic_repository", ["installationId", "repositoryId", "enabled", "automatic"]),
+  jobScans: defineTable({
+    bindingId: v.id("repositoryBindings"),
+    scannedAt: v.number(),
+  }).index("by_binding", ["bindingId"]),
   runnerLeases: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),

@@ -13,6 +13,11 @@ async function deleteBinding(ctx: MutationCtx, id: Id<"repositoryBindings">) {
     .withIndex("by_binding", (q) => q.eq("bindingId", id))
     .take(batch);
   for (const demand of demands) await ctx.db.delete("runnerDemands", demand._id);
+  for (const scan of await ctx.db
+    .query("jobScans")
+    .withIndex("by_binding", (q) => q.eq("bindingId", id))
+    .take(batch))
+    await ctx.db.delete("jobScans", scan._id);
   await ctx.db.delete("repositoryBindings", id);
   return demands.length;
 }

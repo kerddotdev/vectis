@@ -174,8 +174,8 @@ test("repository scans are deduplicated across machines and retry on later heart
     automatic: true,
   });
   await t.run(async (ctx) => {
-    for (const binding of await ctx.db.query("repositoryBindings").collect())
-      await ctx.db.patch("repositoryBindings", binding._id, { lastJobScanAt: Date.now() - 600000 });
+    for (const scan of await ctx.db.query("jobScans").collect())
+      await ctx.db.patch("jobScans", scan._id, { scannedAt: Date.now() - 600000 });
     await ctx.db.patch("operations", scans[0]!._id, { key: "old-scan", phase: "failed" });
   });
   await heartbeat(0);
@@ -552,4 +552,32 @@ test("manual and disabled bindings are neither scanned nor scheduled", async () 
   await heartbeat(0, false, true, 1);
   await heartbeat(1, false, true, 1);
   expect(await operations()).toHaveLength(0);
+});
+
+test("job scans wait for a configured GitHub App and leave bindings untouched", async () => {
+  const { t, hosts, heartbeat, operations } = await fixture();
+  const bindings = () => t.run((ctx) => ctx.db.query("repositoryBindings").collect());
+  const scans = () => t.run((ctx) => ctx.db.query("jobScans").collect());
+  const scanOperations = async () =>
+    (await operations()).filter((item) => JSON.parse(item.commandJson).type === "job.scan");
+  const before = await bindings();
+  await heartbeat(0);
+  expect(await scans()).toHaveLength(0);
+  await t.run((ctx) =>
+    ctx.db.insert("githubApps", {
+      appId: 1,
+      slug: "test",
+      ownerId: 1,
+      clientId: "test",
+      privateKey: "unused",
+      clientSecret: "unused",
+      webhookSecret: "unused",
+    }),
+  );
+  await heartbeat(0);
+  expect(await scans()).toMatchObject([{ bindingId: hosts[0]?.bindingId }]);
+  expect(await scanOperations()).toHaveLength(1);
+  await heartbeat(0);
+  expect(await scanOperations()).toHaveLength(1);
+  expect(await bindings()).toEqual(before);
 });
