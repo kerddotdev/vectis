@@ -142,7 +142,7 @@ test("repository and job changes invalidate snapshots without repeating identica
   expect(connected).not.toBe(initial);
   repositories.deliver([Object.fromEntries(Object.entries(binding("binding1")).reverse())]);
   expect(store.snapshot().revision).toBe(connected);
-  const jobs = subscription("jobs:list", "binding1");
+  const jobs = subscription("jobs:latest", "binding1");
   jobs.deliver([job]);
   const queued = store.snapshot().revision;
   expect(queued).not.toBe(connected);
@@ -167,13 +167,13 @@ test("job subscriptions keep the newest 20 bindings and release removed bindings
   repositories.deliver(bindings);
   expect(
     transport.subscriptions
-      .filter((item) => item.name === "jobs:list")
+      .filter((item) => item.name === "jobs:latest")
       .map((item) => item.args.bindingId),
   ).toEqual(bindings.slice(2).map((item) => item.id));
-  const removed = subscription("jobs:list", "binding21");
+  const removed = subscription("jobs:latest", "binding21");
   repositories.deliver(bindings.slice(0, -1));
   expect(removed.unsubscribe).toHaveBeenCalledOnce();
-  expect(subscription("jobs:list", "binding1").unsubscribe).not.toHaveBeenCalled();
+  expect(subscription("jobs:latest", "binding1").unsubscribe).not.toHaveBeenCalled();
   const revision = store.snapshot().revision;
   removed.deliver([job]);
   expect(store.snapshot().revision).toBe(revision);
@@ -183,43 +183,94 @@ test("job subscriptions keep the newest 20 bindings and release removed bindings
   expect(transport.disconnect).toHaveBeenCalledOnce();
   expect(transport.close).toHaveBeenCalledOnce();
   repositories.deliver([binding("late")]);
-  subscription("jobs:list", "binding1").deliver([job]);
+  subscription("jobs:latest", "binding1").deliver([job]);
   expect(store.snapshot().revision).toBe(revision);
 });
 
-test("jobs use live subscription values and query when uncached, disconnected or invalidated", async () => {
+function listJobs(value: unknown | (() => Promise<unknown>)) {
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self") return new Promise(() => {});
+    if (getFunctionName(query) !== "jobs:list") return [];
+    return typeof value === "function" ? value() : value;
+  });
+  return () =>
+    transport.query.mock.calls.filter(([query]) => getFunctionName(query) === "jobs:list");
+}
+
+test("job lists are fetched once per marker and refetched after it changes", async () => {
   const { relay, repositories, subscription } = await fixture();
+  const lists = listJobs([job]);
   transport.auth.changed?.(true);
   repositories.deliver([binding("binding1")]);
-  const jobs = subscription("jobs:list", "binding1");
-  const queries = () =>
-    transport.query.mock.calls.filter(([query]) => getFunctionName(query) === "jobs:list");
-  expect(await relay.jobs("binding1")).toEqual([]);
-  expect(queries()).toHaveLength(1);
-  jobs.deliver([job]);
+  const marker = subscription("jobs:latest", "binding1");
   expect(await relay.jobs("binding1")).toEqual([job]);
   expect(await relay.jobs("binding1")).toEqual([job]);
-  expect(queries()).toHaveLength(1);
-  jobs.deliver([]);
-  expect(await relay.jobs("binding1")).toEqual([]);
-  expect(queries()).toHaveLength(1);
+  expect(lists()).toHaveLength(2);
+  marker.deliver([job]);
+  expect(await relay.jobs("binding1")).toEqual([job]);
+  expect(await relay.jobs("binding1")).toEqual([job]);
+  expect(lists()).toHaveLength(3);
+  marker.deliver([{ ...job }]);
+  await relay.jobs("binding1");
+  expect(lists()).toHaveLength(3);
+  marker.deliver([{ ...job, status: "completed", conclusion: "success", updatedAt: 2 }]);
+  await relay.jobs("binding1");
+  await relay.jobs("binding1");
+  expect(lists()).toHaveLength(4);
   transport.connectionState.mockReturnValue({ isWebSocketConnected: false });
   await relay.jobs("binding1");
-  expect(queries()).toHaveLength(2);
+  expect(lists()).toHaveLength(5);
   transport.connectionState.mockReturnValue({ isWebSocketConnected: true });
-  jobs.fail();
   await relay.jobs("binding1");
-  expect(queries()).toHaveLength(3);
-  jobs.deliver([job]);
+  expect(lists()).toHaveLength(5);
+  marker.fail();
+  await relay.jobs("binding1");
+  await relay.jobs("binding1");
+  expect(lists()).toHaveLength(7);
+  marker.deliver([job]);
+  await relay.jobs("binding1");
   repositories.deliver([]);
   await relay.jobs("binding1");
-  expect(queries()).toHaveLength(4);
+  expect(lists()).toHaveLength(9);
+});
+
+test("a marker change or binding re-add during an in-flight list read is not cached", async () => {
+  const { relay, repositories, subscription } = await fixture();
+  let finish: (jobs: unknown) => void = () => {};
+  const lists = listJobs(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  transport.auth.changed?.(true);
+  repositories.deliver([binding("binding1")]);
+  subscription("jobs:latest", "binding1").deliver([job]);
+  const changed = relay.jobs("binding1");
+  subscription("jobs:latest", "binding1").deliver([{ ...job, updatedAt: 2 }]);
+  finish([job]);
+  expect(await changed).toEqual([job]);
+  const fresh = relay.jobs("binding1");
+  finish([{ ...job, updatedAt: 2 }]);
+  await fresh;
+  expect(lists()).toHaveLength(2);
+  subscription("jobs:latest", "binding1").deliver([{ ...job, updatedAt: 3 }]);
+  const readded = relay.jobs("binding1");
+  repositories.deliver([]);
+  repositories.deliver([binding("binding1")]);
+  subscription("jobs:latest", "binding1").deliver([{ ...job, updatedAt: 3 }]);
+  finish([job]);
+  await readded;
+  const next = relay.jobs("binding1");
+  finish([{ ...job, updatedAt: 3 }]);
+  expect(await next).toEqual([{ ...job, updatedAt: 3 }]);
+  expect(lists()).toHaveLength(4);
 });
 
 test("cached jobs still require authentication and query failures retain their error contract", async () => {
   const { relay, repositories, subscription } = await fixture();
   repositories.deliver([binding("binding1")]);
-  subscription("jobs:list", "binding1").deliver([job]);
+  subscription("jobs:latest", "binding1").deliver([job]);
   await expect(relay.jobs("binding1")).rejects.toMatchObject({ code: "cloud_unavailable" });
   transport.auth.changed?.(true);
   transport.query.mockRejectedValueOnce(new Error("Access denied"));
