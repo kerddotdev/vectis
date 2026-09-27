@@ -4,6 +4,7 @@ import { mutation, query, internalMutation, internalQuery } from "./_generated/s
 import { human } from "./auth.js";
 import { submitInspection, getInspection } from "./inspections.js";
 import { submitForOwner, cancelForOwner } from "./operations.js";
+import { onlineWindow, presence } from "./presence.js";
 import { ControllerRequest } from "../packages/protocol/src/controller.js";
 
 export const approve = mutation({
@@ -141,15 +142,20 @@ export const execute = internalMutation({
           .query("machines")
           .withIndex("by_owner", (q) => q.eq("owner", owner))
           .take(100);
-        return machines.map(({ _id, localId, name, lastSeenAt, environments, paused }) => ({
-          id: _id,
-          localId,
-          name,
-          lastSeenAt: lastSeenAt ?? null,
-          online: lastSeenAt !== undefined && Date.now() - lastSeenAt < 90000,
-          environments: environments ?? [],
-          paused: paused ?? false,
-        }));
+        return Promise.all(
+          machines.map(async ({ _id, localId, name, environments, paused }) => {
+            const lastSeenAt = (await presence(ctx, _id))?.lastSeenAt;
+            return {
+              id: _id,
+              localId,
+              name,
+              lastSeenAt: lastSeenAt ?? null,
+              online: lastSeenAt !== undefined && Date.now() - lastSeenAt < onlineWindow,
+              environments: environments ?? [],
+              paused: paused ?? false,
+            };
+          }),
+        );
       }
       case "operation.submit": {
         const machineId = ctx.db.normalizeId("machines", request.machineId);

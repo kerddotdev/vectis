@@ -1,9 +1,10 @@
 import { scheduleRunnerDemand, scheduleJobScan } from "./runnerDemand.js";
-import { v, ConvexError } from "convex/values";
+import { v, ConvexError, type Infer } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { mutation, query } from "./_generated/server.js";
 import { environmentSummary } from "./schema.js";
 import { human, machine } from "./auth.js";
+import { presence } from "./presence.js";
 
 export const enroll = mutation({
   args: { localId: v.string(), name: v.string() },
@@ -27,10 +28,21 @@ export const list = query({
   args: {},
   handler: async (ctx) => {
     const owner = await human(ctx);
-    return ctx.db
+    const machines = await ctx.db
       .query("machines")
       .withIndex("by_owner", (q) => q.eq("owner", owner))
       .take(100);
+    return Promise.all(
+      machines.map(async (record) => {
+        const current = await presence(ctx, record._id);
+        return {
+          ...record,
+          lastSeenAt: current?.lastSeenAt,
+          runnerIdle: current?.runnerIdle,
+          runnerSlots: current?.runnerSlots,
+        };
+      }),
+    );
   },
 });
 // Removing a machine deletes it outright, so the same Mac can pair again after the user reconnects
@@ -79,17 +91,52 @@ export const heartbeat = mutation({
         ))
     )
       throw new ConvexError({ code: "invalid_environment_inventory" });
-    await ctx.db.patch("machines", record._id, {
+    const changes = {
+      ...(environments && !sameEnvironments(record.environments, environments)
+        ? { environments }
+        : {}),
+      ...(args.paused === undefined || args.paused === record.paused
+        ? {}
+        : { paused: args.paused }),
+    };
+    if (Object.keys(changes).length) await ctx.db.patch("machines", record._id, changes);
+    const liveness = {
       lastSeenAt: Date.now(),
-      ...(environments ? { environments } : {}),
-      ...(args.paused === undefined ? {} : { paused: args.paused }),
       ...(args.runnerIdle === undefined ? {} : { runnerIdle: args.runnerIdle }),
       ...(args.runnerSlots === undefined ? {} : { runnerSlots: args.runnerSlots }),
-    });
-    await scheduleRunnerDemand(ctx, record._id);
-    await scheduleJobScan(ctx, record._id);
+    };
+    const current = await presence(ctx, record._id);
+    if (current) await ctx.db.patch("machinePresence", current._id, liveness);
+    else await ctx.db.insert("machinePresence", { machineId: record._id, ...liveness });
+    const target = { ...record, ...changes };
+    await scheduleRunnerDemand(ctx, target);
+    await scheduleJobScan(ctx, target);
   },
 });
+
+type Environment = Infer<typeof environmentSummary>;
+function sameEnvironments(
+  stored: readonly Environment[] | undefined,
+  next: readonly Environment[],
+) {
+  return (
+    stored !== undefined &&
+    stored.length === next.length &&
+    stored.every((item, index) => {
+      const other = next[index];
+      return (
+        other !== undefined &&
+        item.id === other.id &&
+        item.name === other.name &&
+        item.os === other.os &&
+        item.cpu === other.cpu &&
+        item.memoryMiB === other.memoryMiB &&
+        item.state === other.state &&
+        item.revision === other.revision
+      );
+    })
+  );
+}
 export const self = query({
   args: {},
   handler: async (ctx) => {

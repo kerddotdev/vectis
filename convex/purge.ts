@@ -19,6 +19,13 @@ async function deleteBinding(ctx: MutationCtx, id: Id<"repositoryBindings">) {
 
 async function purgeMachine(ctx: MutationCtx, machineId: Id<"machines">) {
   let deleted = 0;
+  for (const liveness of await ctx.db
+    .query("machinePresence")
+    .withIndex("by_machine", (q) => q.eq("machineId", machineId))
+    .take(batch)) {
+    await ctx.db.delete("machinePresence", liveness._id);
+    deleted += 1;
+  }
   for (const credential of await ctx.db
     .query("machineCredentials")
     .withIndex("by_machine", (q) => q.eq("machineId", machineId))

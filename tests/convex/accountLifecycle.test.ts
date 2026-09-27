@@ -35,6 +35,7 @@ async function connected(t: ReturnType<typeof convexTest>, machineId: string) {
   return t.run(async (ctx) => {
     const id = ctx.db.normalizeId("machines", machineId);
     if (!id) throw new Error("Unknown machine");
+    await ctx.db.insert("machinePresence", { machineId: id, lastSeenAt: 1 });
     const accountId = await ctx.db.insert("githubAccounts", {
       owner: "https://clerk.test|owner",
       githubId: 7,
@@ -106,6 +107,7 @@ async function connected(t: ReturnType<typeof convexTest>, machineId: string) {
 const counts = async (t: ReturnType<typeof convexTest>) =>
   t.run(async (ctx) => ({
     machines: (await ctx.db.query("machines").collect()).length,
+    presence: (await ctx.db.query("machinePresence").collect()).length,
     credentials: (await ctx.db.query("machineCredentials").collect()).length,
     pairings: (await ctx.db.query("pairings").collect()).length,
     bindings: (await ctx.db.query("repositoryBindings").collect()).length,
@@ -132,6 +134,7 @@ test("removing a machine deletes everything it owns and frees the local identity
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(await counts(t)).toEqual({
     machines: 0,
+    presence: 0,
     credentials: 0,
     pairings: 0,
     bindings: 0,
@@ -169,6 +172,7 @@ test("unlinking a GitHub account disconnects the repositories that depend on it"
 
 const empty = {
   machines: 0,
+  presence: 0,
   credentials: 0,
   pairings: 0,
   bindings: 0,

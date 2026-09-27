@@ -96,6 +96,7 @@ export default defineSchema({
   })
     .index("by_owner", ["owner"])
     .index("by_machine", ["machineId"])
+    .index("by_machine_automatic", ["machineId", "enabled", "automatic"])
     .index("by_target", ["machineId", "repositoryId", "environmentId"])
     .index("by_automatic_repository", ["installationId", "repositoryId", "enabled", "automatic"]),
   runnerLeases: defineTable({
@@ -127,14 +128,24 @@ export default defineSchema({
     name: v.string(),
     credentialVersion: v.optional(v.number()),
     createdAt: v.number(),
-    lastSeenAt: v.optional(v.number()),
     environments: v.optional(v.array(environmentSummary)),
     paused: v.optional(v.boolean()),
+    // Legacy liveness written by older backends. machinePresence holds the current values; these
+    // stay only so existing documents validate.
+    lastSeenAt: v.optional(v.number()),
     runnerIdle: v.optional(v.boolean()),
     runnerSlots: v.optional(v.number()),
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),
+  // Heartbeats write here instead of the machine document, which every machine-authenticated
+  // query reads; touching it every heartbeat would re-run all of them.
+  machinePresence: defineTable({
+    machineId: v.id("machines"),
+    lastSeenAt: v.number(),
+    runnerIdle: v.optional(v.boolean()),
+    runnerSlots: v.optional(v.number()),
+  }).index("by_machine", ["machineId"]),
   runnerDemands: defineTable({
     installationId: v.number(),
     repositoryId: v.number(),

@@ -307,7 +307,9 @@ test.each(["claimed", "running"] as const)(
     // A webhook can arrive after replay but before the next heartbeat.
     await t.run(async (ctx) => {
       const { scheduleRunnerDemand } = await import("../../convex/runnerDemand.js");
-      await scheduleRunnerDemand(ctx, host.machineId);
+      const target = await ctx.db.get("machines", host.machineId);
+      if (!target) throw new Error("Missing machine");
+      await scheduleRunnerDemand(ctx, target);
     });
     expect(await operations()).toHaveLength(3);
     await t.run(async (ctx) => {
@@ -327,12 +329,14 @@ test("queued webhooks schedule changed jobs without a heartbeat", async () => {
   const { t, operations, hosts, jobId } = await fixture();
   await t.run(async (ctx) => {
     await ctx.db.delete("githubJobs", jobId);
-    for (const host of hosts)
-      await ctx.db.patch("machines", host.machineId, {
-        paused: false,
+    for (const host of hosts) {
+      await ctx.db.patch("machines", host.machineId, { paused: false });
+      await ctx.db.insert("machinePresence", {
+        machineId: host.machineId,
         runnerSlots: 1,
         lastSeenAt: Date.now(),
       });
+    }
     await ctx.db.insert("githubApps", {
       appId: 1,
       slug: "test",
@@ -403,8 +407,9 @@ test.each([undefined, 0, 1])(
     const host = hosts[0];
     if (!host) throw new Error("Missing host");
     const leaseId = await t.run(async (ctx) => {
-      await ctx.db.patch("machines", host.machineId, {
-        paused: false,
+      await ctx.db.patch("machines", host.machineId, { paused: false });
+      await ctx.db.insert("machinePresence", {
+        machineId: host.machineId,
         runnerIdle: true,
         lastSeenAt: Date.now(),
         ...(runnerSlots === undefined ? {} : { runnerSlots }),
@@ -455,3 +460,96 @@ test.each([undefined, 1])(
     expect(await operations()).toHaveLength(runnerSlots === undefined ? 0 : 1);
   },
 );
+
+test("heartbeats keep liveness off the machine document", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(1_000_000);
+  const { t, hosts, heartbeat } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  const read = () =>
+    t.run(async (ctx) => ({
+      machine: await ctx.db.get("machines", host.machineId),
+      presence: await ctx.db
+        .query("machinePresence")
+        .withIndex("by_machine", (q) => q.eq("machineId", host.machineId))
+        .unique(),
+    }));
+  await heartbeat(0, false, true, 2);
+  const first = await read();
+  expect(first.machine).not.toHaveProperty("lastSeenAt");
+  expect(first.presence).toMatchObject({ lastSeenAt: 1_000_000, runnerIdle: true, runnerSlots: 2 });
+  vi.setSystemTime(1_030_000);
+  await heartbeat(0, false, false);
+  const second = await read();
+  expect(second.machine).toEqual(first.machine);
+  expect(second.presence).toMatchObject({
+    lastSeenAt: 1_030_000,
+    runnerIdle: false,
+    runnerSlots: 2,
+  });
+  await heartbeat(0, true, false);
+  expect((await read()).machine).toEqual({ ...first.machine, paused: true });
+});
+
+test("legacy liveness on the machine document is ignored", async () => {
+  const { t, hosts, heartbeat, operations } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  await t.run((ctx) =>
+    ctx.db.patch("machines", host.machineId, {
+      paused: false,
+      runnerSlots: 1,
+      lastSeenAt: Date.now(),
+    }),
+  );
+  await t.mutation(internal.runnerDemand.forMachine, { machineId: host.machineId });
+  expect(await operations()).toHaveLength(0);
+  await heartbeat(0, false, true, 1);
+  expect(await operations()).toHaveLength(1);
+});
+
+test("a heartbeat that readies an environment schedules against the new inventory", async () => {
+  const { t, hosts, operations } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  const environment = { id: "mac", name: "Mac", os: "macos" as const, cpu: 2, memoryMiB: 4096 };
+  const device = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: host.machineId,
+    credentialVersion: 0,
+  });
+  const heartbeat = (state: "ready" | "action_required") =>
+    device.mutation(api.machines.heartbeat, {
+      paused: false,
+      runnerSlots: 1,
+      environments: [{ ...environment, state }],
+    });
+  await heartbeat("action_required");
+  expect(await operations()).toHaveLength(0);
+  await heartbeat("ready");
+  expect(await operations()).toHaveLength(1);
+  expect((await t.run((ctx) => ctx.db.get("machines", host.machineId)))?.environments).toEqual([
+    { ...environment, state: "ready" },
+  ]);
+});
+
+test("manual and disabled bindings are neither scanned nor scheduled", async () => {
+  const { t, hosts, heartbeat, operations } = await fixture();
+  await t.run(async (ctx) => {
+    await ctx.db.insert("githubApps", {
+      appId: 1,
+      slug: "test",
+      ownerId: 1,
+      clientId: "test",
+      privateKey: "unused",
+      clientSecret: "unused",
+      webhookSecret: "unused",
+    });
+    await ctx.db.patch("repositoryBindings", hosts[0]!.bindingId, { automatic: false });
+    await ctx.db.patch("repositoryBindings", hosts[1]!.bindingId, { enabled: false });
+  });
+  await heartbeat(0, false, true, 1);
+  await heartbeat(1, false, true, 1);
+  expect(await operations()).toHaveLength(0);
+});

@@ -56,7 +56,11 @@ test("remote inspections require an online owned host, bounded responses and an 
     });
   const request = { type: "query.submit", machineId, key: "stable", query: { name: "status" } };
   await expect(call(request)).rejects.toThrow();
-  await t.run((ctx) => ctx.db.patch("machines", machineId, { lastSeenAt: Date.now() }));
+  expect(await call({ type: "machines.list" })).toMatchObject([
+    { id: machineId, lastSeenAt: null, online: false },
+  ]);
+  await host.mutation(api.machines.heartbeat, {});
+  expect(await call({ type: "machines.list" })).toMatchObject([{ id: machineId, online: true }]);
   const first = Schema.decodeUnknownSync(Schema.Struct({ queryId: Identifier }))(
     await call(request),
   );
@@ -84,4 +88,10 @@ test("remote inspections require an online owned host, bounded responses and an 
   await expect(call({ type: "query.get", id: first.queryId })).rejects.toThrow();
   await t.mutation(internal.inspections.expire, { id: pending.id });
   expect(await t.run((ctx) => ctx.db.get("inspections", pending.id))).toBeNull();
+  await t.run(async (ctx) => {
+    for (const current of await ctx.db.query("machinePresence").collect())
+      await ctx.db.patch("machinePresence", current._id, { lastSeenAt: Date.now() - 90000 });
+  });
+  await expect(call({ ...request, key: "offline" })).rejects.toThrow(/machine_offline/);
+  expect(await call({ type: "machines.list" })).toMatchObject([{ id: machineId, online: false }]);
 });
