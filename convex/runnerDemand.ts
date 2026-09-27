@@ -33,7 +33,7 @@ export const forMachine = internalMutation({
   },
 });
 
-function automaticBindings(ctx: MutationCtx, machineId: Id<"machines">) {
+export function automaticBindings(ctx: MutationCtx, machineId: Id<"machines">) {
   return ctx.db
     .query("repositoryBindings")
     .withIndex("by_machine_automatic", (q) =>
@@ -44,7 +44,12 @@ function automaticBindings(ctx: MutationCtx, machineId: Id<"machines">) {
 
 // Runs on every heartbeat, so the reads an idle machine needs come first. Every return before the
 // scheduling loop is free of side effects, so this order schedules exactly what any other would.
-export async function scheduleRunnerDemand(ctx: MutationCtx, target: Doc<"machines">) {
+// Convex bills repeated reads within a transaction, so a heartbeat passes the bindings it already read.
+export async function scheduleRunnerDemand(
+  ctx: MutationCtx,
+  target: Doc<"machines">,
+  bindings?: Doc<"repositoryBindings">[],
+) {
   const machineId = target._id;
   const liveness = await presence(ctx, machineId);
   if (!liveness || target.paused !== false || liveness.lastSeenAt < Date.now() - 60000) return;
@@ -52,7 +57,7 @@ export async function scheduleRunnerDemand(ctx: MutationCtx, target: Doc<"machin
   let free = liveness.runnerSlots ?? (liveness.runnerIdle === true ? 1 : 0);
   if (free <= 0) return;
   const queues: Array<{ binding: Doc<"repositoryBindings">; jobs: Doc<"githubJobs">[] }> = [];
-  for (const binding of await automaticBindings(ctx, machineId)) {
+  for (const binding of bindings ?? (await automaticBindings(ctx, machineId))) {
     if (binding.owner !== target.owner) continue;
     const environment = target.environments?.find(
       (item) => item.id === binding.environmentId && item.state === "ready",
@@ -159,12 +164,16 @@ export async function scheduleRunnerDemand(ctx: MutationCtx, target: Doc<"machin
   }
 }
 
-export async function scheduleJobScan(ctx: MutationCtx, target: Doc<"machines">) {
+export async function scheduleJobScan(
+  ctx: MutationCtx,
+  target: Doc<"machines">,
+  bindings: Doc<"repositoryBindings">[],
+) {
   if (target.paused !== false) return;
   const now = Date.now();
   const interval = 300000;
   const due = [];
-  for (const binding of await automaticBindings(ctx, target._id)) {
+  for (const binding of bindings) {
     if (binding.owner !== target.owner) continue;
     const scan = await ctx.db
       .query("jobScans")

@@ -1,4 +1,4 @@
-import { scheduleRunnerDemand, scheduleJobScan } from "./runnerDemand.js";
+import { automaticBindings, scheduleRunnerDemand, scheduleJobScan } from "./runnerDemand.js";
 import { v, ConvexError, type Infer } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { mutation, query } from "./_generated/server.js";
@@ -109,8 +109,9 @@ export const heartbeat = mutation({
     if (current) await ctx.db.patch("machinePresence", current._id, liveness);
     else await ctx.db.insert("machinePresence", { machineId: record._id, ...liveness });
     const target = { ...record, ...changes };
-    await scheduleRunnerDemand(ctx, target);
-    await scheduleJobScan(ctx, target);
+    const bindings = target.paused === false ? await automaticBindings(ctx, record._id) : [];
+    await scheduleRunnerDemand(ctx, target, bindings);
+    await scheduleJobScan(ctx, target, bindings);
   },
 });
 
