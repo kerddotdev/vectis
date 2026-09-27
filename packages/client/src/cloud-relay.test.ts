@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { afterEach, expect, test, vi } from "vitest";
 import { Store } from "../../../apps/server/src/store.js";
@@ -288,4 +289,47 @@ test("slot changes send a heartbeat on the next tick without waiting for the cad
   expect(transport.mutation.mock.calls[2]?.[1]).not.toHaveProperty("runnerSlots");
   await vi.advanceTimersByTimeAsync(2000);
   expect(transport.mutation).toHaveBeenCalledTimes(3);
+});
+
+test("identity is verified once per authentication, not on every tick", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  transport.query.mockImplementation(async (query) =>
+    getFunctionName(query) === "machines:self"
+      ? { id: "machine1", localId: store.snapshot().machine.id }
+      : [],
+  );
+  const identityChecks = () =>
+    transport.query.mock.calls.filter(([query]) => getFunctionName(query) === "machines:self");
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(20000);
+  expect(identityChecks()).toHaveLength(1);
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  // Other one-shot reads only target live subscriptions, which Convex answers from its local cache.
+  for (const [query, args] of transport.query.mock.calls) {
+    const name = getFunctionName(query);
+    if (name === "machines:self") continue;
+    expect(
+      transport.subscriptions.some(
+        (item) => item.name === name && isDeepStrictEqual(item.args, args),
+      ),
+    ).toBe(true);
+  }
+  transport.auth.changed?.(false);
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(identityChecks()).toHaveLength(2);
+});
+
+test("a mismatched identity sends no heartbeat", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  transport.query.mockImplementation(async (query) =>
+    getFunctionName(query) === "machines:self" ? { id: "machine1", localId: "another" } : [],
+  );
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(transport.mutation).not.toHaveBeenCalled();
 });

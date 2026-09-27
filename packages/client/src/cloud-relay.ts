@@ -59,6 +59,9 @@ export function startCloudRelay(
   const fetchToken = machineTokenFetcher(connection, credentials, abort.signal);
   const cloud = new ConvexClient(connection.deploymentUrl, { logger: false });
   let authenticated = false;
+  // The cloud identity cannot change while a credential stays authenticated, so it is checked once
+  // per authentication instead of costing a server round trip on every tick.
+  let verified = false;
   let refreshing = false;
   let active: Promise<void> | undefined;
   let tokenRequest: Promise<string | null> | undefined;
@@ -105,19 +108,20 @@ export function startCloudRelay(
       },
       (value) => {
         authenticated = value;
-        if (!value) report("unavailable");
-        else tick();
+        if (!value) {
+          verified = false;
+          report("unavailable");
+        } else tick();
       },
     );
   };
   async function reconcile() {
-    const identity = await interruptible(cloud.query(api.machines.self, {}), abort.signal);
+    if (!verified) {
+      const identity = await interruptible(cloud.query(api.machines.self, {}), abort.signal);
+      verified = identity.id === connection.machineId && identity.localId === connection.localId;
+    }
     const snapshot = await local.status(abort.signal);
-    if (
-      identity.id !== connection.machineId ||
-      identity.localId !== connection.localId ||
-      identity.localId !== snapshot.machine.id
-    )
+    if (!verified || connection.localId !== snapshot.machine.id)
       throw new VectisError(
         "machine_identity_mismatch",
         "This credential belongs to another local machine.",
