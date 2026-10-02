@@ -42,6 +42,8 @@ export function automaticBindings(ctx: MutationCtx, machineId: Id<"machines">) {
     .take(100);
 }
 
+const failureRetryDelay = 60000;
+
 // Runs on every heartbeat, so the reads an idle machine needs come first. Every return before the
 // scheduling loop is free of side effects, so this order schedules exactly what any other would.
 // Convex bills repeated reads within a transaction, so a heartbeat passes the bindings it already read.
@@ -126,8 +128,13 @@ export async function scheduleRunnerDemand(
           if (demand.owner !== target.owner || demand.attempt >= 3) continue;
           // A runner that succeeded served another job with the same labels; one that failed never
           // took this job, because the job is still queued. Both leave the job needing a runner.
+          // A failure waits a minute, so a passing condition does not use up every attempt at once.
           const previous = await ctx.db.get("operations", demand.operationId);
-          if (previous?.phase !== "succeeded" && previous?.phase !== "failed") continue;
+          if (
+            previous?.phase !== "succeeded" &&
+            !(previous?.phase === "failed" && previous.updatedAt <= Date.now() - failureRetryDelay)
+          )
+            continue;
         }
         const attempt = (demand?.attempt ?? 0) + 1;
         const now = Date.now();

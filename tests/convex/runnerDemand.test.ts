@@ -130,7 +130,7 @@ test("revoked account ownership prevents automatic scheduling", async () => {
   await heartbeat(0);
   expect(await operations()).toHaveLength(0);
 });
-test("unfinished, cancelled and action-required demand is not retried while failures are", async () => {
+test("unfinished, cancelled and action-required demand is not retried, and failures retry after a minute", async () => {
   const { t, heartbeat, operations } = await fixture();
   await heartbeat(0);
   const first = (await operations())[0];
@@ -140,7 +140,14 @@ test("unfinished, cancelled and action-required demand is not retried while fail
     await heartbeat(0);
     expect(await operations()).toHaveLength(1);
   }
-  await t.run(async (ctx) => ctx.db.patch("operations", first._id, { phase: "failed" }));
+  await t.run(async (ctx) =>
+    ctx.db.patch("operations", first._id, { phase: "failed", updatedAt: Date.now() }),
+  );
+  await heartbeat(0);
+  expect(await operations()).toHaveLength(1);
+  await t.run(async (ctx) =>
+    ctx.db.patch("operations", first._id, { updatedAt: Date.now() - 60000 }),
+  );
   await heartbeat(0);
   const retry = (await operations()).find((item) => item._id !== first._id);
   expect(retry?.key).toMatch(/:2$/);
@@ -151,7 +158,7 @@ test("failed and successful retries share the same three attempts", async () => 
     await heartbeat(0);
     await t.run(async (ctx) => {
       for (const operation of await ctx.db.query("operations").collect())
-        await ctx.db.patch("operations", operation._id, { phase });
+        await ctx.db.patch("operations", operation._id, { phase, updatedAt: Date.now() - 60000 });
     });
   }
   expect(await operations()).toHaveLength(3);
