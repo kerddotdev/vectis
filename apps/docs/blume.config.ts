@@ -48,7 +48,7 @@ export default defineConfig({
     },
   },
   markdown: {
-    codeBlocks: { theme: { light: "vitesse-light", dark: "vitesse-dark" } },
+    code: { theme: { light: "vitesse-light", dark: "vitesse-dark" } },
   },
   navigation: {
     sidebar: [
@@ -103,12 +103,11 @@ export default defineConfig({
       },
     ],
   },
-  ai: {
+  agents: {
     mcp: { enabled: false },
     webmcp: false,
   },
   deployment: {
-    output: "static",
     site: "https://vectis.kerd.dev",
     base: "/docs",
   },
