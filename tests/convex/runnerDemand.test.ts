@@ -415,6 +415,100 @@ test("queued webhooks schedule changed jobs without a heartbeat", async () => {
   expect(await operations()).toHaveLength(2);
 });
 
+test("a job waiting for approval gets a runner once GitHub queues it, but a cancellation stays final", async () => {
+  vi.useFakeTimers();
+  const { t, operations, hosts, jobId, heartbeat } = await fixture();
+  await t.run(async (ctx) => {
+    await ctx.db.delete("githubJobs", jobId);
+    const host = hosts[0]!;
+    await ctx.db.patch("machines", host.machineId, { paused: false });
+    await ctx.db.insert("machinePresence", {
+      machineId: host.machineId,
+      runnerSlots: 1,
+      lastSeenAt: Date.now(),
+    });
+    await ctx.db.delete("repositoryBindings", hosts[1]!.bindingId);
+    await ctx.db.insert("githubApps", {
+      appId: 1,
+      slug: "test",
+      ownerId: 1,
+      clientId: "test",
+      privateKey: "unused",
+      clientSecret: "unused",
+      webhookSecret: "secret",
+    });
+  });
+  const deliver = async (deliveryId: string, status: string) => {
+    const body = JSON.stringify({
+      action: status,
+      installation: { id: 3 },
+      repository: { id: 2 },
+      workflow_job: {
+        id: 4,
+        run_id: 5,
+        name: "Release",
+        status,
+        conclusion: null,
+        labels: ["self-hosted", "macOS", "ARM64", "vectis-mac"],
+        runner_id: null,
+        runner_name: null,
+      },
+    });
+    const signature = `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`;
+    const response = await t.fetch("/github/webhook", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "workflow_job",
+        "x-github-delivery": deliveryId,
+        "x-hub-signature-256": signature,
+      },
+    });
+    expect(response.status).toBe(202);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  };
+  const job = () =>
+    t.run(async (ctx) => (await ctx.db.query("githubJobs").collect()).map((item) => item.status));
+  const cancelAll = () =>
+    t.run(async (ctx) => {
+      for (const operation of await ctx.db.query("operations").collect())
+        await ctx.db.patch("operations", operation._id, {
+          phase: "cancelled",
+          updatedAt: Date.now(),
+        });
+    });
+
+  const runners = async () =>
+    (await operations()).filter((item) => JSON.parse(item.commandJson).type === "runner.run");
+
+  await deliver("queued", "queued");
+  expect(await runners()).toHaveLength(1);
+  await deliver("waiting", "waiting");
+  expect(await job()).toEqual(["waiting"]);
+  await deliver("pending", "pending");
+  expect(await job()).toEqual(["waiting"]);
+  const first = (await runners())[0]!;
+  await t.run((ctx) =>
+    ctx.db.patch("operations", first._id, { phase: "running", updatedAt: Date.now() }),
+  );
+  // Approval can arrive while the runner that found the job waiting still cleans up.
+  vi.advanceTimersByTime(1000);
+  await deliver("approved", "queued");
+  expect(await runners()).toHaveLength(1);
+  vi.advanceTimersByTime(1000);
+  await cancelAll();
+  await heartbeat(0, false, true, 1);
+  const keys = (await runners()).map((item) => item.key);
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toMatch(/:2$/);
+
+  await cancelAll();
+  vi.advanceTimersByTime(1000);
+  await deliver("repeated", "queued");
+  await heartbeat(0, false, true, 1);
+  expect(await runners()).toHaveLength(2);
+});
+
 test.each([undefined, 0, 1])(
   "lease release schedules against stored slots %s without inventing capacity",
   async (runnerSlots) => {

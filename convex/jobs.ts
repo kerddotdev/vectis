@@ -130,7 +130,7 @@ export const pendingRuns = internalQuery({
     const binding = await jobBinding(ctx, args.bindingId);
     const ids = new Set<number>();
     let complete = true;
-    for (const status of ["queued", "in_progress"] as const) {
+    for (const status of ["queued", "in_progress", "waiting"] as const) {
       const jobs = await ctx.db
         .query("githubJobs")
         .withIndex("by_repository_status", (q) =>

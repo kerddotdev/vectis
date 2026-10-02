@@ -47,8 +47,11 @@ export async function storeJob(
       q.eq("installationId", installationId).eq("repositoryId", repositoryId).eq("jobId", job.id),
     )
     .unique();
-  const order = { queued: 0, in_progress: 1, completed: 2 };
-  const stale = previous !== null && order[job.status] < order[previous.status];
+  // GitHub offers waiting, requested and pending jobs to no runner until it queues them, for
+  // example after an environment approval. They rank with queued, so the newest report wins.
+  const status = job.status === "requested" || job.status === "pending" ? "waiting" : job.status;
+  const order = { waiting: 0, queued: 0, in_progress: 1, completed: 2 };
+  const stale = previous !== null && order[status] < order[previous.status];
   const htmlUrl = stale ? (previous.htmlUrl ?? job.html_url) : (job.html_url ?? previous?.htmlUrl);
   const workflowName = stale
     ? (previous.workflowName ?? job.workflow_name)
@@ -59,7 +62,7 @@ export async function storeJob(
     jobId: job.id,
     runId: stale ? previous.runId : job.run_id,
     name: stale ? previous.name : job.name,
-    status: stale ? previous.status : job.status,
+    status: stale ? previous.status : status,
     conclusion: stale ? previous.conclusion : (job.conclusion ?? previous?.conclusion ?? null),
     labels: stale ? previous.labels : [...job.labels],
     runnerId:
