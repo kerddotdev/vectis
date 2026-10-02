@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@vectis/design": "workspace:*",
-    "blume": "1.7.1"
+    "blume": "2.0.3"
   },
   "devDependencies": {
     "astro": "7.3.5"
