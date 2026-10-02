@@ -8,6 +8,7 @@ import {
   type QueryCtx,
 } from "./_generated/server.js";
 import { machine } from "./auth.js";
+import { onlineWindow, presence } from "./presence.js";
 import type { LocalQuery } from "../packages/protocol/src/controller.js";
 
 export async function submitInspection(
@@ -20,7 +21,8 @@ export async function submitInspection(
   const machineId = ctx.db.normalizeId("machines", target);
   const record = machineId ? await ctx.db.get("machines", machineId) : null;
   if (!record || record.owner !== owner) throw new ConvexError({ code: "machine_unavailable" });
-  if (!record.lastSeenAt || Date.now() - record.lastSeenAt >= 90000)
+  const current = await presence(ctx, record._id);
+  if (!current || Date.now() - current.lastSeenAt >= onlineWindow)
     throw new ConvexError({ code: "machine_offline" });
   const queryJson = JSON.stringify(input);
   const existing = await ctx.db

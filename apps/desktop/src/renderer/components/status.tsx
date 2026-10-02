@@ -56,6 +56,7 @@ export function OperationStatus({ status }: { status: keyof typeof operationStat
 }
 
 const instanceStates = {
+  starting: ["queued", "Starting"],
   running: ["running", "Running"],
   stopped: ["idle", "Stopped"],
   interrupted: ["attention", "Interrupted"],
@@ -92,12 +93,9 @@ export function StatusText({ tone, label }: { tone: Tone; label: string }) {
 }
 
 export function JobStatus({ status, conclusion }: { status: string; conclusion: string | null }) {
-  if (status !== "completed")
-    return status === "in_progress" ? (
-      <StatusBadge tone="running" label="In progress" />
-    ) : (
-      <StatusBadge tone="queued" label="Queued" />
-    );
+  if (status === "in_progress") return <StatusBadge tone="running" label="In progress" />;
+  if (status === "waiting") return <StatusBadge tone="queued" label="Waiting" />;
+  if (status !== "completed") return <StatusBadge tone="queued" label="Queued" />;
   if (conclusion === "success") return <StatusBadge tone="success" label="Succeeded" />;
   if (conclusion === "cancelled") return <StatusBadge tone="cancelled" label="Cancelled" />;
   if (conclusion === "failure" || conclusion === "timed_out")

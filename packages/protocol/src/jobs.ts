@@ -6,7 +6,7 @@ export const Job = Schema.Struct({
   name: Schema.String,
   htmlUrl: Schema.optional(Schema.String),
   workflowName: Schema.optional(Schema.String),
-  status: Schema.Literals(["queued", "in_progress", "completed"]),
+  status: Schema.Literals(["waiting", "queued", "in_progress", "completed"]),
   conclusion: Schema.NullOr(Schema.String),
   labels: Schema.Array(Schema.String),
   runnerId: Schema.NullOr(Schema.Int),

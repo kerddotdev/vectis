@@ -21,6 +21,36 @@ export const list = query({
   },
 });
 
+// Clients subscribe to this small marker instead of the full list and refetch only when it changes.
+// storeJob stamps updatedAt when its mutation starts, so a concurrent write can commit just below
+// the newest job; the window keeps such writes inside the read set.
+const latestWindow = 5000;
+export const latest = query({
+  args: { bindingId: v.string() },
+  handler: async (ctx, args) => {
+    const binding = await jobBinding(ctx, args.bindingId);
+    const newest = await ctx.db
+      .query("githubJobs")
+      .withIndex("by_repository", (q) =>
+        q.eq("installationId", binding.installationId).eq("repositoryId", binding.repositoryId),
+      )
+      .order("desc")
+      .first();
+    if (!newest) return [];
+    const jobs = await ctx.db
+      .query("githubJobs")
+      .withIndex("by_repository", (q) =>
+        q
+          .eq("installationId", binding.installationId)
+          .eq("repositoryId", binding.repositoryId)
+          .gte("updatedAt", newest.updatedAt - latestWindow),
+      )
+      .order("desc")
+      .take(20);
+    return jobs.map(publicJob);
+  },
+});
+
 export const forLeases = query({
   args: { leaseIds: v.array(v.string()) },
   handler: async (ctx, args): Promise<JobObservations> => {
@@ -100,7 +130,7 @@ export const pendingRuns = internalQuery({
     const binding = await jobBinding(ctx, args.bindingId);
     const ids = new Set<number>();
     let complete = true;
-    for (const status of ["queued", "in_progress"] as const) {
+    for (const status of ["queued", "in_progress", "waiting"] as const) {
       const jobs = await ctx.db
         .query("githubJobs")
         .withIndex("by_repository_status", (q) =>

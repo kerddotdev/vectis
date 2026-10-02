@@ -13,12 +13,24 @@ async function deleteBinding(ctx: MutationCtx, id: Id<"repositoryBindings">) {
     .withIndex("by_binding", (q) => q.eq("bindingId", id))
     .take(batch);
   for (const demand of demands) await ctx.db.delete("runnerDemands", demand._id);
+  for (const scan of await ctx.db
+    .query("jobScans")
+    .withIndex("by_binding", (q) => q.eq("bindingId", id))
+    .take(batch))
+    await ctx.db.delete("jobScans", scan._id);
   await ctx.db.delete("repositoryBindings", id);
   return demands.length;
 }
 
 async function purgeMachine(ctx: MutationCtx, machineId: Id<"machines">) {
   let deleted = 0;
+  for (const liveness of await ctx.db
+    .query("machinePresence")
+    .withIndex("by_machine", (q) => q.eq("machineId", machineId))
+    .take(batch)) {
+    await ctx.db.delete("machinePresence", liveness._id);
+    deleted += 1;
+  }
   for (const credential of await ctx.db
     .query("machineCredentials")
     .withIndex("by_machine", (q) => q.eq("machineId", machineId))

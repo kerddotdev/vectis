@@ -130,20 +130,35 @@ test("revoked account ownership prevents automatic scheduling", async () => {
   await heartbeat(0);
   expect(await operations()).toHaveLength(0);
 });
-test("failed demand is not automatically retried and successful retries are bounded", async () => {
+test("unfinished, cancelled and action-required demand is not retried, and failures retry after a minute", async () => {
   const { t, heartbeat, operations } = await fixture();
   await heartbeat(0);
   const first = (await operations())[0];
   if (!first) throw new Error("Missing demand");
-  await t.run(async (ctx) => ctx.db.patch("operations", first._id, { phase: "failed" }));
-  await heartbeat(1);
+  for (const phase of ["claimed", "running", "cancelled", "action_required"] as const) {
+    await t.run(async (ctx) => ctx.db.patch("operations", first._id, { phase }));
+    await heartbeat(0);
+    expect(await operations()).toHaveLength(1);
+  }
+  await t.run(async (ctx) =>
+    ctx.db.patch("operations", first._id, { phase: "failed", updatedAt: Date.now() }),
+  );
+  await heartbeat(0);
   expect(await operations()).toHaveLength(1);
-  await t.run(async (ctx) => ctx.db.patch("operations", first._id, { phase: "succeeded" }));
-  for (let attempt = 0; attempt < 4; attempt++) {
+  await t.run(async (ctx) =>
+    ctx.db.patch("operations", first._id, { updatedAt: Date.now() - 60000 }),
+  );
+  await heartbeat(0);
+  const retry = (await operations()).find((item) => item._id !== first._id);
+  expect(retry?.key).toMatch(/:2$/);
+});
+test("failed and successful retries share the same three attempts", async () => {
+  const { t, heartbeat, operations } = await fixture();
+  for (const phase of ["failed", "succeeded", "failed", "failed"] as const) {
     await heartbeat(0);
     await t.run(async (ctx) => {
       for (const operation of await ctx.db.query("operations").collect())
-        await ctx.db.patch("operations", operation._id, { phase: "succeeded" });
+        await ctx.db.patch("operations", operation._id, { phase, updatedAt: Date.now() - 60000 });
     });
   }
   expect(await operations()).toHaveLength(3);
@@ -174,8 +189,8 @@ test("repository scans are deduplicated across machines and retry on later heart
     automatic: true,
   });
   await t.run(async (ctx) => {
-    for (const binding of await ctx.db.query("repositoryBindings").collect())
-      await ctx.db.patch("repositoryBindings", binding._id, { lastJobScanAt: Date.now() - 600000 });
+    for (const scan of await ctx.db.query("jobScans").collect())
+      await ctx.db.patch("jobScans", scan._id, { scannedAt: Date.now() - 600000 });
     await ctx.db.patch("operations", scans[0]!._id, { key: "old-scan", phase: "failed" });
   });
   await heartbeat(0);
@@ -307,7 +322,9 @@ test.each(["claimed", "running"] as const)(
     // A webhook can arrive after replay but before the next heartbeat.
     await t.run(async (ctx) => {
       const { scheduleRunnerDemand } = await import("../../convex/runnerDemand.js");
-      await scheduleRunnerDemand(ctx, host.machineId);
+      const target = await ctx.db.get("machines", host.machineId);
+      if (!target) throw new Error("Missing machine");
+      await scheduleRunnerDemand(ctx, target);
     });
     expect(await operations()).toHaveLength(3);
     await t.run(async (ctx) => {
@@ -327,12 +344,14 @@ test("queued webhooks schedule changed jobs without a heartbeat", async () => {
   const { t, operations, hosts, jobId } = await fixture();
   await t.run(async (ctx) => {
     await ctx.db.delete("githubJobs", jobId);
-    for (const host of hosts)
-      await ctx.db.patch("machines", host.machineId, {
-        paused: false,
+    for (const host of hosts) {
+      await ctx.db.patch("machines", host.machineId, { paused: false });
+      await ctx.db.insert("machinePresence", {
+        machineId: host.machineId,
         runnerSlots: 1,
         lastSeenAt: Date.now(),
       });
+    }
     await ctx.db.insert("githubApps", {
       appId: 1,
       slug: "test",
@@ -396,6 +415,100 @@ test("queued webhooks schedule changed jobs without a heartbeat", async () => {
   expect(await operations()).toHaveLength(2);
 });
 
+test("a job waiting for approval gets a runner once GitHub queues it, but a cancellation stays final", async () => {
+  vi.useFakeTimers();
+  const { t, operations, hosts, jobId, heartbeat } = await fixture();
+  await t.run(async (ctx) => {
+    await ctx.db.delete("githubJobs", jobId);
+    const host = hosts[0]!;
+    await ctx.db.patch("machines", host.machineId, { paused: false });
+    await ctx.db.insert("machinePresence", {
+      machineId: host.machineId,
+      runnerSlots: 1,
+      lastSeenAt: Date.now(),
+    });
+    await ctx.db.delete("repositoryBindings", hosts[1]!.bindingId);
+    await ctx.db.insert("githubApps", {
+      appId: 1,
+      slug: "test",
+      ownerId: 1,
+      clientId: "test",
+      privateKey: "unused",
+      clientSecret: "unused",
+      webhookSecret: "secret",
+    });
+  });
+  const deliver = async (deliveryId: string, status: string) => {
+    const body = JSON.stringify({
+      action: status,
+      installation: { id: 3 },
+      repository: { id: 2 },
+      workflow_job: {
+        id: 4,
+        run_id: 5,
+        name: "Release",
+        status,
+        conclusion: null,
+        labels: ["self-hosted", "macOS", "ARM64", "vectis-mac"],
+        runner_id: null,
+        runner_name: null,
+      },
+    });
+    const signature = `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`;
+    const response = await t.fetch("/github/webhook", {
+      method: "POST",
+      body,
+      headers: {
+        "x-github-event": "workflow_job",
+        "x-github-delivery": deliveryId,
+        "x-hub-signature-256": signature,
+      },
+    });
+    expect(response.status).toBe(202);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+  };
+  const job = () =>
+    t.run(async (ctx) => (await ctx.db.query("githubJobs").collect()).map((item) => item.status));
+  const cancelAll = () =>
+    t.run(async (ctx) => {
+      for (const operation of await ctx.db.query("operations").collect())
+        await ctx.db.patch("operations", operation._id, {
+          phase: "cancelled",
+          updatedAt: Date.now(),
+        });
+    });
+
+  const runners = async () =>
+    (await operations()).filter((item) => JSON.parse(item.commandJson).type === "runner.run");
+
+  await deliver("queued", "queued");
+  expect(await runners()).toHaveLength(1);
+  await deliver("waiting", "waiting");
+  expect(await job()).toEqual(["waiting"]);
+  await deliver("pending", "pending");
+  expect(await job()).toEqual(["waiting"]);
+  const first = (await runners())[0]!;
+  await t.run((ctx) =>
+    ctx.db.patch("operations", first._id, { phase: "running", updatedAt: Date.now() }),
+  );
+  // Approval can arrive while the runner that found the job waiting still cleans up.
+  vi.advanceTimersByTime(1000);
+  await deliver("approved", "queued");
+  expect(await runners()).toHaveLength(1);
+  vi.advanceTimersByTime(1000);
+  await cancelAll();
+  await heartbeat(0, false, true, 1);
+  const keys = (await runners()).map((item) => item.key);
+  expect(keys).toHaveLength(2);
+  expect(keys[1]).toMatch(/:2$/);
+
+  await cancelAll();
+  vi.advanceTimersByTime(1000);
+  await deliver("repeated", "queued");
+  await heartbeat(0, false, true, 1);
+  expect(await runners()).toHaveLength(2);
+});
+
 test.each([undefined, 0, 1])(
   "lease release schedules against stored slots %s without inventing capacity",
   async (runnerSlots) => {
@@ -403,8 +516,9 @@ test.each([undefined, 0, 1])(
     const host = hosts[0];
     if (!host) throw new Error("Missing host");
     const leaseId = await t.run(async (ctx) => {
-      await ctx.db.patch("machines", host.machineId, {
-        paused: false,
+      await ctx.db.patch("machines", host.machineId, { paused: false });
+      await ctx.db.insert("machinePresence", {
+        machineId: host.machineId,
         runnerIdle: true,
         lastSeenAt: Date.now(),
         ...(runnerSlots === undefined ? {} : { runnerSlots }),
@@ -455,3 +569,124 @@ test.each([undefined, 1])(
     expect(await operations()).toHaveLength(runnerSlots === undefined ? 0 : 1);
   },
 );
+
+test("heartbeats keep liveness off the machine document", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(1_000_000);
+  const { t, hosts, heartbeat } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  const read = () =>
+    t.run(async (ctx) => ({
+      machine: await ctx.db.get("machines", host.machineId),
+      presence: await ctx.db
+        .query("machinePresence")
+        .withIndex("by_machine", (q) => q.eq("machineId", host.machineId))
+        .unique(),
+    }));
+  await heartbeat(0, false, true, 2);
+  const first = await read();
+  expect(first.machine).not.toHaveProperty("lastSeenAt");
+  expect(first.presence).toMatchObject({ lastSeenAt: 1_000_000, runnerIdle: true, runnerSlots: 2 });
+  vi.setSystemTime(1_030_000);
+  await heartbeat(0, false, false);
+  const second = await read();
+  expect(second.machine).toEqual(first.machine);
+  expect(second.presence).toMatchObject({
+    lastSeenAt: 1_030_000,
+    runnerIdle: false,
+    runnerSlots: 2,
+  });
+  await heartbeat(0, true, false);
+  expect((await read()).machine).toEqual({ ...first.machine, paused: true });
+});
+
+test("legacy liveness on the machine document is ignored", async () => {
+  const { t, hosts, heartbeat, operations } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  await t.run((ctx) =>
+    ctx.db.patch("machines", host.machineId, {
+      paused: false,
+      runnerSlots: 1,
+      lastSeenAt: Date.now(),
+    }),
+  );
+  await t.mutation(internal.runnerDemand.forMachine, { machineId: host.machineId });
+  expect(await operations()).toHaveLength(0);
+  await heartbeat(0, false, true, 1);
+  expect(await operations()).toHaveLength(1);
+});
+
+test("a heartbeat that readies an environment schedules against the new inventory", async () => {
+  const { t, hosts, operations } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  const environment = { id: "mac", name: "Mac", os: "macos" as const, cpu: 2, memoryMiB: 4096 };
+  const device = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: host.machineId,
+    credentialVersion: 0,
+  });
+  const heartbeat = (state: "ready" | "action_required") =>
+    device.mutation(api.machines.heartbeat, {
+      paused: false,
+      runnerSlots: 1,
+      environments: [{ ...environment, state }],
+    });
+  await heartbeat("action_required");
+  expect(await operations()).toHaveLength(0);
+  await heartbeat("ready");
+  expect(await operations()).toHaveLength(1);
+  expect((await t.run((ctx) => ctx.db.get("machines", host.machineId)))?.environments).toEqual([
+    { ...environment, state: "ready" },
+  ]);
+});
+
+test("manual and disabled bindings are neither scanned nor scheduled", async () => {
+  const { t, hosts, heartbeat, operations } = await fixture();
+  await t.run(async (ctx) => {
+    await ctx.db.insert("githubApps", {
+      appId: 1,
+      slug: "test",
+      ownerId: 1,
+      clientId: "test",
+      privateKey: "unused",
+      clientSecret: "unused",
+      webhookSecret: "unused",
+    });
+    await ctx.db.patch("repositoryBindings", hosts[0]!.bindingId, { automatic: false });
+    await ctx.db.patch("repositoryBindings", hosts[1]!.bindingId, { enabled: false });
+  });
+  await heartbeat(0, false, true, 1);
+  await heartbeat(1, false, true, 1);
+  expect(await operations()).toHaveLength(0);
+});
+
+test("job scans wait for a configured GitHub App and leave bindings untouched", async () => {
+  const { t, hosts, heartbeat, operations } = await fixture();
+  const bindings = () => t.run((ctx) => ctx.db.query("repositoryBindings").collect());
+  const scans = () => t.run((ctx) => ctx.db.query("jobScans").collect());
+  const scanOperations = async () =>
+    (await operations()).filter((item) => JSON.parse(item.commandJson).type === "job.scan");
+  const before = await bindings();
+  await heartbeat(0);
+  expect(await scans()).toHaveLength(0);
+  await t.run((ctx) =>
+    ctx.db.insert("githubApps", {
+      appId: 1,
+      slug: "test",
+      ownerId: 1,
+      clientId: "test",
+      privateKey: "unused",
+      clientSecret: "unused",
+      webhookSecret: "unused",
+    }),
+  );
+  await heartbeat(0);
+  expect(await scans()).toMatchObject([{ bindingId: hosts[0]?.bindingId }]);
+  expect(await scanOperations()).toHaveLength(1);
+  await heartbeat(0);
+  expect(await scanOperations()).toHaveLength(1);
+  expect(await bindings()).toEqual(before);
+});

@@ -201,3 +201,78 @@ test("lease queries authenticate machines and enforce the batch limit", async ()
     device().query(api.jobs.forLeases, { leaseIds: Array.from({ length: 21 }, () => leaseId) }),
   ).rejects.toThrow("invalid_lease_ids");
 });
+
+test("latest job markers share list authorization and follow writes inside the window", async () => {
+  vi.stubEnv("VECTIS_MACHINE_ISSUER", "https://machine.test");
+  const t = convexTest(schema, modules);
+  const { machineId, foreignId, accountId, bindingId } = await t.run(async (ctx) => {
+    const machineId = await ctx.db.insert("machines", {
+      owner: "owner",
+      localId: "local",
+      name: "Mac",
+      createdAt: 1,
+    });
+    const foreignId = await ctx.db.insert("machines", {
+      owner: "owner",
+      localId: "foreign",
+      name: "Other Mac",
+      createdAt: 1,
+    });
+    const accountId = await ctx.db.insert("githubAccounts", {
+      owner: "owner",
+      githubId: 1,
+      login: "owner",
+      installations: [],
+      verifiedAt: 1,
+    });
+    const bindingId = await ctx.db.insert("repositoryBindings", {
+      owner: "owner",
+      machineId,
+      accountId,
+      repositoryId: 2,
+      repositoryName: "sandbox",
+      installationId: 3,
+      environmentId: "mac",
+      enabled: true,
+      verifiedAt: 1,
+    });
+    return { machineId, foreignId, accountId, bindingId };
+  });
+  const device = (id = machineId) =>
+    t.withIdentity({ issuer: "https://machine.test", subject: id, credentialVersion: 0 });
+  const latest = async () =>
+    (await device().query(api.jobs.latest, { bindingId })).map((job) => job.jobId);
+  const job = (jobId: number, updatedAt: number, repositoryId = 2, installationId = 3) =>
+    t.run((ctx) =>
+      ctx.db.insert("githubJobs", {
+        installationId,
+        repositoryId,
+        jobId,
+        runId: 5,
+        name: "Build",
+        status: "queued",
+        conclusion: null,
+        labels: [],
+        runnerId: null,
+        runnerName: null,
+        updatedAt,
+      }),
+    );
+  expect(await latest()).toEqual([]);
+  await job(1, 10_000);
+  await job(2, 20_000, 99);
+  await job(3, 20_000, 2, 99);
+  expect(await latest()).toEqual([1]);
+  await job(4, 7_000);
+  expect(await latest()).toEqual([1, 4]);
+  await job(5, 1_000);
+  expect(await latest()).toEqual([1, 4]);
+  await expect(device(foreignId).query(api.jobs.latest, { bindingId })).rejects.toThrow();
+  await t.run((ctx) => ctx.db.patch("repositoryBindings", bindingId, { enabled: false }));
+  await expect(latest()).rejects.toThrow();
+  await t.run(async (ctx) => {
+    await ctx.db.patch("repositoryBindings", bindingId, { enabled: true });
+    await ctx.db.patch("githubAccounts", accountId, { owner: "different" });
+  });
+  await expect(latest()).rejects.toThrow();
+});

@@ -12,6 +12,16 @@ export interface GuestConnection {
   readonly hostKeyAlias: string;
 }
 
+export class GuestUnavailableError extends VectisError {
+  constructor(readonly detail: string) {
+    super(
+      "guest_unavailable",
+      "The verified guest connection failed.",
+      "Check guest readiness, SSH authorization and its pinned host key.",
+    );
+  }
+}
+
 export function sshPathOption(name: "IdentityFile" | "UserKnownHostsFile", path: string) {
   if (!isAbsolute(path) || /[\r\n\0]/.test(path) || path.includes("${"))
     throw new VectisError(
@@ -134,10 +144,10 @@ export async function executeGuest(
       "Guest control was cancelled. Stop the owned VM to terminate remaining guest work.",
     );
   if (failed || child.exitCode === null || child.exitCode === 255)
-    throw new VectisError(
-      "guest_unavailable",
-      "The verified guest connection failed.",
-      "Check guest readiness, SSH authorization and its pinned host key.",
+    throw new GuestUnavailableError(
+      [child.signalCode ? `signal ${child.signalCode}` : `exit ${child.exitCode}`, stderr.trim()]
+        .filter(Boolean)
+        .join(": "),
     );
   return { exitCode: child.exitCode, stdout, stderr, truncated };
 }

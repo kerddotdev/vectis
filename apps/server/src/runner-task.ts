@@ -5,7 +5,9 @@ import {
 } from "../../../packages/protocol/src/index.js";
 import type { RunnerBroker, RunnerProgress } from "../../../packages/protocol/src/runners.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
-import { executeGuest } from "../../../packages/runner/src/guest.js";
+import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
+import type { GuestConnection } from "../../../packages/runner/src/guest.js";
+import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
 import {
   runnerInstallScript,
   runnerStartScript,
@@ -35,6 +37,9 @@ export async function runRunnerTask(
   let started = false;
   let registrationUncertain = false;
   let failure: unknown;
+  let connection: GuestConnection | undefined;
+  let listener = "";
+  let secret = "";
   const update = (patch: Partial<RunnerProgress>) => {
     progress = { ...progress, ...patch };
     controls.progress(progress);
@@ -52,7 +57,7 @@ export async function runRunnerTask(
     const instance = await controls.start();
     update({ instanceId: instance.id, stage: "preparing_guest" });
     signal.throwIfAborted();
-    const connection = await readyGuest(environment, instance, signal);
+    connection = await readyGuest(environment, instance, signal);
     const shell = environment.os === "windows" ? "powershell" : "bash";
     const installed = await executeGuest(connection, runnerInstallScript(environment.os), {
       shell,
@@ -72,6 +77,7 @@ export async function runRunnerTask(
     update({ stage: "registering" });
     registrationUncertain = true;
     const grant = await controls.broker.prepareRunner(bindingId, key, signal);
+    if (grant.state === "ready") secret = grant.encodedConfig;
     update({ leaseId: grant.id });
     registrationUncertain = false;
     if (grant.state !== "ready")
@@ -92,16 +98,35 @@ export async function runRunnerTask(
         shell,
         signal: AbortSignal.any([signal, AbortSignal.timeout(6 * 60 * 60 * 1000)]),
       },
-    );
-    if (execution.exitCode !== 0)
+    ).catch((error: unknown) => {
+      if (error instanceof GuestUnavailableError) listener = `connection lost: ${error.detail}`;
+      throw error;
+    });
+    if (execution.exitCode !== 0) {
+      listener = `exit ${execution.exitCode}\n${execution.stdout}\n${execution.stderr}`;
       throw new VectisError(
         "runner_process_failed",
         "The runner process exited unsuccessfully.",
         "Inspect the GitHub Actions run and the base image prerequisites.",
       );
+    }
   } catch (error) {
     failure = error;
   }
+  if (
+    connection &&
+    !signal.aborted &&
+    failure instanceof VectisError &&
+    ["guest_unavailable", "runner_process_failed"].includes(failure.code)
+  )
+    update({
+      diagnostics: await collectRunnerDiagnostics({
+        connection,
+        os: environment.os,
+        listener,
+        secrets: [secret],
+      }).catch(() => undefined),
+    });
   {
     update({ stage: "cleaning" });
     if (started) {
