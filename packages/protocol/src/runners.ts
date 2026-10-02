@@ -29,6 +29,7 @@ export const RunnerProgress = Schema.Struct({
   instanceId: Schema.optional(Identifier),
   leaseId: Schema.optional(Identifier),
   runnerId: Schema.optional(Schema.Int),
+  diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(16384))),
   stage: Schema.Literals([
     "starting",
     "preparing_guest",

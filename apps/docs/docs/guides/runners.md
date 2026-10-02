@@ -58,6 +58,16 @@ vectis operation wait <operation-id>
 
 Cancelling stops the VM, then removes the GitHub registration. The cancel request returns before cleanup finishes; the original operation reports the outcome. Pausing the machine only stops new VMs.
 
+## When a runner is lost
+
+GitHub reports "The self-hosted runner lost communication with the server" when a runner stops answering mid-job. If Vectis loses its connection to the VM, or the runner process exits unsuccessfully, it collects evidence before it stops the VM, because stopping destroys it. The failed operation keeps it as `diagnostics`, shown in the activity's details in the app and in `vectis operation get <operation-id> --json`:
+
+- the runner's last output, or the SSH error that ended the connection;
+- the host's view of the VM network: its ARP entry and interfaces;
+- from the guest, if it still answers: uptime, memory, the kernel log tail (when readable) and the runner's own log tail.
+
+An unreachable guest is reported as such, with SSH's reason (timeout, no route, refused). The text is capped at 16 KiB, contains no runner credentials, and is not collected for cancelled or successful runners. On Windows guests only uptime and the runner log are read, and that path is untested.
+
 ## Recover after a crash
 
 If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Vectis never guesses: it cleans up only after it has evidence that the VM process exited.

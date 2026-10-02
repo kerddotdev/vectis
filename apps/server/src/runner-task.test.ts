@@ -1,9 +1,16 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { runRunnerTask } from "./runner-task.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
-import { executeGuest } from "../../../packages/runner/src/guest.js";
+import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
+import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
-vi.mock("../../../packages/runner/src/guest.js", () => ({ executeGuest: vi.fn() }));
+vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../../packages/runner/src/guest.js")>()),
+  executeGuest: vi.fn(),
+}));
+vi.mock("../../../packages/runner/src/guest-diagnostics.js", () => ({
+  collectRunnerDiagnostics: vi.fn(async () => "collected"),
+}));
 afterEach(() => vi.resetAllMocks());
 const environment = {
   id: "test",
@@ -151,4 +158,61 @@ test("demand that disappears during preparation cleans its VM without registrati
   expect(controls.start).toHaveBeenCalledOnce();
   expect(controls.stop).toHaveBeenCalledOnce();
   expect(broker.prepareRunner).not.toHaveBeenCalled();
+});
+
+test("a runner that loses its guest connection keeps diagnostics gathered before the VM stops", async () => {
+  const { controls, events } = fixture();
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockRejectedValueOnce(new GuestUnavailableError("exit 255: Connection timed out"));
+  vi.mocked(collectRunnerDiagnostics).mockImplementation(async () => {
+    events.push("diagnose");
+    return "collected";
+  });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({ status: "failed", code: "guest_unavailable" });
+  expect(result.progress.diagnostics).toBe("collected");
+  expect(events).toEqual(["diagnose", "stop", "release"]);
+  expect(collectRunnerDiagnostics).toHaveBeenCalledWith(
+    expect.objectContaining({
+      listener: "connection lost: exit 255: Connection timed out",
+      secrets: ["c2VjcmV0"],
+    }),
+  );
+});
+
+test("a runner process that exits unsuccessfully reports its output", async () => {
+  const { controls } = fixture();
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({ exitCode: 1, stdout: "no network", stderr: "", truncated: false });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({ status: "failed", code: "runner_process_failed" });
+  expect(collectRunnerDiagnostics).toHaveBeenCalledWith(
+    expect.objectContaining({ listener: expect.stringContaining("no network") }),
+  );
+});
+
+test("successful and cancelled runners gather no diagnostics", async () => {
+  const { controls } = fixture();
+  await runRunnerTask("binding", "key", environment, controls, AbortSignal.timeout(1000));
+  const abort = new AbortController();
+  controls.start.mockImplementation(async () => {
+    abort.abort();
+    return { id: "instance", environmentId: "test", status: "running", pid: 1, createdAt: "now" };
+  });
+  await runRunnerTask("binding", "key", environment, controls, abort.signal);
+  expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
 });
