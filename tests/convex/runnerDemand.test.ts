@@ -130,20 +130,28 @@ test("revoked account ownership prevents automatic scheduling", async () => {
   await heartbeat(0);
   expect(await operations()).toHaveLength(0);
 });
-test("failed demand is not automatically retried and successful retries are bounded", async () => {
+test("unfinished, cancelled and action-required demand is not retried while failures are", async () => {
   const { t, heartbeat, operations } = await fixture();
   await heartbeat(0);
   const first = (await operations())[0];
   if (!first) throw new Error("Missing demand");
+  for (const phase of ["claimed", "running", "cancelled", "action_required"] as const) {
+    await t.run(async (ctx) => ctx.db.patch("operations", first._id, { phase }));
+    await heartbeat(0);
+    expect(await operations()).toHaveLength(1);
+  }
   await t.run(async (ctx) => ctx.db.patch("operations", first._id, { phase: "failed" }));
-  await heartbeat(1);
-  expect(await operations()).toHaveLength(1);
-  await t.run(async (ctx) => ctx.db.patch("operations", first._id, { phase: "succeeded" }));
-  for (let attempt = 0; attempt < 4; attempt++) {
+  await heartbeat(0);
+  const retry = (await operations()).find((item) => item._id !== first._id);
+  expect(retry?.key).toMatch(/:2$/);
+});
+test("failed and successful retries share the same three attempts", async () => {
+  const { t, heartbeat, operations } = await fixture();
+  for (const phase of ["failed", "succeeded", "failed", "failed"] as const) {
     await heartbeat(0);
     await t.run(async (ctx) => {
       for (const operation of await ctx.db.query("operations").collect())
-        await ctx.db.patch("operations", operation._id, { phase: "succeeded" });
+        await ctx.db.patch("operations", operation._id, { phase });
     });
   }
   expect(await operations()).toHaveLength(3);

@@ -124,8 +124,10 @@ export async function scheduleRunnerDemand(
           .unique();
         if (demand) {
           if (demand.owner !== target.owner || demand.attempt >= 3) continue;
+          // A runner that succeeded served another job with the same labels; one that failed never
+          // took this job, because the job is still queued. Both leave the job needing a runner.
           const previous = await ctx.db.get("operations", demand.operationId);
-          if (previous?.phase !== "succeeded") continue;
+          if (previous?.phase !== "succeeded" && previous?.phase !== "failed") continue;
         }
         const attempt = (demand?.attempt ?? 0) + 1;
         const now = Date.now();
