@@ -209,7 +209,7 @@ export class Store {
             "The service restarted before completion was confirmed. Inspect the operation before retrying.",
         });
     for (const instance of this.snapshot().instances)
-      if (instance.status === "running")
+      if (instance.status === "starting" || instance.status === "running")
         this.put("instance", instance.id, { ...instance, status: "interrupted" });
   }
 }

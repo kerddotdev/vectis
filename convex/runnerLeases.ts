@@ -174,7 +174,7 @@ export const released = internalMutation({
       configExpiresAt: undefined,
       updatedAt: Date.now(),
     });
-    if (lease.phase !== "released") await scheduleRunnerDemand(ctx, lease.machineId);
+    if (lease.phase !== "released") await scheduleRunnerDemand(ctx, target);
   },
 });
 export const list = query({

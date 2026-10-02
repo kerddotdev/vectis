@@ -124,7 +124,8 @@ test.each([
 test("lease watching is coalesced, bounded, expires idle observations and releases its timer", async () => {
   vi.useFakeTimers();
   const home = await mkdtemp(join(tmpdir(), "vectis-job-watch-"));
-  const store = new Store(join(home, "state.sqlite"));
+  // Each seeded row is its own transaction, and fsync on a CI guest disk is slow.
+  const store = new Store(":memory:");
   const watch = vi.fn();
   const service = new Service(
     store,

@@ -772,7 +772,7 @@ export class Service {
             directory: this.runtime.directoryFor(id, environment),
             cpu: environment.cpu,
             memoryMiB: environment.memoryMiB,
-            status: "interrupted" as const,
+            status: "starting" as const,
             pid: 0,
             createdAt: operation.createdAt,
           };

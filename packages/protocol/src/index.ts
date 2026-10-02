@@ -84,7 +84,7 @@ export const ActivityJob = Schema.Struct({
   name: Schema.optional(Schema.String),
   workflowName: Schema.optional(Schema.String),
   htmlUrl: Schema.optional(Schema.String),
-  status: Schema.optional(Schema.Literals(["queued", "in_progress", "completed"])),
+  status: Schema.optional(Schema.Literals(["waiting", "queued", "in_progress", "completed"])),
   conclusion: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export const ActivitySubject = Schema.Union([
@@ -141,7 +141,7 @@ export const Instance = Schema.Struct({
   directory: Schema.optional(Schema.String),
   cpu: Schema.optional(Schema.Int),
   memoryMiB: Schema.optional(Schema.Int),
-  status: Schema.Literals(["running", "stopped", "interrupted"]),
+  status: Schema.Literals(["starting", "running", "stopped", "interrupted"]),
   pid: Schema.Int,
   macAddress: Schema.optional(Schema.String),
   sshHost: Schema.optional(Schema.String),

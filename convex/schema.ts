@@ -91,13 +91,19 @@ export default defineSchema({
     environmentId: v.string(),
     enabled: v.boolean(),
     automatic: v.optional(v.boolean()),
+    // Legacy; jobScans holds scan times so scans do not rewrite the binding.
     lastJobScanAt: v.optional(v.number()),
     verifiedAt: v.number(),
   })
     .index("by_owner", ["owner"])
     .index("by_machine", ["machineId"])
+    .index("by_machine_automatic", ["machineId", "enabled", "automatic"])
     .index("by_target", ["machineId", "repositoryId", "environmentId"])
     .index("by_automatic_repository", ["installationId", "repositoryId", "enabled", "automatic"]),
+  jobScans: defineTable({
+    bindingId: v.id("repositoryBindings"),
+    scannedAt: v.number(),
+  }).index("by_binding", ["bindingId"]),
   runnerLeases: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),
@@ -127,14 +133,24 @@ export default defineSchema({
     name: v.string(),
     credentialVersion: v.optional(v.number()),
     createdAt: v.number(),
-    lastSeenAt: v.optional(v.number()),
     environments: v.optional(v.array(environmentSummary)),
     paused: v.optional(v.boolean()),
+    // Legacy liveness written by older backends. machinePresence holds the current values; these
+    // stay only so existing documents validate.
+    lastSeenAt: v.optional(v.number()),
     runnerIdle: v.optional(v.boolean()),
     runnerSlots: v.optional(v.number()),
   })
     .index("by_owner", ["owner"])
     .index("by_owner_local", ["owner", "localId"]),
+  // Heartbeats write here instead of the machine document, which every machine-authenticated
+  // query reads; touching it every heartbeat would re-run all of them.
+  machinePresence: defineTable({
+    machineId: v.id("machines"),
+    lastSeenAt: v.number(),
+    runnerIdle: v.optional(v.boolean()),
+    runnerSlots: v.optional(v.number()),
+  }).index("by_machine", ["machineId"]),
   runnerDemands: defineTable({
     installationId: v.number(),
     repositoryId: v.number(),
@@ -155,7 +171,12 @@ export default defineSchema({
     name: v.string(),
     htmlUrl: v.optional(v.string()),
     workflowName: v.optional(v.string()),
-    status: v.union(v.literal("queued"), v.literal("in_progress"), v.literal("completed")),
+    status: v.union(
+      v.literal("waiting"),
+      v.literal("queued"),
+      v.literal("in_progress"),
+      v.literal("completed"),
+    ),
     conclusion: v.union(v.string(), v.null()),
     labels: v.array(v.string()),
     runnerId: v.union(v.number(), v.null()),

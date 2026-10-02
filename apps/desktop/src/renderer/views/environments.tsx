@@ -95,7 +95,9 @@ function EnvironmentRow({ environment }: { environment: Environment }) {
   const { submit, snapshot } = useStateApi();
   const [configuring, setConfiguring] = useState(false);
   const running = snapshot?.instances.filter(
-    (instance) => instance.environmentId === environment.id && instance.status === "running",
+    (instance) =>
+      instance.environmentId === environment.id &&
+      (instance.status === "starting" || instance.status === "running"),
   ).length;
   return (
     <ExpandableRow
