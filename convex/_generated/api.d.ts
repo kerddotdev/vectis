@@ -38,6 +38,7 @@ import type * as machines from "../machines.js";
 import type * as migrationPreviews from "../migrationPreviews.js";
 import type * as operations from "../operations.js";
 import type * as pairings from "../pairings.js";
+import type * as presence from "../presence.js";
 import type * as purge from "../purge.js";
 import type * as repositoryBindings from "../repositoryBindings.js";
 import type * as retention from "../retention.js";
@@ -82,6 +83,7 @@ declare const fullApi: ApiFromModules<{
   migrationPreviews: typeof migrationPreviews;
   operations: typeof operations;
   pairings: typeof pairings;
+  presence: typeof presence;
   purge: typeof purge;
   repositoryBindings: typeof repositoryBindings;
   retention: typeof retention;

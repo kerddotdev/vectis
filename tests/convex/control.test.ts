@@ -219,8 +219,12 @@ test("machine inventory is bounded, owner-only and rejects revoked credentials",
     memoryMiB: 8192,
     state: "ready" as const,
   };
-  await device.mutation(api.machines.heartbeat, { environments: [environment] });
-  expect((await owner.query(api.machines.list, {}))[0]?.environments).toEqual([environment]);
+  await device.mutation(api.machines.heartbeat, { environments: [environment], paused: true });
+  expect((await owner.query(api.machines.list, {}))[0]).toMatchObject({
+    environments: [environment],
+    paused: true,
+    lastSeenAt: expect.any(Number),
+  });
   expect(await stranger.query(api.machines.list, {})).toEqual([]);
   await expect(owner.mutation(api.machines.heartbeat, { environments: [] })).rejects.toThrow();
   await expect(

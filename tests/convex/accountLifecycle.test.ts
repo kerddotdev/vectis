@@ -35,6 +35,7 @@ async function connected(t: ReturnType<typeof convexTest>, machineId: string) {
   return t.run(async (ctx) => {
     const id = ctx.db.normalizeId("machines", machineId);
     if (!id) throw new Error("Unknown machine");
+    await ctx.db.insert("machinePresence", { machineId: id, lastSeenAt: 1 });
     const accountId = await ctx.db.insert("githubAccounts", {
       owner: "https://clerk.test|owner",
       githubId: 7,
@@ -53,6 +54,7 @@ async function connected(t: ReturnType<typeof convexTest>, machineId: string) {
       enabled: true,
       verifiedAt: 1,
     });
+    await ctx.db.insert("jobScans", { bindingId, scannedAt: 1 });
     const operationId = await ctx.db.insert("operations", {
       owner: "https://clerk.test|owner",
       machineId: id,
@@ -106,11 +108,13 @@ async function connected(t: ReturnType<typeof convexTest>, machineId: string) {
 const counts = async (t: ReturnType<typeof convexTest>) =>
   t.run(async (ctx) => ({
     machines: (await ctx.db.query("machines").collect()).length,
+    presence: (await ctx.db.query("machinePresence").collect()).length,
     credentials: (await ctx.db.query("machineCredentials").collect()).length,
     pairings: (await ctx.db.query("pairings").collect()).length,
     bindings: (await ctx.db.query("repositoryBindings").collect()).length,
     leases: (await ctx.db.query("runnerLeases").collect()).length,
     demands: (await ctx.db.query("runnerDemands").collect()).length,
+    scans: (await ctx.db.query("jobScans").collect()).length,
     operations: (await ctx.db.query("operations").collect()).length,
     inspections: (await ctx.db.query("inspections").collect()).length,
     previews: (await ctx.db.query("migrationPreviews").collect()).length,
@@ -132,11 +136,13 @@ test("removing a machine deletes everything it owns and frees the local identity
   await t.finishAllScheduledFunctions(vi.runAllTimers);
   expect(await counts(t)).toEqual({
     machines: 0,
+    presence: 0,
     credentials: 0,
     pairings: 0,
     bindings: 0,
     leases: 0,
     demands: 0,
+    scans: 0,
     operations: 0,
     inspections: 0,
     previews: 0,
@@ -162,18 +168,26 @@ test("unlinking a GitHub account disconnects the repositories that depend on it"
   ).rejects.toThrow();
   await owner.mutation(api.githubIdentity.unlink, { id: account.id });
   await t.finishAllScheduledFunctions(vi.runAllTimers);
-  expect(await counts(t)).toMatchObject({ machines: 1, bindings: 0, leases: 0, demands: 0 });
+  expect(await counts(t)).toMatchObject({
+    machines: 1,
+    bindings: 0,
+    leases: 0,
+    demands: 0,
+    scans: 0,
+  });
   expect((await owner.query(api.githubIdentity.list, {})).accounts).toHaveLength(0);
   vi.useRealTimers();
 });
 
 const empty = {
   machines: 0,
+  presence: 0,
   credentials: 0,
   pairings: 0,
   bindings: 0,
   leases: 0,
   demands: 0,
+  scans: 0,
   operations: 0,
   inspections: 0,
   previews: 0,

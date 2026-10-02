@@ -46,6 +46,7 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
 }
 
 const removalCodes = ["machine_rejected", "machine_revoked"];
+type JobMarker = { value: FunctionReturnType<typeof api.jobs.latest> };
 
 export function startCloudRelay(
   connection: CloudConnection,
@@ -59,6 +60,9 @@ export function startCloudRelay(
   const fetchToken = machineTokenFetcher(connection, credentials, abort.signal);
   const cloud = new ConvexClient(connection.deploymentUrl, { logger: false });
   let authenticated = false;
+  // The cloud identity cannot change while a credential stays authenticated, so it is checked once
+  // per authentication instead of costing a server round trip on every tick.
+  let verified = false;
   let refreshing = false;
   let active: Promise<void> | undefined;
   let tokenRequest: Promise<string | null> | undefined;
@@ -70,8 +74,15 @@ export function startCloudRelay(
   // Undefined until the first value arrives: an empty list means no repositories, which is not
   // the same as not having heard from the cloud yet.
   let repositorySnapshot: MachineRepositories | undefined;
+  // Bindings subscribe to a small change marker. A full job list is fetched only when read and is
+  // served only while its binding still holds the exact marker it was fetched under, so a marker
+  // that changes, fails or is replaced during a read never leaves a stale list behind.
   const jobSubscriptions = new Map<string, () => void>();
-  const jobValues = new Map<string, FunctionReturnType<typeof api.jobs.list>>();
+  const jobMarkers = new Map<string, JobMarker>();
+  const jobLists = new Map<
+    string,
+    { marker: JobMarker; jobs: FunctionReturnType<typeof api.jobs.list> }
+  >();
   let watchedLeaseIds: readonly string[] = [];
   let unsubscribeLeases: (() => void) | undefined;
   const report = (state: "connecting" | "connected" | "unavailable" | "removed") => {
@@ -105,19 +116,20 @@ export function startCloudRelay(
       },
       (value) => {
         authenticated = value;
-        if (!value) report("unavailable");
-        else tick();
+        if (!value) {
+          verified = false;
+          report("unavailable");
+        } else tick();
       },
     );
   };
   async function reconcile() {
-    const identity = await interruptible(cloud.query(api.machines.self, {}), abort.signal);
+    if (!verified) {
+      const identity = await interruptible(cloud.query(api.machines.self, {}), abort.signal);
+      verified = identity.id === connection.machineId && identity.localId === connection.localId;
+    }
     const snapshot = await local.status(abort.signal);
-    if (
-      identity.id !== connection.machineId ||
-      identity.localId !== connection.localId ||
-      identity.localId !== snapshot.machine.id
-    )
+    if (!verified || connection.localId !== snapshot.machine.id)
       throw new VectisError(
         "machine_identity_mismatch",
         "This credential belongs to another local machine.",
@@ -233,27 +245,28 @@ export function startCloudRelay(
         if (bindings.has(bindingId)) continue;
         unsubscribe();
         jobSubscriptions.delete(bindingId);
-        jobValues.delete(bindingId);
+        jobMarkers.delete(bindingId);
+        jobLists.delete(bindingId);
       }
       for (const bindingId of bindings) {
         if (jobSubscriptions.has(bindingId)) continue;
         const unsubscribe = cloud.onUpdate(
-          api.jobs.list,
+          api.jobs.latest,
           { bindingId },
-          (jobs) => {
+          (value) => {
             if (
               abort.signal.aborted ||
               removed ||
               jobSubscriptions.get(bindingId) !== unsubscribe ||
-              isDeepStrictEqual(jobValues.get(bindingId), jobs)
+              isDeepStrictEqual(jobMarkers.get(bindingId)?.value, value)
             )
               return;
-            jobValues.set(bindingId, jobs);
+            jobMarkers.set(bindingId, { value });
             onChange();
           },
           () => {
             if (jobSubscriptions.get(bindingId) !== unsubscribe) return;
-            jobValues.delete(bindingId);
+            jobMarkers.delete(bindingId);
             report("unavailable");
           },
         );
@@ -380,14 +393,22 @@ export function startCloudRelay(
     },
     async jobs(bindingId: string) {
       requireConnection();
-      const cached = jobValues.get(bindingId);
-      if (cached !== undefined && !removed && cloud.client.connectionState().isWebSocketConnected)
-        return cached;
+      const marker = jobMarkers.get(bindingId);
+      const cached = jobLists.get(bindingId);
+      if (
+        marker !== undefined &&
+        cached?.marker === marker &&
+        !removed &&
+        cloud.client.connectionState().isWebSocketConnected
+      )
+        return cached.jobs;
       try {
-        return await interruptible(
+        const jobs = await interruptible(
           cloud.query(api.jobs.list, { bindingId }),
           AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
         );
+        if (marker !== undefined) jobLists.set(bindingId, { marker, jobs });
+        return jobs;
       } catch {
         throw new VectisError(
           "job_access_unavailable",
@@ -452,7 +473,8 @@ export function startCloudRelay(
       unsubscribeLeases?.();
       for (const unsubscribe of jobSubscriptions.values()) unsubscribe();
       jobSubscriptions.clear();
-      jobValues.clear();
+      jobMarkers.clear();
+      jobLists.clear();
       disconnect();
       await cloud.close();
       await pendingToken?.catch(() => {});
