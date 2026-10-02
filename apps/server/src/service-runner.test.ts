@@ -124,7 +124,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
       await service.drain();
       expect(store.snapshot().machine.paused).toBe(true);
       expect(store.snapshot().instances[0]?.status).toBe(
-        phase === "starting" ? "interrupted" : "running",
+        phase === "starting" ? "starting" : "running",
       );
       service.submit("cancel", { type: cancelType, id: run.id });
       if (phase === "starting") {

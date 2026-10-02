@@ -56,6 +56,7 @@ export function OperationStatus({ status }: { status: keyof typeof operationStat
 }
 
 const instanceStates = {
+  starting: ["queued", "Starting"],
   running: ["running", "Running"],
   stopped: ["idle", "Stopped"],
   interrupted: ["attention", "Interrupted"],

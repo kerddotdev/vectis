@@ -141,7 +141,7 @@ export const Instance = Schema.Struct({
   directory: Schema.optional(Schema.String),
   cpu: Schema.optional(Schema.Int),
   memoryMiB: Schema.optional(Schema.Int),
-  status: Schema.Literals(["running", "stopped", "interrupted"]),
+  status: Schema.Literals(["starting", "running", "stopped", "interrupted"]),
   pid: Schema.Int,
   macAddress: Schema.optional(Schema.String),
   sshHost: Schema.optional(Schema.String),
