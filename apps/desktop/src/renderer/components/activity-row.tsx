@@ -57,6 +57,13 @@ export function ActivityRow({
     typeof result.nextStep === "string"
       ? result.nextStep
       : undefined;
+  const diagnostics =
+    typeof result === "object" &&
+    result &&
+    "diagnostics" in result &&
+    typeof result.diagnostics === "string"
+      ? result.diagnostics
+      : undefined;
   return (
     <ExpandableRow
       defaultOpen={defaultOpen}
@@ -90,6 +97,17 @@ export function ActivityRow({
         <p className="max-w-[72ch] text-muted-foreground" data-selectable>
           {nextStep}
         </p>
+      )}
+      {diagnostics && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-medium text-muted-foreground">Diagnostics</p>
+          <pre
+            className="max-h-60 overflow-auto rounded-lg bg-muted p-3 font-mono text-xs whitespace-pre-wrap text-foreground/85"
+            data-selectable
+          >
+            {diagnostics}
+          </pre>
+        </div>
       )}
       {job?.htmlUrl && (
         <div>
