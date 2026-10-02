@@ -37,7 +37,7 @@ export function Overview() {
     .filter((activity) => activity.status !== "action_required")
     .slice(0, 8);
   const instances = snapshot?.instances ?? [];
-  const running = instances.filter((instance) => instance.status === "running");
+  const running = instances.filter((instance) => ["starting", "running"].includes(instance.status));
   const interrupted = instances.filter((instance) => instance.status === "interrupted");
   // Every operation starts a VM, so the full list grows without bound. A VM that still runs or
   // needs cleanup always stays visible; the rest of the room goes to the newest finished ones.
@@ -46,7 +46,9 @@ export function Overview() {
   const recent = [
     ...newest([...running, ...interrupted]),
     ...newest(
-      instances.filter((instance) => !["running", "interrupted"].includes(instance.status)),
+      instances.filter(
+        (instance) => !["starting", "running", "interrupted"].includes(instance.status),
+      ),
     ),
   ].slice(0, 8);
   const olderInstances = instances.length - recent.length;

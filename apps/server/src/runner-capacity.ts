@@ -13,7 +13,9 @@ export function instanceAdmissionError(
   host: Host,
   count = 1,
 ): VectisError | undefined {
-  const active = snapshot.instances.filter((instance) => instance.status === "running");
+  const active = snapshot.instances.filter(
+    (instance) => instance.status === "starting" || instance.status === "running",
+  );
   let cpu = environment.cpu * count;
   let memory = environment.memoryMiB * count;
   let macos = environment.os === "macos" ? count : 0;
@@ -55,13 +57,17 @@ export function runnerCapacity(snapshot: Snapshot, host: Host) {
   const environment = snapshot.environments
     .filter((item) => item.state === "ready")
     .sort((a, b) => b.cpu - a.cpu || b.memoryMiB - a.memoryMiB)[0];
-  // An accepted runner holds its slot before its VM runs, so its resources are reserved here too.
+  // An accepted runner holds its slot before its VM starts, so its resources are reserved here too.
   const booting = Math.max(
     0,
-    active - snapshot.instances.filter((instance) => instance.status === "running").length,
+    active -
+      snapshot.instances.filter(
+        (instance) => instance.status === "starting" || instance.status === "running",
+      ).length,
   );
+  const interrupted = snapshot.instances.some((instance) => instance.status === "interrupted");
   let available = 0;
-  if (environment && !snapshot.machine.paused && !preparationBusy) {
+  if (environment && !snapshot.machine.paused && !preparationBusy && !interrupted) {
     while (
       available < max - active &&
       !instanceAdmissionError(snapshot, environment, host, booting + available + 1)

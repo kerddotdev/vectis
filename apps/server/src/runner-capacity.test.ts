@@ -135,3 +135,20 @@ test("accepted runners reserve their VM before it boots, so slots are not offere
   state.instances = [running(), { ...running(), id: "other" }];
   expect(runnerCapacity(state, host).available).toBe(0);
 });
+
+test("a starting VM holds its resources, and an interrupted one stops admission entirely", () => {
+  const state = snapshot();
+  state.operations = [operation("running")];
+  state.instances = [{ ...running(), status: "starting" }];
+  expect(runnerCapacity(state, host).available).toBe(1);
+  state.instances = [
+    { ...running(), status: "starting" },
+    { ...running(), id: "second" },
+  ];
+  expect(instanceAdmissionError(state, environment, host)).toMatchObject({
+    code: "capacity_exceeded",
+  });
+  state.operations = [];
+  state.instances = [{ ...running(), status: "interrupted" }];
+  expect(runnerCapacity(state, host).available).toBe(0);
+});
