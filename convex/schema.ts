@@ -171,7 +171,12 @@ export default defineSchema({
     name: v.string(),
     htmlUrl: v.optional(v.string()),
     workflowName: v.optional(v.string()),
-    status: v.union(v.literal("queued"), v.literal("in_progress"), v.literal("completed")),
+    status: v.union(
+      v.literal("waiting"),
+      v.literal("queued"),
+      v.literal("in_progress"),
+      v.literal("completed"),
+    ),
     conclusion: v.union(v.string(), v.null()),
     labels: v.array(v.string()),
     runnerId: v.union(v.number(), v.null()),

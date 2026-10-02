@@ -129,10 +129,16 @@ export async function scheduleRunnerDemand(
           // A runner that succeeded served another job with the same labels; one that failed never
           // took this job, because the job is still queued. Both leave the job needing a runner.
           // A failure waits a minute, so a passing condition does not use up every attempt at once.
+          // A cancelled runner is retried only if the job changed after that attempt was scheduled,
+          // as when a job that waited for approval is queued again; a person's cancellation of an
+          // unchanged job stays final.
           const previous = await ctx.db.get("operations", demand.operationId);
           if (
             previous?.phase !== "succeeded" &&
-            !(previous?.phase === "failed" && previous.updatedAt <= Date.now() - failureRetryDelay)
+            !(
+              previous?.phase === "failed" && previous.updatedAt <= Date.now() - failureRetryDelay
+            ) &&
+            !(previous?.phase === "cancelled" && job.updatedAt > previous.createdAt)
           )
             continue;
         }

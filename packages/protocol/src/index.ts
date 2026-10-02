@@ -84,7 +84,7 @@ export const ActivityJob = Schema.Struct({
   name: Schema.optional(Schema.String),
   workflowName: Schema.optional(Schema.String),
   htmlUrl: Schema.optional(Schema.String),
-  status: Schema.optional(Schema.Literals(["queued", "in_progress", "completed"])),
+  status: Schema.optional(Schema.Literals(["waiting", "queued", "in_progress", "completed"])),
   conclusion: Schema.optional(Schema.NullOr(Schema.String)),
 });
 export const ActivitySubject = Schema.Union([
