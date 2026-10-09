@@ -12,6 +12,8 @@ import { runProcess } from "./process.js";
 import { probeStorage } from "./storage-probe.js";
 import { waitForAppleVm } from "./apple.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
+import { instanceIdentity } from "./instance-identity.js";
+import { verifyQemuIsolation } from "./qemu-isolation.js";
 
 export interface RuntimeOptions {
   readonly home: string;
@@ -28,6 +30,7 @@ export interface OwnedInstance {
   readonly macAddress?: string;
   readonly sshHost?: string;
   readonly sshPort?: number;
+  readonly knownHostsPath?: string;
 }
 export class VmRuntime {
   private readonly owned = new Map<string, OwnedInstance>();
@@ -104,6 +107,16 @@ export class VmRuntime {
         "The environment still needs setup.",
         "Complete guest setup and mark the prepared environment ready.",
       );
+    if (
+      environment.os === "linux" &&
+      environment.sshUser &&
+      environment.sshHostKeyMode !== "instance"
+    )
+      throw new VectisError(
+        "setup_required",
+        "This Linux image shares its SSH host identity between instances.",
+        "Prepare a new Linux environment to enable per-instance SSH host keys.",
+      );
     const executable = environment.os === "windows" ? this.options.qemu : this.options.appleHelper;
     if (!executable)
       throw new VectisError(
@@ -114,6 +127,7 @@ export class VmRuntime {
     await access(executable, constants.X_OK).catch(() => {
       throw new VectisError("runtime_missing", "The configured VM runtime is not executable.");
     });
+    if (environment.os === "windows") await verifyQemuIsolation(executable, signal);
     const root = environment.storagePath ?? join(this.options.home, "instances");
     await probeStorage(
       environment.os === "macos" ? join(environment.basePath, "disk.img") : environment.basePath,
@@ -126,6 +140,7 @@ export class VmRuntime {
     try {
       signal?.throwIfAborted();
       let args: string[];
+      let knownHostsPath: string | undefined;
       if (environment.os === "windows") {
         if (
           !environment.firmwarePath ||
@@ -164,6 +179,12 @@ export class VmRuntime {
       } else {
         const destination = join(directory, environment.os === "macos" ? "bundle" : "disk.img");
         await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination], signal);
+        let seedPath = environment.seedPath;
+        if (environment.os === "linux" && environment.sshHostKeyMode === "instance") {
+          const identity = await instanceIdentity(directory, id, signal);
+          seedPath = identity.seedPath;
+          knownHostsPath = identity.knownHostsPath;
+        }
         args = [
           "run",
           environment.os,
@@ -171,7 +192,7 @@ export class VmRuntime {
           String(environment.cpu),
           String(environment.memoryMiB),
           join(directory, "efi.bin"),
-          ...(environment.seedPath ? [resolve(environment.seedPath)] : []),
+          ...(seedPath ? [resolve(seedPath)] : []),
         ];
       }
       await writeFile(
@@ -217,7 +238,13 @@ export class VmRuntime {
         }
       });
       void settled.catch(() => {});
-      const instance = { id, process: child, directory, settled };
+      const instance = {
+        id,
+        process: child,
+        directory,
+        settled,
+        ...(knownHostsPath ? { knownHostsPath } : {}),
+      };
       this.owned.set(id, instance);
       const cancel = () => {
         void this.stop(id).catch(() => {});

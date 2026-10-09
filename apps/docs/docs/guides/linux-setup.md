@@ -19,6 +19,8 @@ Use **Environments > Prepare a guest image**, with **Ubuntu 24.04 ARM64** select
 
 The service downloads a pinned official Ubuntu QCOW2 image, checks its exact size and SHA-256, converts it to a bootable raw disk, and performs guest configuration locally. The source revision is recorded beside the completed image. Installed package versions are available inside the guest at `/etc/vectis/toolchain-versions.txt`. No host home directory, Docker socket or GitHub App key is shared with the guest.
 
+Each disposable instance receives its own SSH host key through private, read-only setup media. Images prepared with a shared SSH host key must be prepared again before starting runners; Vectis reports `action_required` for those images. Prepare a new environment and reconnect its repositories before removing the old one.
+
 ## What the image contains
 
 A prepared image is a runner host, not a copy of a GitHub-hosted runner. GitHub's Ubuntu ARM64 image is built by 63 provisioning steps and carries hundreds of preinstalled tools, which does not belong in a disposable VM on a personal Mac. What a workflow actually depends on is narrower, because `actions/setup-*` actions download toolchains at job time. That is the layer Vectis matches, and it takes the list from the same place GitHub does: the `apt` section of [the Ubuntu 24.04 ARM64 toolset](https://github.com/actions/runner-images/blob/main/images/ubuntu/toolsets/toolset-2404-arm64.json) in `actions/runner-images`.

@@ -19,6 +19,7 @@ import { runProcess } from "./process.js";
 import { waitForQemu } from "./qmp.js";
 import { windowsBootstrapCommand } from "./windows-seed.js";
 import { windowsVmArguments } from "./windows-arguments.js";
+import { verifyQemuIsolation } from "./qemu-isolation.js";
 import { prepareWindowsMedia, type SetupCredentials } from "./windows-media.js";
 import type { RuntimeOptions } from "./runtime.js";
 
@@ -95,6 +96,7 @@ export async function installWindowsGuest(
   await validateWindowsInstallation(input, options, directory);
   if (!options.qemu || !options.qemuImg || !options.swtpm)
     throw new VectisError("runtime_missing", "Windows runtimes are missing.");
+  await verifyQemuIsolation(options.qemu, signal);
   const marker = join(directory, "setup.json");
   const resuming = !!(await stat(marker).catch(() => undefined));
   const owner = JSON.stringify({ id: setupId, configuration: input });
