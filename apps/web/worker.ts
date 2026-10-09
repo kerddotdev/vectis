@@ -10,6 +10,8 @@ const routes = new Map([
   ["/api/github/app/setup", "GET"],
   ["/api/github/manifest/callback", "GET"],
   ["/api/github/oauth/callback", "GET"],
+  ["/api/github/oauth/begin", "POST"],
+  ["/api/github/oauth/confirm", "POST"],
   ["/api/github/webhook", "POST"],
 ]);
 export default {
@@ -27,6 +29,9 @@ export default {
       "x-hub-signature-256",
       "x-github-event",
       "x-github-delivery",
+      "authorization",
+      "origin",
+      "cookie",
     ])
       if (request.headers.has(name)) headers.set(name, request.headers.get(name) ?? "");
     const upstream = await fetch(target, {

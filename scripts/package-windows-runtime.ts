@@ -4,6 +4,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { parseArgs, promisify } from "node:util";
 import { inspectLocalArtifact } from "../packages/runner/src/artifact.js";
 import { stageRuntimeNotices } from "./release/runtime-notices.js";
+import { verifyQemuIsolation } from "../packages/runner/src/qemu-isolation.js";
 
 const { values } = parseArgs({
   options: {
@@ -27,6 +28,7 @@ if (
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("Windows runtime packaging requires an Apple Silicon Mac.");
 const run = promisify(execFile);
+await verifyQemuIsolation(values.qemu);
 await mkdir(dirname(resolve(values.output)), { recursive: true, mode: 0o700 });
 await mkdir(resolve(values.output), { mode: 0o700 });
 const output = await realpath(values.output);
@@ -115,6 +117,10 @@ for (const name of ["COPYING", "LICENSE"])
 await writeFile(
   join(output, "licenses/qemu/0001-align-arm-tpm-ppi-to-host-page.patch"),
   await readFile("native/qemu/patches/0001-align-arm-tpm-ppi-to-host-page.patch"),
+);
+await copyFile(
+  "native/qemu/patches/0002-isolate-vectis-user-network.patch",
+  join(output, "licenses/qemu/0002-isolate-vectis-user-network.patch"),
 );
 const versions: Record<string, string> = {};
 const notices = await stageRuntimeNotices([...files.keys()], output);

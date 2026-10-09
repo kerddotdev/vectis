@@ -92,6 +92,15 @@ export class Service {
   async initialize() {
     await recoverWindowsInstallations(this.store);
     await recoverMacInstallations(this.store);
+    for (const environment of this.store.snapshot().environments) {
+      if (
+        environment.os === "linux" &&
+        environment.sshUser &&
+        environment.sshHostKeyMode !== "instance" &&
+        environment.state === "ready"
+      )
+        this.store.put("environment", environment.id, { ...environment, state: "action_required" });
+    }
     for (const value of this.store.list("preparation")) {
       const preparation = Schema.decodeUnknownSync(Preparation)(value);
       if (
@@ -559,9 +568,11 @@ export class Service {
                     ? {
                         code: completed.code,
                         nextStep:
-                          completed.status === "action_required"
-                            ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
-                            : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                          "nextStep" in completed
+                            ? completed.nextStep
+                            : completed.status === "action_required"
+                              ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
+                              : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
                       }
                     : {}),
                 },
@@ -675,6 +686,16 @@ export class Service {
           break;
         case "environment.register":
           await this.runtime.validate(command.environment);
+          if (
+            command.environment.os === "linux" &&
+            command.environment.sshUser &&
+            command.environment.sshHostKeyMode !== "instance"
+          )
+            throw new VectisError(
+              "setup_required",
+              "This Linux image does not install an instance-specific SSH host key.",
+              "Prepare a new Linux environment with this version of Vectis.",
+            );
           if (
             snapshot.instances.some(
               (instance) =>
@@ -799,6 +820,7 @@ export class Service {
                 ...(instance.macAddress ? { macAddress: instance.macAddress } : {}),
                 ...(instance.sshHost ? { sshHost: instance.sshHost } : {}),
                 ...(instance.sshPort ? { sshPort: instance.sshPort } : {}),
+                ...(instance.knownHostsPath ? { knownHostsPath: instance.knownHostsPath } : {}),
               });
               this.store.update(operation, {
                 status: "succeeded",

@@ -1,0 +1,230 @@
+From: Vectis maintainers
+Subject: [PATCH] net: isolate Vectis guests from host and private destinations
+
+--- a/net/slirp.c
++++ b/net/slirp.c
+@@ -25,6 +25,9 @@
+ #include "qemu/osdep.h"
+ #include "qemu/log.h"
+ #include "net/slirp.h"
++#ifndef _WIN32
++#include "vectis-isolation.h"
++#endif
+
+
+ #if defined(CONFIG_SMBD_COMMAND)
+@@ -91,6 +94,7 @@
+     NetClientState nc;
+     QTAILQ_ENTRY(SlirpState) entry;
+     Slirp *slirp;
++    bool vectis_isolate;
+     Notifier poll_notifier;
+     Notifier exit_notifier;
+ #if defined(CONFIG_SMBD_COMMAND)
+@@ -135,6 +139,11 @@
+ {
+     SlirpState *s = DO_UPCAST(SlirpState, nc, nc);
+
++#ifndef _WIN32
++    if (s->vectis_isolate && !vectis_packet_allowed(buf, size)) {
++        return size;
++    }
++#endif
+     slirp_input(s->slirp, buf, size);
+
+     return size;
+@@ -430,7 +439,7 @@
+ };
+
+ static int net_slirp_init(NetClientState *peer, const char *model,
+-                          const char *name, int restricted,
++                          const char *name, int restricted, bool vectis_isolate,
+                           bool ipv4, const char *vnetwork, const char *vhost,
+                           bool ipv6, const char *vprefix6, int vprefix6_len,
+                           const char *vhost6,
+@@ -442,6 +451,17 @@
+                           const char *tftp_server_name,
+                           Error **errp)
+ {
++#if defined(_WIN32) || !SLIRP_CHECK_VERSION(4, 7, 0)
++    if (vectis_isolate) {
++        error_setg(errp, "Vectis isolation requires a POSIX host and libslirp 4.7+");
++        return -1;
++    }
++#endif
++    if (vectis_isolate && (ipv6 || vnetwork || vhost || vnameserver ||
++                          vdhcp_start || tftp_export || smb_export)) {
++        error_setg(errp, "Vectis isolation requires default IPv4 networking without file exports");
++        return -1;
++    }
+     /* default settings according to historic slirp */
+     struct in_addr net  = { .s_addr = htonl(0x0a000200) }; /* 10.0.2.0 */
+     struct in_addr mask = { .s_addr = htonl(0xffffff00) }; /* 255.255.255.0 */
+@@ -645,6 +665,10 @@
+     cfg.version =
+          SLIRP_CHECK_VERSION(4, 9, 0) ? 6 :
+          SLIRP_CHECK_VERSION(4, 7, 0) ? 4 : 1;
++    s->vectis_isolate = vectis_isolate;
++#if SLIRP_CHECK_VERSION(4, 7, 0)
++    cfg.disable_host_loopback = vectis_isolate;
++#endif
+     cfg.restricted = restricted;
+     cfg.in_enabled = ipv4;
+     cfg.vnetwork = net;
+@@ -1281,6 +1305,10 @@
+     const char **dnssearch;
+     bool ipv4 = true, ipv6 = true;
+
++    if (netdev->u.user.vectis_isolate && netdev->u.user.guestfwd) {
++        error_setg(errp, "Vectis isolation does not allow guest forwarding");
++        return -1;
++    }
+     assert(netdev->type == NET_CLIENT_DRIVER_USER);
+     user = &netdev->u.user;
+
+@@ -1304,7 +1332,7 @@
+     net_init_slirp_configs_host(user->hostfwd);
+     net_init_slirp_configs_guest(user->guestfwd);
+
+-    ret = net_slirp_init(peer, "user", name, user->q_restrict,
++    ret = net_slirp_init(peer, "user", name, user->q_restrict, user->vectis_isolate,
+                          ipv4, vnet, user->host,
+                          ipv6, user->ipv6_prefix, user->ipv6_prefixlen,
+                          user->ipv6_host, user->hostname, user->tftp,
+--- a/qapi/net.json
++++ b/qapi/net.json
+@@ -307,6 +307,9 @@
+ #
+ # @hostname: client hostname reported by the builtin DHCP server
+ #
++# @vectis-isolate: block guest access to host and private networks
++#     (Vectis)
++#
+ # @restrict: isolate the guest from the host
+ #
+ # @ipv4: whether to support IPv4, default true for enabled (since 2.6)
+@@ -366,6 +369,7 @@
+   'data': {
+     '*hostname':  'str',
+     '*restrict':  'bool',
++    '*vectis-isolate': 'bool',
+     '*ipv4':      'bool',
+     '*ipv6':      'bool',
+     '*ip':        'str',
+--- /dev/null
++++ b/net/vectis-isolation.h
+@@ -0,0 +1,90 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef VECTIS_ISOLATION_H
++#define VECTIS_ISOLATION_H
++#include <stdbool.h>
++#include <stdint.h>
++#include <stddef.h>
++#include <string.h>
++#include <ifaddrs.h>
++#include <netinet/in.h>
++
++static bool vectis_local_address(uint32_t address)
++{
++    struct ifaddrs *interfaces, *item;
++    bool local = false;
++    if (getifaddrs(&interfaces) != 0) {
++        return true;
++    }
++    for (item = interfaces; item; item = item->ifa_next) {
++        if (item->ifa_addr && item->ifa_addr->sa_family == AF_INET &&
++            ntohl(((struct sockaddr_in *)item->ifa_addr)->sin_addr.s_addr) == address) {
++            local = true;
++            break;
++        }
++    }
++    freeifaddrs(interfaces);
++    return local;
++}
++
++static uint16_t vectis_u16(const uint8_t *p)
++{
++    return ((uint16_t)p[0] << 8) | p[1];
++}
++
++static bool vectis_public_address(uint32_t address)
++{
++    return (address >> 24) != 0 && (address >> 24) != 10 &&
++        (address >> 22) != 0x191 && (address >> 24) != 127 &&
++        (address >> 16) != 0xa9fe && (address >> 20) != 0xac1 &&
++        (address >> 16) != 0xc0a8 && (address >> 8) != 0xc00000 &&
++        (address >> 17) != 0x6309 && (address >> 24) < 224;
++}
++
++static bool vectis_packet_allowed(const uint8_t *frame, size_t size)
++{
++    const uint8_t *ip, *transport;
++    size_t header, length;
++    uint32_t destination;
++    uint16_t fragment, source_port = 0, destination_port = 0;
++    if (size < 14) {
++        return false;
++    }
++    if (vectis_u16(frame + 12) == 0x0806) {
++        return true;
++    }
++    /* Vectis uses IPv4 slirp. VLANs, IPv6 and other protocols fail closed. */
++    if (vectis_u16(frame + 12) != 0x0800 || size < 34) {
++        return false;
++    }
++    ip = frame + 14;
++    header = (ip[0] & 15) * 4;
++    length = vectis_u16(ip + 2);
++    if ((ip[0] >> 4) != 4 || header < 20 || length < header ||
++        length > size - 14) {
++        return false;
++    }
++    destination = ((uint32_t)ip[16] << 24) | ((uint32_t)ip[17] << 16) |
++        ((uint32_t)ip[18] << 8) | ip[19];
++    fragment = vectis_u16(ip + 6) & 0x3fff;
++    transport = ip + header;
++    if (!fragment && length >= header + 8 && (ip[9] == 6 || ip[9] == 17)) {
++        source_port = vectis_u16(transport);
++        destination_port = vectis_u16(transport + 2);
++        /* Only the virtual DNS resolver and DHCP server get private traffic. */
++        if (destination == 0x0a000203 && destination_port == 53) {
++            return true;
++        }
++        if ((destination == 0xffffffff || destination == 0x0a000202) &&
++            ip[9] == 17 && source_port == 68 && destination_port == 67) {
++            return true;
++        }
++        /* Replies to the owned SSH hostfwd use an accepted socket. Initial
++         * guest SYNs never qualify; libslirp also disables host loopback. */
++        if (destination == 0x0a000202 && ip[9] == 6 && source_port == 22 &&
++            length >= header + 20 && (transport[13] & 0x10)) {
++            return true;
++        }
++    }
++    return vectis_public_address(destination) && !vectis_local_address(destination);
++}
++#endif
+--- a/qemu-options.hx
++++ b/qemu-options.hx
+@@ -16,6 +16,9 @@
+ ``-h``
+     Display help and exit
+ ERST
++
++DEF("vectis-isolation-version", 0, QEMU_OPTION_vectis_isolation_version,
++    "-vectis-isolation-version  print the Vectis network isolation version\n", QEMU_ARCH_ALL)
+
+ DEF("version", 0, QEMU_OPTION_version,
+     "-version        display version information and exit\n", QEMU_ARCH_ALL)
+--- a/system/vl.c
++++ b/system/vl.c
+@@ -3112,6 +3112,9 @@
+             case QEMU_OPTION_h:
+                 help(0);
+                 break;
++            case QEMU_OPTION_vectis_isolation_version:
++                printf("1\n");
++                exit(0);
+             case QEMU_OPTION_version:
+                 version();
+                 exit(0);

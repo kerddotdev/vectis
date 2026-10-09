@@ -60,15 +60,15 @@ Remote control of another Mac: `vectis login`, user approval, `vectis login fini
 
 An environment is a prepared guest image. Its ID becomes the runner label.
 
-- Ubuntu 24.04: `vectis environment prepare-linux <id> --image-directory <dir> --storage-path <dir> --wait --json`. Needs about 8 GiB free. Resume an interrupted preparation with `environment resume <setup-id>`.
+- Ubuntu 24.04: `vectis environment prepare-linux <id> --image-directory <dir> --storage-path <dir> --wait --json`. Needs about 8 GiB free. Resume an interrupted preparation with `environment resume <setup-id>`. Images with a shared SSH host key need fresh preparation; current images provision a separate key for each instance.
 - macOS 26: `environment install-macos <id> --image-directory <dir> --storage-path <dir>` downloads Apple's large restore image unless `--restore-path` points at a local one, and needs 40 to 60 GiB. It stops at `action_required`: the user completes Setup Assistant in `environment open-macos-setup`, then `connect-macos-guest`, `verify-macos-guest`, shuts the guest down and `finish-macos-setup`. `discard-macos` deletes an unregistered attempt only with the user's confirmation.
-- Windows 11 (experimental): `environment install-windows` needs the user's own ISO, VirtIO drivers ISO, ARM64 UEFI firmware and license acceptance, plus QEMU, qemu-img and swtpm that the user installs.
+- Windows 11 (experimental): `environment install-windows` needs the user's own ISO, VirtIO drivers ISO, ARM64 UEFI firmware and license acceptance, plus QEMU with both Vectis TPM and network isolation patches, qemu-img and swtpm that the user installs. Guests have IPv4 internet access but cannot initiate connections to host or private network services.
 - `environment configure <id> --cpu --memory-mib --storage-path` changes defaults for future VMs; a VM may use at most 75% of host memory. `vectis storage --json` separates image and VM disk usage.
 - Downloading or preparing images uses many gigabytes. Only start it when the user asked.
 
 ## Repositories and labels
 
-- `vectis repository connect <name> --account <id> --environment <id> [--owner <org>] --wait --json` connects a repository to this Mac. The linked GitHub account needs admin permission on organization repositories. Public repositories require the GitHub setting that makes all external contributors wait for approval.
+- `vectis repository connect <name> --account <id> --environment <id> [--owner <org>] --wait --json` connects a repository to this Mac. The linked GitHub account needs admin permission on organization repositories. Public repositories require the GitHub setting that makes all external contributors wait for approval. Private repositories must disable fork workflows or require approval for them.
 - `vectis repository list --json` (MCP `vectis_repositories`) shows each connection with its `runsOn` label.
 - A workflow reaches an environment with `runs-on: vectis-<environment-id>`. It may also list `self-hosted`, the OS label (`Linux`, `macOS` or `Windows`) and `ARM64`, and nothing else. Any other label keeps the job away from Vectis.
 - `repository enable-auto <binding-id>` starts runners automatically for matching queued jobs; `disable-auto` stops that. `repository disconnect <binding-id>` stops future runners and lets running jobs finish.

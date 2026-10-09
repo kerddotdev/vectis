@@ -40,6 +40,11 @@ test("App authentication signs a short JWT and narrows runner access to the veri
       return Response.json({ token: "installation-secret" });
     }
     expect(authorization).toBe("Bearer installation-secret");
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     return Response.json({ id: 123, private: true, owner: { id: 7 } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -49,7 +54,7 @@ test("App authentication signs a short JWT and narrows runner access to the veri
     installationId: 10,
     repositoryId: 123,
   });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(4);
 });
 test("foreign owners, suspended installations and repository mismatches cannot obtain runner admission", async () => {
   for (const installation of [
@@ -103,6 +108,11 @@ test("initial repository discovery still issues a token limited to one explicit 
       });
       return Response.json({ token: "secret" });
     }
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     return Response.json({ id: 123, private: true, owner: { id: 7 } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -149,6 +159,11 @@ test("job inspection uses read-only Actions permission without runner administra
       });
       return Response.json({ token: "read-only-secret" });
     }
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     return Response.json({ id: 123, private: true, owner: { id: 7 } });
   });
   expect(
@@ -158,6 +173,7 @@ test("job inspection uses read-only Actions permission without runner administra
 
 for (const purpose of ["migration-read", "migration-write"] as const) {
   test(`${purpose} narrows workflow access without runner or Actions administration`, async () => {
+    let tokens = 0;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (url.endsWith("/installation"))
         return Response.json({
@@ -167,15 +183,28 @@ for (const purpose of ["migration-read", "migration-write"] as const) {
           suspended_at: null,
         });
       if (url.endsWith("/access_tokens")) {
+        tokens++;
         expect(JSON.parse(String(init?.body))).toEqual({
           repository_ids: [123],
           permissions:
-            purpose === "migration-read"
-              ? { contents: "read", metadata: "read" }
-              : { contents: "write", workflows: "write", pull_requests: "write", metadata: "read" },
+            purpose === "migration-write" && tokens === 2
+              ? { administration: "read", metadata: "read" }
+              : purpose === "migration-read"
+                ? { contents: "read", metadata: "read" }
+                : {
+                    contents: "write",
+                    workflows: "write",
+                    pull_requests: "write",
+                    metadata: "read",
+                  },
         });
         return Response.json({ token: "test-migration-token" });
       }
+      if (url.endsWith("/fork-pr-workflows-private-repos"))
+        return Response.json({
+          run_workflows_from_fork_pull_requests: false,
+          require_approval_for_fork_pr_workflows: false,
+        });
       return Response.json({ id: 123, private: true, owner: { id: 7 } });
     });
     expect(
@@ -263,6 +292,11 @@ test("organization admission rechecks the verified user's current repository adm
       });
     if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped-token" });
     if (url.endsWith("/permission")) return Response.json({ permission, user: { id: userId } });
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     return Response.json({ id: 123, private: true, owner: { id: 99 } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -290,4 +324,46 @@ test("organization admission rechecks the verified user's current repository adm
     client.repositoryToken({ ...organization, purpose: "cleanup" }),
   ).resolves.toMatchObject({ repositoryId: 123 });
   expect(fetch.mock.calls.some(([url]) => url.includes("/collaborators/"))).toBe(false);
+});
+
+test("private fork policy is required and rechecked for runner admission", async () => {
+  let enabled = true;
+  let approval = false;
+  const fetch = vi.fn(async (url: string) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 7, type: "User" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped-token" });
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: enabled,
+        require_approval_for_fork_pr_workflows: approval,
+      });
+    return Response.json({ id: 123, private: true, owner: { id: 7 } });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const client = new GitHubAppClient(app);
+  await expect(client.repositoryToken(input)).rejects.toMatchObject({
+    code: "private_runner_approval_required",
+  });
+  approval = true;
+  await expect(client.repositoryToken(input)).resolves.toMatchObject({ repositoryId: 123 });
+  approval = false;
+  await expect(client.repositoryToken({ ...input, purpose: "runners" })).rejects.toMatchObject({
+    code: "private_runner_approval_required",
+  });
+  enabled = false;
+  await expect(client.repositoryToken(input)).resolves.toMatchObject({ repositoryId: 123 });
+  fetch.mockClear();
+  enabled = true;
+  await expect(client.repositoryToken({ ...input, purpose: "cleanup" })).resolves.toMatchObject({
+    repositoryId: 123,
+  });
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/fork-pr-workflows-private-repos"))).toBe(
+    false,
+  );
 });

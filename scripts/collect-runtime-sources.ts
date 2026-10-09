@@ -101,6 +101,10 @@ await copyFile(
   "native/qemu/patches/0001-align-arm-tpm-ppi-to-host-page.patch",
   join(output, "vectis-qemu.patch"),
 );
+await copyFile(
+  "native/qemu/patches/0002-isolate-vectis-user-network.patch",
+  join(output, "vectis-qemu-isolation.patch"),
+);
 await copyFile("native/qemu/README.md", join(output, "VECTIS-QEMU.md"));
 await writeFile(
   join(output, "SOURCES.json"),

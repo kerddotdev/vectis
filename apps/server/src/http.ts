@@ -2,7 +2,8 @@ import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { isDeepStrictEqual } from "node:util";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { open, readFile, rename, rm } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join } from "node:path";
 import { Schema } from "effect";
 import {
@@ -23,6 +24,7 @@ import { buildInfo } from "../../../packages/client/src/build.js";
 import { LogRequest } from "../../../packages/protocol/src/logs.js";
 import { readServiceLog } from "./logs.js";
 import { configuredRelay } from "./cloud.js";
+import { privateHome, privateFile } from "./private-files.js";
 
 function reply(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, {
@@ -55,7 +57,8 @@ export async function startService(
     onShutdown?: () => void;
   },
 ) {
-  await mkdir(options.home, { recursive: true, mode: 0o700 });
+  privateHome(options.home);
+  privateFile(join(options.home, "connection.json"));
   const lockPath = join(options.home, "service.lock");
   let lock;
   try {
@@ -82,7 +85,13 @@ export async function startService(
   await lock.writeFile(JSON.stringify({ pid: process.pid }));
   await lock.close();
   const token = options.token ?? randomBytes(32).toString("hex");
-  const store = new Store(join(options.home, "state.sqlite"));
+  let store: Store;
+  try {
+    store = new Store(join(options.home, "state.sqlite"));
+  } catch (error) {
+    await rm(lockPath, { force: true });
+    throw error;
+  }
   const service = new Service(
     store,
     new VmRuntime(options),
@@ -267,9 +276,21 @@ export async function startService(
       token,
       pid: process.pid,
     };
-    await writeFile(join(options.home, "connection.json"), JSON.stringify(connection), {
-      mode: 0o600,
-    });
+    const temporary = join(options.home, `connection-${randomBytes(16).toString("hex")}.tmp`);
+    const metadata = await open(
+      temporary,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      await metadata.writeFile(JSON.stringify(connection));
+      await metadata.sync();
+      await metadata.close();
+      await rename(temporary, join(options.home, "connection.json"));
+    } finally {
+      await metadata.close();
+      await rm(temporary, { force: true });
+    }
     await reload();
     return {
       connection,

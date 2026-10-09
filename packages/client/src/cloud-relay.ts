@@ -28,6 +28,7 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
             Schema.Struct({
               code: Schema.Literals([
                 "public_runner_approval_required",
+                "private_runner_approval_required",
                 "repository_admin_required",
                 "github_app_not_installed",
                 "machine_revoked",

@@ -154,13 +154,25 @@ export async function runRunnerTask(
       }
     }
   }
-  if (registrationUncertain)
+  if (registrationUncertain) {
+    if (
+      failure instanceof VectisError &&
+      ["public_runner_approval_required", "private_runner_approval_required"].includes(failure.code)
+    )
+      return {
+        status: "action_required" as const,
+        progress,
+        message: failure.message,
+        code: failure.code,
+        nextStep: `${failure.nextStep} Then run vectis runner reconcile with this operation ID to close the stopped runner attempt.`,
+      };
     return {
       status: "action_required" as const,
       progress,
       message: "The VM is stopped. Reconcile the registration request before retrying.",
       code: "runner_registration_uncertain",
     };
+  }
   update({ stage: "finished" });
   if (failure instanceof VectisError && failure.code === "job_not_queued")
     return { status: "cancelled" as const, progress, message: failure.message };

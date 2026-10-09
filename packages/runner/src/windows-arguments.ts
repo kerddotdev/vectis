@@ -29,7 +29,7 @@ export function windowsVmArguments(input: {
     "-device",
     "virtio-gpu-pci",
     "-netdev",
-    "user,id=net0,hostfwd=tcp:127.0.0.1:0-:22",
+    "user,id=net0,ipv6=off,vectis-isolate=on,hostfwd=tcp:127.0.0.1:0-:22",
     "-device",
     "virtio-net-pci,netdev=net0,romfile=",
     "-chardev",

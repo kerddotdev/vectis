@@ -98,6 +98,7 @@ export async function prepareLinux(
         Schema.Struct({
           revision: Schema.Literal(ubuntuImage.revision),
           sourceSha256: Schema.Literal(ubuntuImage.sha256),
+          sshHostKeyMode: Schema.Literal("instance"),
         }),
       )(image)
     )
@@ -105,7 +106,7 @@ export async function prepareLinux(
         "invalid_prepared_image",
         "Prepared image metadata does not match its source revision.",
       );
-    for (const name of ["disk.img", "guest-key", "known_hosts"])
+    for (const name of ["disk.img", "guest-key"])
       await access(join(directory, name), constants.R_OK);
     return preparedEnvironment(input, directory);
   }
@@ -142,12 +143,9 @@ export async function prepareLinux(
     return { path, publicKey };
   }
   const identity = await key("guest-key");
-  const host = await key("host-key");
   const seed = linuxSeed({
     id: preparation.id,
     publicKey: identity.publicKey,
-    hostPublicKey: host.publicKey,
-    hostPrivateKey: await readFile(host.path, "utf8"),
   });
   const seedDirectory = join(directory, "seed");
   await mkdir(seedDirectory, { recursive: true, mode: 0o700 });
@@ -157,8 +155,6 @@ export async function prepareLinux(
     ["user-data", seed.userdata],
   ])
     if (name && content) await writeFile(join(seedDirectory, name), content, { mode: 0o600 });
-  const knownHostsPath = join(directory, "known_hosts");
-  await writeFile(knownHostsPath, `${input.id} ${host.publicKey}\n`, { mode: 0o600 });
   await rm(join(directory, "seed.iso"), { force: true });
   await runProcess(
     "/usr/bin/hdiutil",
@@ -203,16 +199,11 @@ export async function prepareLinux(
       sourceSha256: ubuntuImage.sha256,
       preparedAt: new Date().toISOString(),
       toolchainManifest: "/etc/vectis/toolchain-versions.txt",
+      sshHostKeyMode: "instance",
     }),
     { mode: 0o600 },
   );
-  for (const path of [
-    archive,
-    join(directory, "source.raw"),
-    join(directory, "seed.iso"),
-    host.path,
-    host.path + ".pub",
-  ])
+  for (const path of [archive, join(directory, "source.raw"), join(directory, "seed.iso")])
     await rm(path, { force: true });
   await rm(seedDirectory, { recursive: true, force: true });
   progress("prepared");
@@ -230,6 +221,6 @@ function preparedEnvironment(input: LinuxPreparation, directory: string): Enviro
     state: "ready",
     sshUser: "vectis",
     sshKeyPath: join(directory, "guest-key"),
-    knownHostsPath: join(directory, "known_hosts"),
+    sshHostKeyMode: "instance",
   };
 }

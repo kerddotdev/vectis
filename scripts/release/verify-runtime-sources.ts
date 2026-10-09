@@ -89,6 +89,13 @@ export async function verifyRuntimeSources(runtimeDirectory: string, sourceDirec
   const sourcePatch = await inspect(sourceRoot, "vectis-qemu.patch");
   if (bundledPatch.sha256 !== sourcePatch.sha256)
     throw Error("Custom QEMU source patch differs from the bundled patch.");
+  const bundledIsolation = await inspect(
+    runtimeRoot,
+    "licenses/qemu/0002-isolate-vectis-user-network.patch",
+  );
+  const sourceIsolation = await inspect(sourceRoot, "vectis-qemu-isolation.patch");
+  if (bundledIsolation.sha256 !== sourceIsolation.sha256)
+    throw Error("Custom QEMU isolation patch differs from the bundled patch.");
   await inspect(sourceRoot, "VECTIS-QEMU.md");
   return { components: expected.size, artifacts, customPatchVerified: true };
 }

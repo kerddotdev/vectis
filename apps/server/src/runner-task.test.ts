@@ -3,6 +3,7 @@ import { runRunnerTask } from "./runner-task.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
+import { VectisError } from "../../../packages/protocol/src/index.js";
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
 vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../packages/runner/src/guest.js")>()),
@@ -67,6 +68,23 @@ function fixture() {
   });
   return { controls, broker, events };
 }
+test("a failed pinned guest identity never allocates JIT credentials or sends runner scripts", async () => {
+  const { controls, broker } = fixture();
+  vi.mocked(readyGuest).mockRejectedValue(
+    new GuestUnavailableError("Host key verification failed"),
+  );
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({ status: "failed", code: "guest_unavailable" });
+  expect(broker.prepareRunner).not.toHaveBeenCalled();
+  expect(executeGuest).not.toHaveBeenCalled();
+  expect(controls.stop).toHaveBeenCalledOnce();
+});
 test("stops the VM before removing registration and never persists JIT configuration", async () => {
   const { controls, events } = fixture();
   const result = await runRunnerTask(
@@ -111,6 +129,31 @@ test("a lost registration response requires reconciliation instead of a fresh re
   expect(controls.stop).toHaveBeenCalledOnce();
   expect(broker.prepareRunner).toHaveBeenCalledOnce();
 });
+test.each(["public_runner_approval_required", "private_runner_approval_required"])(
+  "%s stops the owned VM and retains actionable policy guidance",
+  async (code) => {
+    const { controls, broker } = fixture();
+    broker.prepareRunner.mockRejectedValue(
+      new VectisError(code, "Approval is required.", "Change the GitHub fork approval policy."),
+    );
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      environment,
+      controls,
+      AbortSignal.timeout(1000),
+    );
+    expect(result).toMatchObject({
+      status: "action_required",
+      code,
+      message: "Approval is required.",
+      nextStep: expect.stringContaining("Change the GitHub fork approval policy."),
+    });
+    expect(controls.stop).toHaveBeenCalledOnce();
+    expect(broker.releaseRunner).not.toHaveBeenCalled();
+    expect(executeGuest).toHaveBeenCalledTimes(1);
+  },
+);
 test("cancellation during VM startup still waits for owned cleanup and never registers", async () => {
   const { controls, broker } = fixture();
   const abort = new AbortController();

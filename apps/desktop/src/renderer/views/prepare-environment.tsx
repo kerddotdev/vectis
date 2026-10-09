@@ -306,6 +306,7 @@ export function RegisterEnvironment({ onDone }: { onDone: () => void }) {
   const [os, setOs] = useState<GuestOs>("linux");
   const [basePath, setBasePath] = useState("");
   const [storage, setStorage] = useState("");
+  const [instanceHostKey, setInstanceHostKey] = useState(false);
   const [issue, setIssue] = useState("");
   async function register(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -325,6 +326,7 @@ export function RegisterEnvironment({ onDone }: { onDone: () => void }) {
         ...optional("sshUser"),
         ...optional("sshKeyPath"),
         ...optional("knownHostsPath"),
+        ...(os === "linux" && instanceHostKey ? { sshHostKeyMode: "instance" } : {}),
         ...optional("tpmStatePath"),
         ...optional("firmwarePath"),
         ...optional("firmwareVarsPath"),
@@ -396,12 +398,26 @@ export function RegisterEnvironment({ onDone }: { onDone: () => void }) {
         />
         <Disclosure title="Guest SSH access">
           <FieldDescription>
-            Provide guest-only credentials. The pinned host key entry must use the environment ID as
-            its host alias. No host credentials are copied into the VM.
+            {os === "linux"
+              ? "Linux runner images must install a separate SSH host key for each instance. Prepare a Linux environment to get a compatible image."
+              : "Provide guest-only credentials. The pinned host key entry must use the environment ID as its host alias. No host credentials are copied into the VM."}
           </FieldDescription>
           <TextField label="Guest username" name="sshUser" />
           <TextField label="Guest SSH identity file" name="sshKeyPath" />
-          <TextField label="Pinned known_hosts file" name="knownHostsPath" />
+          {os === "linux" ? (
+            <Field orientation="horizontal">
+              <Checkbox
+                id="instance-host-key"
+                checked={instanceHostKey}
+                onCheckedChange={(checked) => setInstanceHostKey(checked === true)}
+              />
+              <FieldLabel htmlFor="instance-host-key" className="font-normal">
+                This image installs Vectis instance SSH keys before starting SSH.
+              </FieldLabel>
+            </Field>
+          ) : (
+            <TextField label="Pinned known_hosts file" name="knownHostsPath" />
+          )}
         </Disclosure>
         <Disclosure title="Windows firmware and TPM">
           <TextField label="Prepared TPM state directory" name="tpmStatePath" />
