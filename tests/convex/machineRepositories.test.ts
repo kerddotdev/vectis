@@ -71,6 +71,11 @@ async function fixture() {
     if (url.endsWith("/permission"))
       return Response.json({ permission, user: { id: permissionUserId } });
     if (url.endsWith("/access_tokens")) return Response.json({ token: "test-token" });
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     if (url.endsWith("/fork-pr-contributor-approval"))
       return Response.json({ approval_policy: approvalPolicy });
     await beforeRepository?.();

@@ -17,6 +17,8 @@ The result contains `changed`, the proposed YAML as `source`, and `findings` for
 
 Connect a personal or organization repository to a prepared ARM64 environment first. Repository migration currently uses the paired machine's verified GitHub account and App installation. Public repositories must require GitHub approval for all external contributors before publication. Organization repositories require current repository administrator access for the verified GitHub identity.
 
+Private repositories must disable fork pull request workflows or require approval for those workflows before publication.
+
 ```sh
 vectis repository list --json
 vectis migration analyze <binding-id> --wait --json

@@ -68,7 +68,7 @@ An environment is a prepared guest image. Its ID becomes the runner label.
 
 ## Repositories and labels
 
-- `vectis repository connect <name> --account <id> --environment <id> [--owner <org>] --wait --json` connects a repository to this Mac. The linked GitHub account needs admin permission on organization repositories. Public repositories require the GitHub setting that makes all external contributors wait for approval.
+- `vectis repository connect <name> --account <id> --environment <id> [--owner <org>] --wait --json` connects a repository to this Mac. The linked GitHub account needs admin permission on organization repositories. Public repositories require the GitHub setting that makes all external contributors wait for approval. Private repositories must disable fork workflows or require approval for them.
 - `vectis repository list --json` (MCP `vectis_repositories`) shows each connection with its `runsOn` label.
 - A workflow reaches an environment with `runs-on: vectis-<environment-id>`. It may also list `self-hosted`, the OS label (`Linux`, `macOS` or `Windows`) and `ARM64`, and nothing else. Any other label keeps the job away from Vectis.
 - `repository enable-auto <binding-id>` starts runners automatically for matching queued jobs; `disable-auto` stops that. `repository disconnect <binding-id>` stops future runners and lets running jobs finish.

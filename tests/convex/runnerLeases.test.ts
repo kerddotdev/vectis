@@ -79,6 +79,11 @@ async function fixture() {
         suspended_at: null,
       });
     if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped-test-token" });
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     if (url.endsWith("/generate-jitconfig")) {
       const body = JSON.parse(String(init?.body));
       name = body.name;
@@ -183,4 +188,21 @@ test("a binding disabled during registration cannot receive credentials and can 
   expect(await device.action(api.githubRunners.release, { id: grant.id })).toMatchObject({
     state: "released",
   });
+});
+
+test("a private fork policy change blocks JIT registration after binding", async () => {
+  const { device, bindingId, fetch } = await fixture();
+  const original = fetch.getMockImplementation()!;
+  fetch.mockImplementation(async (url, init) =>
+    url.endsWith("/fork-pr-workflows-private-repos")
+      ? Response.json({
+          run_workflows_from_fork_pull_requests: true,
+          require_approval_for_fork_pr_workflows: false,
+        })
+      : original(url, init),
+  );
+  await expect(
+    device.action(api.githubRunners.prepare, { bindingId, key: "policy-change" }),
+  ).rejects.toThrow("private_runner_approval_required");
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/generate-jitconfig"))).toBe(false);
 });

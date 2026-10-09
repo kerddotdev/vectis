@@ -126,6 +126,46 @@ test("a refused repository connection fails with its cause instead of waiting fo
     store.close();
   }
 });
+test.each(["public_runner_approval_required", "private_runner_approval_required"])(
+  "%s refuses repository connection with setup guidance",
+  async (code) => {
+    const { store, service, broker, status } = await fixture();
+    try {
+      store.put("environment", "test", {
+        id: "test",
+        name: "Test",
+        os: "linux",
+        basePath: "/unused",
+        cpu: 2,
+        memoryMiB: 2048,
+        state: "ready",
+      });
+      broker.connectRepository.mockRejectedValue(
+        new VectisError(
+          code,
+          "Approval is required.",
+          "Update the repository's fork approval setting.",
+        ),
+      );
+      const operation = service.submit("policy", {
+        type: "repository.connect",
+        accountId: "account",
+        repositoryName: "repo",
+        environmentId: "test",
+      });
+      await service.drain();
+      await vi.waitFor(() =>
+        expect(status(operation.id)).toMatchObject({
+          status: "failed",
+          result: { code, nextStep: "Update the repository's fork approval setting." },
+        }),
+      );
+    } finally {
+      await service.close();
+      store.close();
+    }
+  },
+);
 
 test("activity cancellation preserves setup ownership and runner reconciliation, but closes a waiting connection", async () => {
   const { store, service, status } = await fixture();

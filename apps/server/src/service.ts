@@ -559,9 +559,11 @@ export class Service {
                     ? {
                         code: completed.code,
                         nextStep:
-                          completed.status === "action_required"
-                            ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
-                            : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                          "nextStep" in completed
+                            ? completed.nextStep
+                            : completed.status === "action_required"
+                              ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
+                              : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
                       }
                     : {}),
                 },
