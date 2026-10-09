@@ -4,12 +4,12 @@ This is the maintainer runbook for CI and releases. Contributors only need [CONT
 
 ## How CI runs
 
-Vectis runs its own CI on a maintainer's Mac. The metadata-only `pull_request_target` jobs `pr-title` and `pr-size` use GitHub-hosted runners because that event bypasses fork workflow approval:
+Vectis runs its own CI on a maintainer's Mac. The metadata-only `pull_request_target` jobs `pr-title` and `pr-size` use GitHub-hosted runners because that event bypasses fork workflow approval. The Native helper check temporarily uses GitHub's `macos-26` ARM64 runner because the Vectis macOS image lacks Xcode:
 
 | Label                   | Environment                                                                             | Used by                                               |
 | ----------------------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------- |
 | `vectis-ubuntu`         | Ubuntu 24.04 environment with the ID `ubuntu`                                           | `check`, labels, backend and site deploys, publishing |
-| `vectis-macos-26-arm64` | macOS 26 environment with the ID `macos-26-arm64`, with Xcode 26 installed in the guest | native helper builds and the signed desktop release   |
+| `vectis-macos-26-arm64` | macOS 26 environment with the ID `macos-26-arm64`, with Xcode 26 installed in the guest | signed desktop release                                |
 
 A runner label is always `vectis-` followed by the environment ID, so the CI Mac's environments have to carry exactly these IDs. Changing an ID means changing every `runs-on` in `.github/workflows` and the required checks in the `main` ruleset.
 
