@@ -6,7 +6,7 @@ import { human, machine } from "./auth.js";
 import { verifiedUser } from "./githubValidators.js";
 
 export const create = internalMutation({
-  args: { owner: v.string(), digest: v.string(), verifier: v.string() },
+  args: { owner: v.string(), digest: v.string(), verifier: v.string(), browserDigest: v.string() },
   handler: async (ctx, args) => {
     const app = await ctx.db.query("githubApps").first();
     if (!app) throw new ConvexError({ code: "github_app_unavailable" });
@@ -27,13 +27,20 @@ export const create = internalMutation({
   },
 });
 export const claim = internalMutation({
-  args: { digest: v.string() },
-  handler: async (ctx, { digest }) => {
+  args: { digest: v.string(), browserDigest: v.string() },
+  handler: async (ctx, { digest, browserDigest }) => {
     const link = await ctx.db
       .query("githubLinks")
       .withIndex("by_digest", (q) => q.eq("digest", digest))
       .unique();
-    if (!link || link.phase !== "pending" || link.expiresAt <= Date.now() || !link.verifier)
+    if (
+      !link ||
+      !link.browserDigest ||
+      link.browserDigest !== browserDigest ||
+      link.phase !== "pending" ||
+      link.expiresAt <= Date.now() ||
+      !link.verifier
+    )
       return null;
     const app = await ctx.db.query("githubApps").first();
     if (!app) return null;
@@ -48,13 +55,18 @@ export const claim = internalMutation({
   },
 });
 export const finish = internalMutation({
-  args: { id: v.id("githubLinks"), user: v.optional(verifiedUser) },
-  handler: async (ctx, { id, user }) => {
+  args: {
+    id: v.id("githubLinks"),
+    user: v.optional(verifiedUser),
+    completionDigest: v.optional(v.string()),
+  },
+  handler: async (ctx, { id, user, completionDigest }) => {
     const link = await ctx.db.get("githubLinks", id);
     if (!link || link.phase !== "exchanging" || link.expiresAt <= Date.now()) return;
     await ctx.db.patch("githubLinks", id, {
       phase: user ? "review" : "failed",
       ...(user ? { user } : {}),
+      completionDigest,
     });
   },
 });
@@ -84,14 +96,23 @@ export const list = query({
     };
   },
 });
-export const confirm = mutation({
-  args: { id: v.id("githubLinks") },
-  handler: async (ctx, { id }) => {
-    const owner = await human(ctx);
-    const link = await ctx.db.get("githubLinks", id);
+export const confirm = internalMutation({
+  args: {
+    id: v.string(),
+    owner: v.string(),
+    browserDigest: v.string(),
+    completionDigest: v.string(),
+  },
+  handler: async (ctx, { id: value, owner, browserDigest, completionDigest }) => {
+    const id = ctx.db.normalizeId("githubLinks", value);
+    const link = id ? await ctx.db.get("githubLinks", id) : null;
     if (
       !link ||
       link.owner !== owner ||
+      !link.browserDigest ||
+      link.browserDigest !== browserDigest ||
+      !link.completionDigest ||
+      link.completionDigest !== completionDigest ||
       link.phase !== "review" ||
       !link.user ||
       link.expiresAt <= Date.now()
@@ -113,7 +134,7 @@ export const confirm = mutation({
     };
     if (existing) await ctx.db.replace("githubAccounts", existing._id, data);
     else await ctx.db.insert("githubAccounts", data);
-    await ctx.db.delete("githubLinks", id);
+    await ctx.db.delete("githubLinks", link._id);
   },
 });
 // Unlinking takes the repository connections with it: without a verified account behind them they

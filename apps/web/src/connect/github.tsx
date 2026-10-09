@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { useAction, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
+import { useAuth } from "@clerk/react";
+import { Schema } from "effect";
 import { EllipsisIcon } from "lucide-react";
 import { api } from "../../../../convex/_generated/api.js";
 import { errorCode } from "./Connect.js";
@@ -27,7 +29,7 @@ export function GitHubMark({ className }: { className?: string }) {
 }
 
 export function useLinkGitHub() {
-  const begin = useAction(api.githubOAuth.begin);
+  const { getToken } = useAuth();
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
   return {
@@ -36,8 +38,12 @@ export function useLinkGitHub() {
     start() {
       setWorking(true);
       setError("");
-      begin({})
-        .then((result) => location.assign(result.url))
+      githubRequest("begin", getToken)
+        .then((result) =>
+          location.assign(
+            Schema.decodeUnknownSync(Schema.Struct({ url: Schema.String }))(result).url,
+          ),
+        )
         .catch((issue: unknown) => {
           setError(
             `GitHub could not be reached (${errorCode(issue) || "github_unavailable"}). Try again.`,
@@ -46,6 +52,24 @@ export function useLinkGitHub() {
         });
     },
   };
+}
+
+async function githubRequest(
+  action: "begin" | "confirm",
+  getToken: ReturnType<typeof useAuth>["getToken"],
+  body?: { id: string },
+): Promise<unknown> {
+  const token = await getToken({ template: "convex" });
+  if (!token) throw new Error("Sign in to Vectis.");
+  const response = await fetch(`/api/github/oauth/${action}`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!response.ok)
+    throw new Error("GitHub linking requires the browser that started it. Start again.");
+  return response.json();
 }
 
 export function GitHubTab({
@@ -57,7 +81,7 @@ export function GitHubTab({
 }) {
   const link = useLinkGitHub();
   const installation = useQuery(api.githubAppSetup.installation, {});
-  const confirm = useMutation(api.githubIdentity.confirm);
+  const { getToken } = useAuth();
   const discard = useMutation(api.githubIdentity.discard);
   const unlink = useMutation(api.githubIdentity.unlink);
   const [unlinking, setUnlinking] = useState<Identity["accounts"][number] | null>(null);
@@ -131,7 +155,9 @@ export function GitHubTab({
                   <Button
                     small
                     disabled={working}
-                    onClick={() => void perform(() => confirm({ id: request.id }))}
+                    onClick={() =>
+                      void perform(() => githubRequest("confirm", getToken, { id: request.id }))
+                    }
                   >
                     Link {request.user.login}
                   </Button>

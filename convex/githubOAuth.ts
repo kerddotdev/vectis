@@ -1,8 +1,8 @@
 import { Schema } from "effect";
-import { action, httpAction } from "./_generated/server.js";
+import { httpAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { human } from "./auth.js";
-import { readBody } from "./httpBody.js";
+import { readBody, smallJson } from "./httpBody.js";
 import { webUrl } from "./site.js";
 
 const callbackUrl = () => `${webUrl()}/api/github/oauth/callback`;
@@ -16,16 +16,32 @@ const hash = async (value: string) =>
   new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
 const digest = async (value: string) =>
   Array.from(await hash(value), (b) => b.toString(16).padStart(2, "0")).join("");
-export const begin = action({
-  args: {},
-  handler: async (ctx): Promise<{ url: string }> => {
+const browserCookie = "__Host-vectis-github-browser";
+const completionCookie = "__Host-vectis-github-completion";
+const cookie = (name: string, value: string) =>
+  `${name}=${value}; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=600`;
+function readCookie(request: Request, name: string) {
+  const values = (request.headers.get("Cookie") ?? "")
+    .split(";")
+    .map((item) => item.trim())
+    .filter((item) => item.startsWith(`${name}=`));
+  const value = values.length === 1 ? values[0]?.slice(name.length + 1) : undefined;
+  return value && /^[A-Za-z0-9_-]{43}$/.test(value) ? value : undefined;
+}
+const privateHeaders = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
+export const begin = httpAction(async (ctx, request) => {
+  if (request.headers.get("Origin") !== webUrl())
+    return new Response("Origin denied", { status: 403 });
+  try {
     const owner = await human(ctx);
+    const browser = base64(crypto.getRandomValues(new Uint8Array(32)));
     const state = base64(crypto.getRandomValues(new Uint8Array(32)));
     const verifier = base64(crypto.getRandomValues(new Uint8Array(32)));
     const { clientId } = await ctx.runMutation(internal.githubIdentity.create, {
       owner,
       digest: await digest(state),
       verifier,
+      browserDigest: await digest(browser),
     });
     const params = new URLSearchParams({
       client_id: clientId,
@@ -35,8 +51,47 @@ export const begin = action({
       code_challenge_method: "S256",
       prompt: "select_account",
     });
-    return { url: `https://github.com/login/oauth/authorize?${params}` };
-  },
+    return Response.json(
+      { url: `https://github.com/login/oauth/authorize?${params}` },
+      {
+        headers: { ...privateHeaders, "Set-Cookie": cookie(browserCookie, browser) },
+      },
+    );
+  } catch {
+    return Response.json(
+      { code: "github_link_unavailable" },
+      { status: 400, headers: privateHeaders },
+    );
+  }
+});
+export const confirm = httpAction(async (ctx, request) => {
+  if (request.headers.get("Origin") !== webUrl())
+    return new Response("Origin denied", { status: 403 });
+  const browser = readCookie(request, browserCookie);
+  const completion = readCookie(request, completionCookie);
+  if (!browser || !completion)
+    return new Response("Browser verification required", { status: 403, headers: privateHeaders });
+  try {
+    const owner = await human(ctx);
+    const body = await smallJson(request);
+    if (!body || typeof body !== "object" || !("id" in body) || typeof body.id !== "string")
+      return new Response("Invalid request", { status: 400, headers: privateHeaders });
+    await ctx.runMutation(internal.githubIdentity.confirm, {
+      owner,
+      id: body.id,
+      browserDigest: await digest(browser),
+      completionDigest: await digest(completion),
+    });
+    const headers = new Headers(privateHeaders);
+    for (const name of [browserCookie, completionCookie])
+      headers.append("Set-Cookie", `${name}=; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=0`);
+    return Response.json({ linked: true }, { headers });
+  } catch {
+    return Response.json(
+      { code: "github_link_unavailable" },
+      { status: 400, headers: privateHeaders },
+    );
+  }
 });
 const Token = Schema.Struct({
   access_token: Schema.NonEmptyString,
@@ -70,7 +125,7 @@ export const callback = httpAction(async (ctx, request) => {
   const params = new URL(request.url).searchParams;
   const state = params.get("state");
   const code = params.get("code");
-  const headers = { "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" };
+  const headers = privateHeaders;
   if (!state)
     return new Response(null, {
       status: 303,
@@ -81,8 +136,15 @@ export const callback = httpAction(async (ctx, request) => {
       status: 400,
       headers,
     });
+  const browser = readCookie(request, browserCookie);
+  if (!browser)
+    return new Response("Start GitHub linking in this browser from Vectis.", {
+      status: 403,
+      headers,
+    });
   const claim = await ctx.runMutation(internal.githubIdentity.claim, {
     digest: await digest(state),
+    browserDigest: await digest(browser),
   });
   if (!claim)
     return new Response("This request expired or was already used. Start again from Vectis.", {
@@ -145,13 +207,19 @@ export const callback = httpAction(async (ctx, request) => {
       }
     }
     if (!complete) throw new Error("Too many installations.");
+    const completion = base64(crypto.getRandomValues(new Uint8Array(32)));
     await ctx.runMutation(internal.githubIdentity.finish, {
       id: claim.id,
       user: { ...user, installations },
+      completionDigest: await digest(completion),
     });
     return new Response(null, {
       status: 303,
-      headers: { ...headers, Location: connectUrl() },
+      headers: {
+        ...headers,
+        Location: connectUrl(),
+        "Set-Cookie": cookie(completionCookie, completion),
+      },
     });
   } catch {
     await ctx.runMutation(internal.githubIdentity.finish, { id: claim.id });
