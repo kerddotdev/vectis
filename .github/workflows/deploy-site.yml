@@ -12,11 +12,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: deploy
+  build:
+    name: build
     runs-on: vectis-ubuntu
     timeout-minutes: 30
     environment: production
+    outputs:
+      digest: ${{ steps.artifact.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
@@ -25,11 +27,48 @@ jobs:
           node-version: 24.21.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm site:deploy
+      - run: pnpm site:build
         env:
+          VECTIS_FLAVOR: production
           CONVEX_URL: ${{ vars.CONVEX_URL }}
-          CONVEX_SITE_URL: ${{ vars.CONVEX_SITE_URL }}
           CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
+      - run: pnpm --filter @vectis/web exec wrangler deploy --env production --dry-run --outdir ../../dist/site-worker
+      - id: artifact
+        run: node dist/scripts/site-artifact.js create >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: site
+          path: |
+            apps/web/site
+            dist/site-worker
+            dist/site-artifact.json
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: vectis-ubuntu
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: site
+          path: .
+      - run: node scripts/site-artifact.ts verify
+        env:
+          VECTIS_SITE_ARTIFACT_DIGEST: ${{ needs.build.outputs.digest }}
+      - run: pnpm --filter @vectis/web exec wrangler deploy ../../dist/site-worker/worker.js --config wrangler.jsonc --env production --no-bundle --var VECTIS_CONVEX_SITE:${CONVEX_SITE_URL}
+        env:
+          CONVEX_SITE_URL: ${{ vars.CONVEX_SITE_URL }}
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          GITHUB_TOKEN: ${{ github.token }}
