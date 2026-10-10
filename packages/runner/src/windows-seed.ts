@@ -105,7 +105,7 @@ Subsystem sftp sftp-server.exe
   $gitArchive = Join-Path $env:TEMP 'vectis-mingit.zip'
   Invoke-WebRequest -Uri '${windowsGit.url}' -OutFile $gitArchive
   if ((Get-FileHash -Algorithm SHA256 $gitArchive).Hash.ToLowerInvariant() -ne '${windowsGit.sha256}') { throw 'Git checksum mismatch' }
-  $gitRoot = 'C:\Program Files\Git'
+  $gitRoot = 'C:\Program Files\MinGit'
   Expand-Archive -Path $gitArchive -DestinationPath $gitRoot -Force
   Remove-Item $gitArchive -Force
   $gitCommand = Join-Path $gitRoot 'cmd'
