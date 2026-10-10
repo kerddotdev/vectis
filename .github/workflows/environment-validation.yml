@@ -34,3 +34,26 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: bash .github/scripts/validate-macos.sh
+
+  windows:
+    name: Windows ARM64 native and Electron builds
+    needs: macos
+    runs-on: vectis-windows-11-arm64
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: powershell
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.21.0
+          architecture: arm64
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - name: Install Python, C++ ARM64 tools and Windows SDK
+        run: ./.github/scripts/prepare-windows-tools.ps1
+      - name: Verify Windows and compile and run ARM64 C++
+        run: ./.github/scripts/validate-windows.ps1
+      - run: pnpm install --frozen-lockfile
+      - name: Package and verify a minimal ARM64 Electron app
+        run: node .github/scripts/validate-electron.mjs
