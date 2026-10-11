@@ -52,7 +52,9 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         status: "queued" as const,
         conclusion: null,
       })),
-      findRunner: vi.fn(async () => null),
+      reconcileRunner: vi.fn(async () => {
+        throw new Error("unused");
+      }),
       repositories: async () => [
         { id: "binding", environmentId: "test", repositoryId: 1, repositoryName: "test/repo" },
       ],

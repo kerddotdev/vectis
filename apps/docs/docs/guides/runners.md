@@ -78,3 +78,5 @@ vectis runner reconcile <operation-id> --wait
 ```
 
 The app offers the same actions as **Reconcile** in **Overview**. Until an interrupted VM is reconciled, the Mac starts no new VMs and offers no runner slots. Do not start new runners to work around an unresolved one.
+
+Runner reconciliation also works when registration stopped before creating a cloud lease. After confirming VM cleanup, Vectis records the request as released in the cloud so a delayed registration cannot create a duplicate runner. If the cloud cannot confirm this, the operation stays unresolved.

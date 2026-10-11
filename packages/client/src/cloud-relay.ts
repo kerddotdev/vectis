@@ -6,7 +6,7 @@ import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migr
 import { MachineRepositories, type RepositoryConnection } from "../../protocol/src/repositories.js";
 import { JobRefresh, JobScan, JobObservations } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
-import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
+import { RunnerGrant, RunnerLease, type RunnerBroker } from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api.js";
 import { VectisError } from "../../protocol/src/index.js";
@@ -417,14 +417,17 @@ export function startCloudRelay(
         );
       }
     },
-    async findRunner(key: string, signal: AbortSignal) {
+    async reconcileRunner(
+      request: Parameters<RunnerBroker["reconcileRunner"]>[0],
+      signal: AbortSignal,
+    ) {
       signal.throwIfAborted();
       requireConnection();
       const value = await interruptible(
-        cloud.query(api.runnerLeases.find, { key }),
+        cloud.mutation(api.runnerLeases.reconcile, request),
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
       );
-      return value === null ? null : Schema.decodeUnknownSync(RunnerLease)(value);
+      return Schema.decodeUnknownSync(RunnerLease)(value);
     },
     async prepareRunner(bindingId: string, key: string, signal: AbortSignal) {
       signal.throwIfAborted();

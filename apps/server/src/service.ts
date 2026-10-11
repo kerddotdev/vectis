@@ -603,13 +603,14 @@ export class Service {
               "Stop or reconcile the owned instance, then retry runner reconciliation.",
             );
           const broker = this.runnerConnection();
-          const lease = await broker.findRunner(progress.leaseKey, AbortSignal.timeout(10000));
-          if (!lease)
-            throw new VectisError(
-              "reconciliation_required",
-              "The registration request has no confirmed cloud lease.",
-              "Inspect the cloud connection and retry reconciliation; do not start a duplicate runner.",
-            );
+          const lease = await broker.reconcileRunner(
+            {
+              bindingId: progress.bindingId,
+              environmentId: progress.environmentId,
+              key: progress.leaseKey,
+            },
+            AbortSignal.timeout(10000),
+          );
           if (
             lease.bindingId !== progress.bindingId ||
             lease.environmentId !== progress.environmentId ||
@@ -619,7 +620,8 @@ export class Service {
               "runner_identity_mismatch",
               "The cloud lease does not match this operation.",
             );
-          await broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
+          if (lease.phase !== "released")
+            await broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
           this.store.update(interrupted, {
             status: "cancelled",
             message: "Interrupted runner cleaned up. Check GitHub for the job result.",

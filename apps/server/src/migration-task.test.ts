@@ -33,7 +33,9 @@ test("uncertain publication remains actionable and does not block or duplicate m
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},
     setAutomatic: async () => {},
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
     releaseRunner: async () => {},
   }));

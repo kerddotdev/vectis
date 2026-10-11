@@ -41,7 +41,7 @@ async function fixture() {
       status: "completed" as const,
       conclusion: "success",
     })),
-    findRunner: vi.fn<RunnerBroker["findRunner"]>(async () => ({
+    reconcileRunner: vi.fn<RunnerBroker["reconcileRunner"]>(async () => ({
       id: "lease",
       bindingId: "binding",
       environmentId: "test",
@@ -90,6 +90,10 @@ test("reconciles a lost registration response without preparing another runner",
       "cancelled",
     );
     expect(broker.prepareRunner).not.toHaveBeenCalled();
+    expect(broker.reconcileRunner).toHaveBeenCalledWith(
+      { bindingId: "binding", environmentId: "test", key: interrupted.id },
+      expect.any(AbortSignal),
+    );
     expect(broker.releaseRunner).toHaveBeenCalledWith("lease", expect.any(AbortSignal));
     expect(store.snapshot().activities?.find((item) => item.id === interrupted.id)?.status).toBe(
       "cancelled",
@@ -115,7 +119,7 @@ test("does not remove a lease while VM exit is unconfirmed", async () => {
     expect(store.snapshot().operations.find((item) => item.id === operation.id)?.status).toBe(
       "action_required",
     );
-    expect(broker.findRunner).not.toHaveBeenCalled();
+    expect(broker.reconcileRunner).not.toHaveBeenCalled();
     expect(broker.releaseRunner).not.toHaveBeenCalled();
   } finally {
     await service.close();
@@ -125,7 +129,7 @@ test("does not remove a lease while VM exit is unconfirmed", async () => {
 test("rejects a mismatched cloud lease and leaves the original operation unresolved", async () => {
   const { store, service, broker, interrupted } = await fixture();
   try {
-    broker.findRunner.mockResolvedValue({
+    broker.reconcileRunner.mockResolvedValue({
       id: "foreign",
       bindingId: "other",
       environmentId: "test",
@@ -136,6 +140,43 @@ test("rejects a mismatched cloud lease and leaves the original operation unresol
     expect(store.snapshot().operations.find((item) => item.id === interrupted.id)?.status).toBe(
       "action_required",
     );
+    expect(broker.releaseRunner).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
+
+test("releases local capacity when registration never created a cloud lease", async () => {
+  const { store, service, broker, interrupted } = await fixture();
+  try {
+    broker.reconcileRunner.mockResolvedValue({
+      id: "fence",
+      bindingId: "binding",
+      environmentId: "test",
+      phase: "released",
+    });
+    const operation = service.submit("recover", { type: "runner.reconcile", id: interrupted.id });
+    await service.drain();
+    expect(store.get("operation", operation.id)).toMatchObject({ status: "succeeded" });
+    expect(store.get("operation", interrupted.id)).toMatchObject({ status: "cancelled" });
+    expect(service.snapshot().runnerCapacity?.active).toBe(0);
+    expect(broker.prepareRunner).not.toHaveBeenCalled();
+    expect(broker.releaseRunner).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
+
+test("cloud access failure leaves a stopped runner unresolved", async () => {
+  const { store, service, broker, interrupted } = await fixture();
+  try {
+    broker.reconcileRunner.mockRejectedValue(new Error("Cloud connection unavailable"));
+    service.submit("recover", { type: "runner.reconcile", id: interrupted.id });
+    await service.drain();
+    expect(store.get("operation", interrupted.id)).toMatchObject({ status: "action_required" });
+    expect(service.snapshot().runnerCapacity?.active).toBe(1);
     expect(broker.releaseRunner).not.toHaveBeenCalled();
   } finally {
     await service.close();
