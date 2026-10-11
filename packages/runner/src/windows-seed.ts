@@ -69,13 +69,17 @@ $winlogon = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
 Set-ItemProperty $winlogon AutoLogonCount 0 -Type DWord
 Set-ItemProperty $winlogon AutoAdminLogon '0'
 Remove-ItemProperty $winlogon DefaultPassword -ErrorAction SilentlyContinue
+$stage = 'system'
 try {
+  Remove-Item (Join-Path $root 'prepared'),(Join-Path $root 'failed'),(Join-Path $root 'diagnostic.json') -Force -ErrorAction SilentlyContinue
   if ($env:PROCESSOR_ARCHITECTURE -ne 'ARM64') { throw 'ARM64 Windows is required' }
   Set-TimeZone -Id UTC
   Set-Service w32time -StartupType Automatic
   Start-Service w32time
   Set-LocalUser -Name vectis -PasswordNeverExpires $true
+  $stage = 'ssh-installation'
   Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null
+  $stage = 'ssh-configuration'
   $ssh = 'C:\ProgramData\ssh'
   New-Item -ItemType Directory -Force $ssh | Out-Null
   foreach ($file in @('administrators_authorized_keys', 'ssh_host_ed25519_key', 'ssh_host_ed25519_key.pub')) {
@@ -94,6 +98,7 @@ Subsystem sftp sftp-server.exe
 '@ | Set-Content (Join-Path $ssh 'sshd_config') -Encoding ascii
   & C:\Windows\System32\OpenSSH\sshd.exe -t
   if ($LASTEXITCODE -ne 0) { throw 'SSH configuration is invalid' }
+  $stage = 'ssh-access'
   if (!(Get-NetFirewallRule -Name OpenSSH-Server-In-TCP -ErrorAction SilentlyContinue)) {
     New-NetFirewallRule -Name OpenSSH-Server-In-TCP -Direction Inbound -Protocol TCP -Action Allow -LocalPort 22 | Out-Null
   }
@@ -102,17 +107,22 @@ Subsystem sftp sftp-server.exe
   Start-Service sshd
   Set-ExecutionPolicy -Scope Process RemoteSigned -Force
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+  $stage = 'git-download'
   $gitArchive = Join-Path $env:TEMP 'vectis-mingit.zip'
-  Invoke-WebRequest -Uri '${windowsGit.url}' -OutFile $gitArchive
+  Invoke-WebRequest -UseBasicParsing -Uri '${windowsGit.url}' -OutFile $gitArchive
+  $stage = 'git-checksum'
   if ((Get-FileHash -Algorithm SHA256 $gitArchive).Hash.ToLowerInvariant() -ne '${windowsGit.sha256}') { throw 'Git checksum mismatch' }
+  $stage = 'git-installation'
   $gitRoot = 'C:\Program Files\MinGit'
   Expand-Archive -Path $gitArchive -DestinationPath $gitRoot -Force
   Remove-Item $gitArchive -Force
   $gitCommand = Join-Path $gitRoot 'cmd'
   $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
   if ($machinePath -notlike "*$gitCommand*") { [Environment]::SetEnvironmentVariable('Path', "$machinePath;$gitCommand", 'Machine') }
-  $gitVersion = & (Join-Path $gitCommand 'git.exe') --version
-  if ($LASTEXITCODE -ne 0) { throw 'Git is not usable' }
+  $stage = 'git-verification'
+  $gitVersion = & (Join-Path $gitCommand 'git.exe') --version 2>&1
+  if ($LASTEXITCODE -ne 0) { throw "Git is not usable: $($gitVersion -join ' ')" }
+  $stage = 'toolchain'
   $system = Get-ComputerInfo -Property WindowsProductName,WindowsVersion,OsBuildNumber
   [pscustomobject]@{
     WindowsProductName = $system.WindowsProductName
@@ -120,11 +130,21 @@ Subsystem sftp sftp-server.exe
     OsBuildNumber = $system.OsBuildNumber
     Git = $gitVersion
   } | ConvertTo-Json | Set-Content (Join-Path $root 'toolchain.json')
+  $stage = 'completion'
   Remove-Item C:\Windows\Panther\unattend.xml,C:\Windows\Panther\Unattend\unattend.xml,C:\Windows\System32\Sysprep\unattend.xml -Force -ErrorAction SilentlyContinue
   Remove-Item (Join-Path $root 'failed') -Force -ErrorAction SilentlyContinue
   'SETUP_ID' | Set-Content (Join-Path $root 'prepared') -Encoding ascii
 } catch {
-  'Guest preparation failed. Inspect Windows setup and service diagnostics.' | Set-Content (Join-Path $root 'failed')
+  $failure = $_
+  $message = $failure.Exception.Message
+  try {
+    [pscustomobject]@{
+      stage = $stage
+      message = $message.Substring(0, [Math]::Min($message.Length, 4096))
+      line = $failure.InvocationInfo.ScriptLineNumber
+    } | ConvertTo-Json | Set-Content (Join-Path $root 'diagnostic.json') -Encoding utf8
+  } catch {}
+  $stage | Set-Content (Join-Path $root 'failed') -Encoding ascii
   exit 1
 }
 `;
