@@ -59,6 +59,8 @@ export default defineSchema({
     owner: v.string(),
     digest: v.string(),
     verifier: v.optional(v.string()),
+    browserDigest: v.optional(v.string()),
+    completionDigest: v.optional(v.string()),
     expiresAt: v.number(),
     phase: v.union(
       v.literal("pending"),

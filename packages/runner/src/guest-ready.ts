@@ -23,7 +23,14 @@ export async function readyGuest(
 ): Promise<GuestConnection> {
   if (instance.environmentId !== environment.id || instance.status !== "running")
     throw new VectisError("guest_not_running", "The owned guest is not running.");
-  if (!environment.sshUser || !environment.sshKeyPath || !environment.knownHostsPath)
+  const knownHostsPath =
+    environment.os === "linux" ? instance.knownHostsPath : environment.knownHostsPath;
+  if (
+    !environment.sshUser ||
+    !environment.sshKeyPath ||
+    !knownHostsPath ||
+    (environment.os === "linux" && environment.sshHostKeyMode !== "instance")
+  )
     throw new VectisError(
       "setup_required",
       "The environment needs a guest user, SSH identity and pinned host key.",
@@ -48,8 +55,8 @@ export async function readyGuest(
     port,
     user: environment.sshUser,
     identityFile: environment.sshKeyPath,
-    knownHostsFile: environment.knownHostsPath,
-    hostKeyAlias: environment.id,
+    knownHostsFile: knownHostsPath,
+    hostKeyAlias: environment.os === "linux" ? instance.id : environment.id,
   };
   guestArguments(connection);
   const script =

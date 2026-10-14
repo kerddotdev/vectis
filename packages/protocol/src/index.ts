@@ -62,6 +62,7 @@ export const Environment = Schema.Struct({
   sshUser: Schema.optional(Schema.String),
   sshKeyPath: Schema.optional(Schema.String),
   knownHostsPath: Schema.optional(Schema.String),
+  sshHostKeyMode: Schema.optional(Schema.Literal("instance")),
   seedPath: Schema.optional(Schema.String),
   firmwarePath: Schema.optional(Schema.String),
   firmwareVarsPath: Schema.optional(Schema.String),
@@ -147,6 +148,7 @@ export const Instance = Schema.Struct({
   sshHost: Schema.optional(Schema.String),
   sshPort: Schema.optional(Schema.Int),
   createdAt: Schema.String,
+  knownHostsPath: Schema.optional(Schema.String),
 });
 export type Instance = typeof Instance.Type;
 export const CloudStatus = Schema.Struct({

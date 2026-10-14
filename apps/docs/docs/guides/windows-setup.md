@@ -9,7 +9,7 @@ Windows support is **experimental**. It installs Windows 11 ARM64 from your own 
 
 Vectis needs four programs and two firmware files:
 
-- **QEMU 11.1.1 with the Vectis TPM patch.** Stock QEMU cannot map the Windows TPM on Apple Silicon. Build it by following [the QEMU build notes](https://github.com/kerddotdev/vectis/blob/main/native/qemu/README.md); `qemu-img` comes from the same build or from Homebrew (`brew install qemu`).
+- **QEMU 11.1.1 with both Vectis patches for TPM compatibility and network isolation.** Stock QEMU is not accepted. Build it by following [the QEMU build notes](https://github.com/kerddotdev/vectis/blob/main/native/qemu/README.md); `qemu-img` comes from the same build or from Homebrew (`brew install qemu`).
 - **swtpm**, the software TPM: `brew install swtpm`.
 - **ARM64 UEFI firmware with Secure Boot support** and a blank **raw** variable-store template that matches it. The QEMU build notes name a pinned source and explain how to convert a QCOW2 template to raw. Do not reuse another VM's variable store or TPM state.
 - **The VirtIO driver ISO** for ARM64 Windows, from the [virtio-win project](https://github.com/virtio-win/virtio-win-pkg-scripts).
@@ -52,6 +52,8 @@ vectis operation wait <operation-id> --timeout 3600000 --json
 The service creates a dedicated disk, UEFI variables, TPM state and setup identity. The local administrator password is generated into macOS Keychain. Temporary answer files and setup media contain guest credentials and are private local files: do not share them or upload them in diagnostics.
 
 The recipe creates a local `vectis` account, disables automatic login after bootstrap, installs OpenSSH Server, restricts guest SSH to the QEMU host address and uses dedicated pinned keys. It does not share host directories or credentials with the guest. Windows setup and OpenSSH installation can require internet access.
+
+Windows guests use IPv4 internet access. Host addresses, private networks and link-local destinations are blocked by the host runtime. The owned SSH forward remains available only on host loopback; guest administrator changes cannot disable the host filter.
 
 The service reports success only after checking guest ARM64 architecture, clock synchronization and the setup marker over SSH, then observing a completed guest shutdown. It removes temporary setup media after completion. A successful setup registers the base environment; connecting a repository and observing its first Actions job are separate steps.
 

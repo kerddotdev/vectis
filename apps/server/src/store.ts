@@ -14,6 +14,7 @@ import {
 } from "../../../packages/protocol/src/index.js";
 import { deriveActivity, type ActivityLink } from "./activities.js";
 import { migrateStore } from "./store-migrations.js";
+import { privateFile } from "./private-files.js";
 
 function redactOperation(operation: Operation): Operation {
   return {
@@ -47,6 +48,11 @@ export class Store {
   private changes = 0;
   private listeners = new Set<() => void>();
   constructor(path: string) {
+    if (path !== ":memory:") {
+      privateFile(path, true);
+      privateFile(`${path}-wal`);
+      privateFile(`${path}-shm`);
+    }
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS records (kind TEXT NOT NULL, id TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(kind,id));

@@ -61,6 +61,8 @@ Anyone can open a pull request against a public repository, and its workflows wo
 
 A maintainer then approves each outside contributor's run on GitHub after reviewing the change. Vectis never changes this setting and never approves a run. Forks do not inherit your runners. Review outside code the way you would for any self-hosted runner: approval is the protection, not a guarantee against hostile code.
 
+Private repositories must disable fork pull request workflows or enable **Require approval for fork pull request workflows** in the same settings page. Vectis checks this when connecting a repository and before registering each runner.
+
 ## Disconnect
 
 **App:** the connection's menu, **Disconnect repository**. **Web:** **Disable connection**. **CLI:** `vectis repository disconnect <binding-id>`.
