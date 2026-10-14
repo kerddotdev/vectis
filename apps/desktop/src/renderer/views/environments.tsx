@@ -101,6 +101,7 @@ function EnvironmentRow({ environment }: { environment: Environment }) {
   ).length;
   return (
     <ExpandableRow
+      id={environment.id}
       leading={<OsTile os={environment.os} />}
       title={environment.name}
       summary={
