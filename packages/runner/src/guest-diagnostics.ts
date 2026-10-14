@@ -1,3 +1,4 @@
+import { redact } from "../../client/src/redact.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { Environment } from "../../protocol/src/index.js";
@@ -62,12 +63,11 @@ export async function collectRunnerDiagnostics(input: {
     hostNetwork(input.connection.host),
     guestState(input.connection, input.os),
   ]);
-  let text = [
+  const text = [
     `collected: ${new Date().toISOString()}`,
-    `== listener output\n${tail(input.listener.trim(), 3000)}`,
-    `== host network\n${tail(host, 1000)}`,
-    `== guest\n${tail(guest.trim(), 11000)}`,
+    `== listener output\n${tail(redact(input.listener.trim(), input.secrets), 3000)}`,
+    `== host network\n${tail(redact(host, input.secrets), 1000)}`,
+    `== guest\n${tail(redact(guest.trim(), input.secrets), 11000)}`,
   ].join("\n");
-  for (const secret of input.secrets) if (secret) text = text.replaceAll(secret, "[redacted]");
   return tail(text, 16000);
 }

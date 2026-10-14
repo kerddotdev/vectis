@@ -1,3 +1,4 @@
+import { redact } from "../../../packages/client/src/redact.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { isDeepStrictEqual } from "node:util";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -243,8 +244,8 @@ export async function startService(
           : new VectisError("internal_error", "The service could not process the request.");
       reply(response, issue.code === "idempotency_conflict" ? 409 : 400, {
         code: issue.code,
-        message: issue.message,
-        nextStep: issue.nextStep,
+        message: redact(issue.message),
+        nextStep: redact(issue.nextStep),
       });
     });
   });
