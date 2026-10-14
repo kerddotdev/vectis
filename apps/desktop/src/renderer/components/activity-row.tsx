@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { ExternalLinkIcon } from "lucide-react";
 import type { Activity, Operation } from "../../../../../packages/protocol/src/index.js";
 import { GitHubIcon } from "@/components/github-icon";
+import { JobLog } from "@/components/job-log";
 import { Details, ExpandableRow, Mono } from "@/components/layout";
 import { OsTile } from "@/components/os-icon";
 import { JobStatus, OperationStatus, RunnerStage, StatusText } from "@/components/status";
@@ -39,6 +41,7 @@ export function ActivityRow({
       ? steps.at(-1)
       : steps.find((step) => step.id === activity.rootOperationId);
   const job = activityJob(activity);
+  const [logOpen, setLogOpen] = useState(false);
   // A runner that did its part is not news once GitHub reports the job; the job outcome is.
   const runnerQuiet = activity.status === "succeeded" && job?.status !== undefined;
   const running = activity.status === "accepted" || activity.status === "running";
@@ -115,6 +118,23 @@ export function ActivityRow({
           >
             {diagnostics}
           </pre>
+        </div>
+      )}
+      {job && activity.bindingId && (
+        <div className="flex flex-col gap-3">
+          <div>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-expanded={logOpen}
+              onClick={() => setLogOpen((value) => !value)}
+            >
+              {logOpen ? "Hide job log" : "View job log"}
+            </Button>
+          </div>
+          {logOpen && (
+            <JobLog bindingId={activity.bindingId} jobId={job.jobId} htmlUrl={job.htmlUrl} />
+          )}
         </div>
       )}
       {job?.htmlUrl && (

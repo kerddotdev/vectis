@@ -30,6 +30,10 @@ export async function answerInspection(
           return local.capabilities();
         case "jobs":
           return local.jobs(query.bindingId);
+        case "job.logs": {
+          const { name: _name, ...input } = query;
+          return local.jobLogs(input, signal);
+        }
         case "operation":
           return local.operation(query.id, signal);
         case "logs":
@@ -38,7 +42,7 @@ export async function answerInspection(
     })();
     signal.throwIfAborted();
     const encoded = JSON.stringify({ ok: true, result });
-    if (encoded.length > 262144)
+    if (new TextEncoder().encode(encoded).byteLength > 262144)
       throw new VectisError(
         "query_result_too_large",
         "The inspection exceeds the remote response limit.",

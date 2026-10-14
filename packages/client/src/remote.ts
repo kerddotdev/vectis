@@ -4,7 +4,7 @@ import { Snapshot, Operation as OperationSchema } from "../../protocol/src/index
 import { LocalQuery } from "../../protocol/src/controller.js";
 import { Diagnostics } from "../../protocol/src/diagnostics.js";
 import { StorageReport } from "../../protocol/src/storage.js";
-import { Jobs } from "../../protocol/src/jobs.js";
+import { JobLogs, JobLogRequest, Jobs } from "../../protocol/src/jobs.js";
 import { GitHubAccounts, MachineRepositories } from "../../protocol/src/repositories.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { Schema } from "effect";
@@ -188,6 +188,12 @@ export class RemoteClient {
   }
   async jobs(bindingId: string) {
     return Schema.decodeUnknownSync(Jobs)(await this.inspect({ name: "jobs", bindingId }));
+  }
+  async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
+    const request = Schema.decodeUnknownSync(JobLogRequest, { onExcessProperty: "error" })(input);
+    return Schema.decodeUnknownSync(JobLogs)(
+      await this.inspect({ name: "job.logs", ...request }, signal),
+    );
   }
   async githubAccounts() {
     return Schema.decodeUnknownSync(GitHubAccounts)(

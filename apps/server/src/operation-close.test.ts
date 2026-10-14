@@ -29,6 +29,9 @@ async function fixture() {
     publishMigration: vi.fn(async () => {
       throw new Error("unused");
     }),
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob: vi.fn(async () => ({
       jobId: 1,

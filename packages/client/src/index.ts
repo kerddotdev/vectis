@@ -1,4 +1,4 @@
-import { Jobs } from "../../protocol/src/jobs.js";
+import { JobLogs, JobLogRequest, Jobs } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { GitHubAccounts, MachineRepositories } from "../../protocol/src/repositories.js";
 import { Diagnostics } from "../../protocol/src/diagnostics.js";
@@ -34,7 +34,12 @@ export class VectisClient {
     if (url.protocol !== "https:" && !(url.protocol === "http:" && url.hostname === "127.0.0.1"))
       throw new VectisError("insecure_connection", "Connections require HTTPS or local loopback.");
   }
-  private async request(path: string, body?: unknown, signal?: AbortSignal): Promise<unknown> {
+  private async request(
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+    timeoutMs = 15000,
+  ): Promise<unknown> {
     const response = await fetch(new URL(path, this.connection.url), {
       method: body === undefined ? "GET" : "POST",
       headers: {
@@ -43,8 +48,8 @@ export class VectisClient {
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
-        : AbortSignal.timeout(15000),
+        ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)])
+        : AbortSignal.timeout(timeoutMs),
       redirect: "error",
     });
     const value: unknown = await response.json();
@@ -66,6 +71,17 @@ export class VectisClient {
   async jobs(bindingId: string) {
     return Schema.decodeUnknownSync(Jobs)(
       await this.request(`/v1/jobs?bindingId=${encodeURIComponent(bindingId)}`),
+    );
+  }
+  async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
+    const request = Schema.decodeUnknownSync(JobLogRequest, { onExcessProperty: "error" })(input);
+    const params = new URLSearchParams({
+      bindingId: request.bindingId,
+      jobId: String(request.jobId),
+    });
+    if (request.after !== undefined) params.set("after", String(request.after));
+    return Schema.decodeUnknownSync(JobLogs)(
+      await this.request(`/v1/jobs/logs?${params}`, undefined, signal, 60000),
     );
   }
   async githubAccounts() {

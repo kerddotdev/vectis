@@ -19,6 +19,9 @@ test("job refresh does not block machine control and retries reuse its durable o
     publishMigration: vi.fn(async () => {
       throw new Error("unused");
     }),
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
@@ -77,6 +80,9 @@ test("disabling automatic admission cancels a queued demand before guest startup
     publishMigration: vi.fn(async () => {
       throw new Error("unused");
     }),
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
@@ -140,6 +146,9 @@ test("incomplete repository scans require attention instead of claiming full rec
     publishMigration: vi.fn(async () => {
       throw new Error("unused");
     }),
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs,
     refreshJob: async () => ({
       jobId: 1,
@@ -228,6 +237,9 @@ test.each([
       ],
       reconcileRunner: async () => {
         throw new Error("Must not reconcile a runner");
+      },
+      jobLogs: async () => {
+        throw new Error("Must not read job logs");
       },
       prepareRunner: async () => {
         throw new Error("Must not register a runner");

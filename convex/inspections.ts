@@ -87,7 +87,7 @@ export const respond = mutation({
     const request = await ctx.db.get("inspections", args.id);
     if (!request || request.machineId !== host._id || request.expiresAt <= Date.now())
       throw new ConvexError({ code: "query_expired" });
-    if (args.responseJson.length > 262144)
+    if (new TextEncoder().encode(args.responseJson).byteLength > 262144)
       throw new ConvexError({ code: "query_result_too_large" });
     if (!request.pending) {
       if (request.responseJson !== args.responseJson)

@@ -22,6 +22,7 @@ import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
+import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { LogRequest } from "../../../packages/protocol/src/logs.js";
 import { readServiceLog } from "./logs.js";
 import { configuredRelay } from "./cloud.js";
@@ -183,6 +184,28 @@ export async function startService(
         reply(response, 202, { stopping: true });
         options.onShutdown?.();
         return;
+      }
+      if (request.method === "GET" && request.url?.startsWith("/v1/jobs/logs?")) {
+        const params = new URL(request.url, "http://127.0.0.1").searchParams;
+        const after = params.get("after");
+        const input = {
+          bindingId: params.get("bindingId"),
+          jobId: Number(params.get("jobId")),
+          ...(after === null ? {} : { after: after === "" ? NaN : Number(after) }),
+        };
+        if (!Schema.is(JobLogRequest)(input))
+          throw new VectisError(
+            "invalid_request",
+            "Provide a binding ID, a positive job ID and a nonnegative integer byte cursor.",
+          );
+        const abort = new AbortController();
+        const closed = () => abort.abort();
+        response.once("close", closed);
+        try {
+          return reply(response, 200, await service.jobLogs(input, abort.signal));
+        } finally {
+          response.removeListener("close", closed);
+        }
       }
       if (request.method === "GET" && request.url?.startsWith("/v1/jobs?")) {
         const bindingId = new URL(request.url, "http://127.0.0.1").searchParams.get("bindingId");

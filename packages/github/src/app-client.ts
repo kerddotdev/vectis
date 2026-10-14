@@ -1,5 +1,6 @@
 import { createPrivateKey, sign } from "node:crypto";
 import { Schema } from "effect";
+import { downloadJobLog } from "./job-logs.js";
 
 const Installation = Schema.Struct({
   id: Schema.Int,
@@ -58,6 +59,9 @@ export class GitHubAppClient {
   }
   async request(token: string, path: string, body?: unknown): Promise<unknown> {
     return this.send(token, path, body === undefined ? "GET" : "POST", body);
+  }
+  async downloadJobLog(token: string, path: string, after?: number) {
+    return downloadJobLog(token, path, after);
   }
   async delete(token: string, path: string): Promise<void> {
     await this.send(token, path, "DELETE");
