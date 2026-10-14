@@ -4,6 +4,12 @@ import { Identifier } from "./identifier.js";
 export const Job = Schema.Struct({
   jobId: Schema.Int,
   runId: Schema.Int,
+  runAttempt: Schema.optional(Schema.Int),
+  actorId: Schema.optional(Schema.Int),
+  triggeringActorId: Schema.optional(Schema.Int),
+  access: Schema.optional(
+    Schema.Literals(["approval_required", "actor_not_allowed", "actor_unknown"]),
+  ),
   name: Schema.String,
   htmlUrl: Schema.optional(Schema.String),
   workflowName: Schema.optional(Schema.String),

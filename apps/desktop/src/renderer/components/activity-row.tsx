@@ -5,10 +5,11 @@ import { GitHubIcon } from "@/components/github-icon";
 import { JobLog } from "@/components/job-log";
 import { Details, ExpandableRow, Mono } from "@/components/layout";
 import { OsTile } from "@/components/os-icon";
-import { JobStatus, OperationStatus, StatusText } from "@/components/status";
+import { JobStatus, OperationStatus, RunnerStage, StatusText } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { activityJob, activitySummary, activityTitle } from "@/lib/activities";
 import { formatDateTime, formatRelative } from "@/lib/format";
+import { isGeneratedStageMessage, activeRunnerStage } from "@/lib/runner-stage";
 import { cancellableCommands, commandLabels } from "@/lib/operations";
 import { MigrationResult } from "@/views/migration-result";
 import { PreparationResult } from "@/views/preparation-result";
@@ -52,6 +53,7 @@ export function ActivityRow({
   const reconcilable = activity.subject.type === "runner" && activity.status === "action_required";
   const preparation = activity.subject.type === "preparation";
   const closable = activity.status === "action_required" && !preparation && !reconcilable;
+  const stage = activeRunnerStage(activity, deciding, job?.status);
   const result: unknown = deciding?.result;
   const nextStep =
     typeof result === "object" &&
@@ -89,13 +91,19 @@ export function ActivityRow({
             {formatRelative(activity.updatedAt)}
           </span>
           {job?.status && <JobStatus status={job.status} conclusion={job.conclusion ?? null} />}
-          {!runnerQuiet && <OperationStatus status={activity.status} />}
+          {stage ? (
+            <RunnerStage stage={stage} />
+          ) : (
+            !runnerQuiet && <OperationStatus status={activity.status} />
+          )}
         </>
       }
     >
-      <p className="max-w-[72ch] text-foreground/85" data-selectable>
-        {activity.message}
-      </p>
+      {!(activity.subject.type === "runner" && isGeneratedStageMessage(activity.message)) && (
+        <p className="max-w-[72ch] text-foreground/85" data-selectable>
+          {activity.message}
+        </p>
+      )}
       {nextStep && (
         <p className="max-w-[72ch] text-muted-foreground" data-selectable>
           {nextStep}
@@ -235,9 +243,11 @@ function Step({ step }: { step: Operation }) {
         label={commandLabels[step.command] ?? step.command}
       />
       <span className="text-muted-foreground tabular-nums">{formatRelative(step.updatedAt)}</span>
-      <span className="min-w-0 basis-full text-muted-foreground" data-selectable>
-        {step.message}
-      </span>
+      {!(step.command === "runner.run" && isGeneratedStageMessage(step.message)) && (
+        <span className="min-w-0 basis-full text-muted-foreground" data-selectable>
+          {step.message}
+        </span>
+      )}
     </li>
   );
 }

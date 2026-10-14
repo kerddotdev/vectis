@@ -53,8 +53,12 @@ async function main() {
       "non-interactive": { type: "boolean" },
       timeout: { type: "string" },
       cpu: { type: "string" },
+      x64: { type: "string" },
+      egress: { type: "string" },
       "max-runners": { type: "string" },
       "job-id": { type: "string" },
+      actors: { type: "string" },
+      approval: { type: "string" },
       account: { type: "string" },
       owner: { type: "string" },
       name: { type: "string" },
@@ -147,6 +151,8 @@ Repositories and jobs
   repository disconnect <id>    Stop future runners without interrupting running jobs
   runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
   runner reconcile <operation-id>  Clean up an interrupted runner after verifying its VM stopped
+  repository access <binding-id> --actors any|<id,id,...> --approval automatic|required
+                               Actor IDs are numeric GitHub user IDs: gh api users/<login> --jq .id
   job list <binding-id>         Read recent GitHub job states for a connected repository
   job logs <job-id> --binding <id> [--follow]  Read the retained log; follow backs off from 2 to 30 seconds when empty
   job scan <binding-id>         Discover missing jobs through the GitHub API
@@ -170,7 +176,8 @@ Environments
   environment install-windows <id>  Experimental: install Windows 11 from your ISO, drivers and firmware
   environment resume-windows <setup-id>  Continue an interrupted Windows installation
   environment register --file <path>  Register an existing prepared environment JSON file
-  environment configure <id>    Set default --cpu, --memory-mib or --storage-path for future VMs
+  environment list              List environments and effective network egress
+  environment configure <id>    Set --cpu, --memory-mib, --storage-path, --x64 rosetta|off or --egress internet_only|open for future VMs
   environment start <id>        Start a clean VM, optionally overriding --cpu, --memory-mib, --storage-path
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>            Stop a VM owned by this service
@@ -235,6 +242,11 @@ Documentation: https://vectis.kerd.dev/docs
 `);
     return;
   }
+  if (values.egress !== undefined && !(command === "environment" && subcommand === "configure"))
+    throw new VectisError(
+      "invalid_arguments",
+      "--egress is supported only by environment configure.",
+    );
   if (values.machine && ["service", "cloud", "login", "logout", "machine"].includes(command))
     throw new VectisError("invalid_target", "This command does not accept --machine.");
   if (
@@ -510,6 +522,10 @@ Documentation: https://vectis.kerd.dev/docs
     output(await api.status());
     return;
   }
+  if (command === "environment" && subcommand === "list") {
+    output((await api.status()).environments);
+    return;
+  }
   if (command === "activity" && subcommand === "list") {
     const limit = values.limit === undefined ? 50 : Number(values.limit);
     if (!Number.isSafeInteger(limit) || limit <= 0)
@@ -562,7 +578,25 @@ Documentation: https://vectis.kerd.dev/docs
       bindingId: id,
       enabled: subcommand === "enable-auto",
     });
-  else if (command === "migration" && subcommand === "analyze" && id)
+  else if (command === "repository" && subcommand === "access" && id) {
+    if (
+      !values.actors ||
+      (values.actors !== "any" && !/^[1-9][0-9]*(,[1-9][0-9]*)*$/.test(values.actors))
+    )
+      throw new VectisError(
+        "invalid_repository_access",
+        "Use any or comma-separated numeric GitHub user IDs.",
+      );
+    request = decodeCommand({
+      type: "repository.access",
+      bindingId: id,
+      actors:
+        values.actors === "any"
+          ? "any"
+          : { ids: [...new Set(values.actors.split(",").map(Number))] },
+      approval: values.approval,
+    });
+  } else if (command === "migration" && subcommand === "analyze" && id)
     request = decodeCommand({ type: "migration.analyze", bindingId: id });
   else if (command === "migration" && subcommand === "preview" && id)
     request = decodeCommand({
@@ -684,6 +718,8 @@ Documentation: https://vectis.kerd.dev/docs
     request = decodeCommand({
       type: "environment.configure",
       id,
+      ...(values.x64 !== undefined ? { x64: values.x64 } : {}),
+      ...(values.egress !== undefined ? { egress: values.egress } : {}),
       ...(values.cpu !== undefined ? { cpu: Number(values.cpu) } : {}),
       ...(values["memory-mib"] !== undefined ? { memoryMiB: Number(values["memory-mib"]) } : {}),
       ...(values["storage-path"] !== undefined ? { storagePath: values["storage-path"] } : {}),

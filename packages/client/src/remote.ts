@@ -37,6 +37,7 @@ const Record = Schema.Struct({
   resultJson: Schema.optional(Schema.String),
 });
 const Summary = Schema.Struct({
+  code: Schema.optional(Schema.String),
   message: Schema.String,
   operationId: Schema.optional(Identifier),
   resultAvailableLocally: Schema.Boolean,
@@ -65,6 +66,7 @@ export class RemoteClient {
         ? {
             localOperationId: summary.operationId,
             resultAvailableLocally: summary.resultAvailableLocally,
+            ...(summary.code ? { code: summary.code } : {}),
           }
         : {}),
     };

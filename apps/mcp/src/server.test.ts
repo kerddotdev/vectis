@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test, vi } from "vitest";
@@ -19,7 +19,11 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
-    expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("vectis_command");
+    const discovered = (await client.listTools()).tools;
+    expect(discovered.map((tool) => tool.name)).toContain("vectis_command");
+    expect(
+      JSON.stringify(discovered.find((tool) => tool.name === "vectis_command")?.inputSchema),
+    ).toContain("repository.access");
     const args = { key: "mcp-pause", command: { type: "machine.pause", paused: true } };
     const accepted = await client.callTool({ name: "vectis_command", arguments: args });
     expect(accepted.isError).not.toBe(true);
@@ -36,6 +40,57 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
     expect(configured.isError).not.toBe(true);
     await service.service.drain();
     expect((await api.status()).machine.maxRunners).toBe(3);
+    const commandTool = discovered.find((tool) => tool.name === "vectis_command");
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"x64"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"rosetta"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"off"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"egress"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"internet_only"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"open"');
+    const basePath = join(home, "base.img");
+    await writeFile(basePath, "synthetic Linux image");
+    service.store.put("environment", "linux", {
+      id: "linux",
+      name: "Linux",
+      os: "linux",
+      state: "ready",
+      basePath,
+      cpu: 1,
+      memoryMiB: 512,
+    });
+    for (const x64 of ["rosetta", "off"]) {
+      const configured = await client.callTool({
+        name: "vectis_command",
+        arguments: {
+          key: `mcp-x64-${x64}`,
+          command: { type: "environment.configure", id: "linux", x64 },
+        },
+      });
+      expect(configured.isError).not.toBe(true);
+      await service.service.drain();
+      expect((await api.status()).environments[0]?.x64).toBe(
+        x64 === "rosetta" ? "rosetta" : undefined,
+      );
+    }
+    for (const egress of ["open", "internet_only"]) {
+      const accepted = await client.callTool({
+        name: "vectis_command",
+        arguments: {
+          key: `mcp-egress-${egress}`,
+          command: { type: "environment.configure", id: "linux", egress },
+        },
+      });
+      expect(accepted.isError).not.toBe(true);
+      await service.service.drain();
+      const operations = (await api.status()).operations;
+      expect(
+        operations.find((operation) => operation.key === `mcp-egress-${egress}`),
+      ).toMatchObject(
+        egress === "open"
+          ? { status: "succeeded", result: { environment: { egress: "open" } } }
+          : { status: "failed", result: { code: "egress_unsupported" } },
+      );
+    }
     expect(await client.callTool({ name: "vectis_doctor", arguments: {} })).toMatchObject({
       structuredContent: { result: { source: "service" } },
     });
@@ -43,7 +98,14 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
       isError: true,
     });
     const status = await client.callTool({ name: "vectis_status", arguments: {} });
-    expect(status).toMatchObject({ structuredContent: { result: { machine: { paused: true } } } });
+    expect(status).toMatchObject({
+      structuredContent: {
+        result: {
+          machine: { paused: true },
+          environments: [{ network: { egress: "open", enforcement: "not_enforced" } }],
+        },
+      },
+    });
   } finally {
     await client.close();
     await server.close();
@@ -142,6 +204,39 @@ test("remote MCP sessions expose their target and cannot invoke local service ma
     await server.close();
     await service.close();
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("vectis_jobs preserves the binding access reason", async () => {
+  const api = new VectisClient({ url: "http://127.0.0.1:1", token: "synthetic" });
+  const { vi } = await import("vitest");
+  vi.spyOn(api, "jobs").mockResolvedValue([
+    {
+      jobId: 4,
+      runId: 5,
+      name: "Build",
+      status: "queued",
+      conclusion: null,
+      labels: ["vectis-mac"],
+      runnerId: null,
+      runnerName: null,
+      updatedAt: 1,
+      access: "approval_required",
+    },
+  ]);
+  const server = createMcpServer(async () => api);
+  const client = new Client({ name: "access-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    expect(
+      await client.callTool({ name: "vectis_jobs", arguments: { bindingId: "binding" } }),
+    ).toMatchObject({ structuredContent: { result: [{ access: "approval_required" }] } });
+  } finally {
+    await client.close();
+    await server.close();
+    vi.restoreAllMocks();
   }
 });
 

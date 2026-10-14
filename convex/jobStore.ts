@@ -1,3 +1,5 @@
+import { jobAccess } from "../packages/github/src/access-policy.js";
+import type { RepositoryAccess } from "../packages/protocol/src/repository-access.js";
 import { internal } from "./_generated/api.js";
 import { Schema } from "effect";
 import { GitHubJob } from "../packages/github/src/job.js";
@@ -5,10 +7,13 @@ import type { Job } from "../packages/protocol/src/jobs.js";
 import type { Doc } from "./_generated/dataModel.js";
 import type { MutationCtx } from "./_generated/server.js";
 
-export function publicJob(job: Doc<"githubJobs">): Job {
+export function publicJob(job: Doc<"githubJobs">, policy?: RepositoryAccess): Job {
   const {
     jobId,
     runId,
+    runAttempt,
+    actorId,
+    triggeringActorId,
     name,
     htmlUrl,
     workflowName,
@@ -19,7 +24,13 @@ export function publicJob(job: Doc<"githubJobs">): Job {
     runnerName,
     updatedAt,
   } = job;
+  const access =
+    job.status === "queued" || job.status === "waiting" ? jobAccess(policy, job) : undefined;
   return {
+    ...(access ? { access } : {}),
+    ...(runAttempt === undefined ? {} : { runAttempt }),
+    ...(actorId === undefined ? {} : { actorId }),
+    ...(triggeringActorId === undefined ? {} : { triggeringActorId }),
     jobId,
     runId,
     name,
@@ -61,6 +72,7 @@ export async function storeJob(
     repositoryId,
     jobId: job.id,
     runId: stale ? previous.runId : job.run_id,
+    ...optionalActors(job, previous, stale),
     name: stale ? previous.name : job.name,
     status: stale ? previous.status : status,
     conclusion: stale ? previous.conclusion : (job.conclusion ?? previous?.conclusion ?? null),
@@ -78,6 +90,9 @@ export async function storeJob(
   if (previous) {
     if (
       previous.runId === record.runId &&
+      previous.runAttempt === record.runAttempt &&
+      previous.actorId === record.actorId &&
+      previous.triggeringActorId === record.triggeringActorId &&
       previous.name === record.name &&
       previous.status === record.status &&
       previous.conclusion === record.conclusion &&
@@ -89,7 +104,13 @@ export async function storeJob(
       previous.labels.every((label, index) => label === record.labels[index])
     )
       return previous._id;
-    await ctx.db.patch("githubJobs", previous._id, { ...record, updatedAt: Date.now() });
+    await ctx.db.patch("githubJobs", previous._id, {
+      ...record,
+      actorId: record.actorId,
+      triggeringActorId: record.triggeringActorId,
+      runAttempt: record.runAttempt,
+      updatedAt: Date.now(),
+    });
   }
   const id =
     previous?._id ?? (await ctx.db.insert("githubJobs", { ...record, updatedAt: Date.now() }));
@@ -99,4 +120,24 @@ export async function storeJob(
       repositoryId,
     });
   return id;
+}
+
+function optionalActors(job: GitHubJob, previous: Doc<"githubJobs"> | null, stale: boolean) {
+  const sameAttempt =
+    previous?.runId === job.run_id &&
+    (job.run_attempt === undefined || previous.runAttempt === job.run_attempt);
+  const runAttempt = stale
+    ? previous?.runAttempt
+    : (job.run_attempt ?? (sameAttempt ? previous?.runAttempt : undefined));
+  const actorId = stale
+    ? previous?.actorId
+    : (job.actor_id ?? (sameAttempt ? previous?.actorId : undefined));
+  const triggeringActorId = stale
+    ? previous?.triggeringActorId
+    : (job.triggering_actor_id ?? (sameAttempt ? previous?.triggeringActorId : undefined));
+  return {
+    ...(runAttempt === undefined ? {} : { runAttempt }),
+    ...(actorId === undefined ? {} : { actorId }),
+    ...(triggeringActorId === undefined ? {} : { triggeringActorId }),
+  };
 }

@@ -37,6 +37,8 @@ vectis operation cancel <operation-id> --machine <machine-id> --json
 
 An accepted command is durably queued, not completed. Hosts claim commands and report execution separately. Retry the same request key only with the same command. Cancellation before delivery prevents execution; cancellation after delivery requires the host to observe the request and finish cleanup. Already completed operations keep their actual outcome.
 
+Automatic runner requests that remain unclaimed are checked after two minutes and cancelled if their machine is offline; an online machine has at most ten minutes to claim. The queued job can then be requested by another eligible machine on the next demand pass, within the existing three-attempt limit.
+
 Read-only requests require an online host. Their cloud responses are bounded and expire after 60 seconds. Completed command details are retrieved from the host; when it is offline, the cloud summary explicitly reports that the full result remains local. GitHub logs and artifacts retain normal GitHub behavior.
 
 File paths, image directories, CPU and memory limits refer to the selected host. Remote service installation, startup, and shutdown are not available: configure the background service on that host locally.

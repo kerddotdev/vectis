@@ -1,3 +1,4 @@
+import { redact } from "./redact.js";
 import { Schema } from "effect";
 import { LocalQuery } from "../../protocol/src/controller.js";
 import { VectisError } from "../../protocol/src/index.js";
@@ -57,8 +58,8 @@ export async function answerInspection(
     return JSON.stringify({
       ok: false,
       code: issue.code,
-      message: issue.message,
-      nextStep: issue.nextStep,
+      message: redact(issue.message),
+      nextStep: redact(issue.nextStep),
     });
   }
 }
