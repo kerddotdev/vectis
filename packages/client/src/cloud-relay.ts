@@ -1,12 +1,29 @@
+import { RunControlOutcome, type RunControlCommand } from "../../protocol/src/runs.js";
 import { ConvexError } from "convex/values";
 import type { FunctionReturnType } from "convex/server";
 import { isDeepStrictEqual } from "node:util";
 import { environmentRevision } from "./environment-revision.js";
+import {
+  CloudRepositoryReadiness,
+  type RepositoryReadinessInput,
+} from "../../protocol/src/readiness.js";
 import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
+import type { RepositoryAccess } from "../../protocol/src/repository-access.js";
 import { MachineRepositories, type RepositoryConnection } from "../../protocol/src/repositories.js";
-import { JobRefresh, JobScan, JobObservations } from "../../protocol/src/jobs.js";
+import {
+  JobLogs,
+  JobLogRequest,
+  JobRefresh,
+  JobScan,
+  JobObservations,
+} from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
-import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
+import {
+  RunnerGrant,
+  RunnerLease,
+  RunnerStatus,
+  type RunnerBroker,
+} from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api.js";
 import { VectisError } from "../../protocol/src/index.js";
@@ -28,16 +45,77 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
             Schema.Struct({
               code: Schema.Literals([
                 "public_runner_approval_required",
+                "private_runner_approval_required",
                 "repository_admin_required",
                 "github_app_not_installed",
                 "machine_revoked",
+                "cloud_unconfigured",
+                "cloud_unavailable",
+                "github_account_missing",
+                "github_app_unavailable",
+                "machine_unauthorized",
+                "binding_limit",
+                "invalid_repository_binding",
+                "repository_access_denied",
+                "installation_changed",
+                "setup_required",
+                "environment_unavailable",
               ]),
-              message: Schema.String,
-              nextStep: Schema.String,
+              message: Schema.optional(Schema.String),
+              nextStep: Schema.optional(Schema.String),
             }),
           )(error.data)
         )
-          reject(new VectisError(error.data.code, error.data.message, error.data.nextStep));
+          reject(
+            new VectisError(
+              error.data.code,
+              error.data.message ?? `Repository access was refused: ${error.data.code}.`,
+              error.data.nextStep ??
+                "Check repository readiness and resolve the reported prerequisite, then retry.",
+            ),
+          );
+        else if (
+          error instanceof ConvexError &&
+          Schema.is(
+            Schema.Struct({
+              code: Schema.Literals([
+                "actor_not_allowed",
+                "actor_unknown",
+                "approval_required",
+                "job_required",
+                "job_not_queued",
+                "automatic_disabled",
+                "repository_access_changed",
+                "runner_labels_mismatch",
+              ]),
+            }),
+          )(error.data)
+        )
+          reject(
+            new VectisError(
+              error.data.code,
+              "The repository access policy or job state no longer permits this runner.",
+              "Refresh the job and repository policy before starting a new runner.",
+            ),
+          );
+        else if (
+          error instanceof ConvexError &&
+          Schema.is(
+            Schema.Struct({
+              code: Schema.String,
+              message: Schema.String,
+              nextStep: Schema.optionalKey(Schema.String),
+            }),
+          )(error.data)
+        )
+          reject(
+            new VectisError(
+              error.data.code,
+              error.data.message,
+              error.data.nextStep ??
+                "Check repository access and inspect the operation before retrying.",
+            ),
+          );
         else reject(error);
       })
       .finally(() => signal.removeEventListener("abort", abort));
@@ -237,6 +315,14 @@ export function startCloudRelay(
         return;
       }
       if (isDeepStrictEqual(repositorySnapshot, decoded.value)) return;
+      for (const binding of decoded.value) {
+        const previous = repositorySnapshot?.find((item) => item.id === binding.id);
+        if (!isDeepStrictEqual(previous?.access, binding.access)) {
+          const marker = jobMarkers.get(binding.id);
+          if (marker) jobMarkers.set(binding.id, { value: marker.value });
+          jobLists.delete(binding.id);
+        }
+      }
       repositorySnapshot = decoded.value;
       onChange();
       // forMachine returns bindings in ascending creation order.
@@ -337,6 +423,15 @@ export function startCloudRelay(
       );
       return Schema.decodeUnknownSync(MigrationPublication)(result);
     },
+    async repositoryReadiness(input: RepositoryReadinessInput) {
+      requireConnection();
+      return Schema.decodeUnknownSync(CloudRepositoryReadiness)(
+        await interruptible(
+          cloud.action(api.githubRepositories.readiness, { input }),
+          AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]),
+        ),
+      );
+    },
     async githubAccounts() {
       requireConnection();
       return interruptible(
@@ -357,7 +452,14 @@ export function startCloudRelay(
             : { repositoryOwner: input.repositoryOwner }),
         }),
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
-      );
+      ).catch((error: unknown) => {
+        if (error instanceof VectisError) throw error;
+        throw new VectisError(
+          "repository_connection_unconfirmed",
+          "Repository connection could not be confirmed.",
+          "List repository connections before retrying; then check readiness for the account, environment and GitHub App access.",
+        );
+      });
     },
     async disconnectRepository(bindingId: string) {
       requireConnection();
@@ -370,6 +472,26 @@ export function startCloudRelay(
       requireConnection();
       await interruptible(
         cloud.mutation(api.repositoryBindings.setAutomatic, { bindingId, enabled }),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
+    async controlRun(command: RunControlCommand, key: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const result = await interruptible(
+        cloud.action(api.githubRuns.control, { command, key }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+      );
+      return Schema.decodeUnknownSync(RunControlOutcome)(result);
+    },
+    async setAccess(bindingId: string, access: RepositoryAccess) {
+      requireConnection();
+      await interruptible(
+        cloud.mutation(api.repositoryBindings.setAccess, {
+          bindingId,
+          actors: access.actors === "any" ? "any" : { ids: [...access.actors.ids] },
+          approval: access.approval,
+        }),
         AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
       );
     },
@@ -390,6 +512,43 @@ export function startCloudRelay(
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
       );
       return Schema.decodeUnknownSync(JobRefresh)(result);
+    },
+    async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
+      signal?.throwIfAborted();
+      requireConnection();
+      try {
+        return Schema.decodeUnknownSync(JobLogs)(
+          await interruptible(
+            cloud.action(api.githubJobs.logs, {
+              bindingId: input.bindingId,
+              jobId: input.jobId,
+              ...(input.after === undefined ? {} : { after: input.after }),
+            }),
+            AbortSignal.any([
+              ...(signal ? [signal] : []),
+              abort.signal,
+              AbortSignal.timeout(60000),
+            ]),
+          ),
+        );
+      } catch (error) {
+        if (
+          error instanceof ConvexError &&
+          Schema.is(
+            Schema.Struct({
+              code: Schema.String,
+              message: Schema.optional(Schema.String),
+              nextStep: Schema.optional(Schema.String),
+            }),
+          )(error.data)
+        )
+          throw new VectisError(
+            error.data.code,
+            error.data.message ?? "Job logs could not be read.",
+            error.data.nextStep,
+          );
+        throw error;
+      }
     },
     async jobs(bindingId: string) {
       requireConnection();
@@ -417,23 +576,40 @@ export function startCloudRelay(
         );
       }
     },
-    async findRunner(key: string, signal: AbortSignal) {
+    async reconcileRunner(
+      request: Parameters<RunnerBroker["reconcileRunner"]>[0],
+      signal: AbortSignal,
+    ) {
       signal.throwIfAborted();
       requireConnection();
       const value = await interruptible(
-        cloud.query(api.runnerLeases.find, { key }),
+        cloud.mutation(api.runnerLeases.reconcile, request),
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
       );
-      return value === null ? null : Schema.decodeUnknownSync(RunnerLease)(value);
+      return Schema.decodeUnknownSync(RunnerLease)(value);
     },
-    async prepareRunner(bindingId: string, key: string, signal: AbortSignal) {
+    async prepareRunner(
+      bindingId: string,
+      key: string,
+      signal: AbortSignal,
+      request?: { jobId?: number; automatic?: boolean },
+    ) {
       signal.throwIfAborted();
       requireConnection();
       const value = await interruptible(
-        cloud.action(api.githubRunners.prepare, { bindingId, key }),
+        cloud.action(api.githubRunners.prepare, { bindingId, key, ...request }),
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
       );
       return Schema.decodeUnknownSync(RunnerGrant)(value);
+    },
+    async runnerStatus(leaseId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const value = await interruptible(
+        cloud.action(api.githubRunners.status, { id: leaseId }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
+      );
+      return Schema.decodeUnknownSync(RunnerStatus)(value);
     },
     async releaseRunner(id: string, signal: AbortSignal) {
       signal.throwIfAborted();

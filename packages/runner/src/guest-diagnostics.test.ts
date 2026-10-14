@@ -47,3 +47,26 @@ test("an unreachable guest is reported with the connection error instead of fail
   expect(text).toContain("unreachable: exit 255: No route to host");
   expect(text).toContain("guest is forwarded through a loopback port");
 });
+
+test("credentials are removed from listener and guest output before diagnostic tails are cut", async () => {
+  const canary = "ghu_GuestDiagnosticCanary123456789";
+  const known = "KnownJitConfigCanary123456789";
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 23,
+    stdout: `Authorization: Bearer ${"a".repeat(15000)}\n${canary} host runner.local`,
+    stderr: `config ${known} exit 23`,
+    truncated: false,
+  });
+  const text = await collectRunnerDiagnostics({
+    connection,
+    os: "windows",
+    listener: `--jitconfig ${"b".repeat(4000)}\n${canary}`,
+    secrets: [known],
+  });
+  expect(text).not.toContain(canary);
+  expect(text).not.toContain(known);
+  expect(text).not.toContain("a".repeat(100));
+  expect(text).not.toContain("b".repeat(100));
+  expect(text).toContain("host runner.local");
+  expect(text).toContain("exit 23");
+});

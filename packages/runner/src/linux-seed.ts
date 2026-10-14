@@ -30,15 +30,10 @@ const runnerPackages = [
   "libatomic1",
 ].join(" ");
 
-export function linuxSeed(input: {
-  id: string;
-  publicKey: string;
-  hostPrivateKey: string;
-  hostPublicKey: string;
-}) {
+export function linuxSeed(input: { id: string; publicKey: string }) {
   if (
     !/^[a-zA-Z0-9-]{1,80}$/.test(input.id) ||
-    ![input.publicKey, input.hostPublicKey].every((key) =>
+    ![input.publicKey].every((key) =>
       /^ssh-ed25519 [A-Za-z0-9+/=]+(?: [^\r\n]*)?$/.test(key.trim()),
     )
   )
@@ -77,6 +72,14 @@ printf '${ubuntuImage.revision}\\n' > /etc/vectis/image-revision
 # The downloaded archives go, the package lists stay: a job that runs apt-get install should not
 # have to run apt-get update first.
 apt-get clean
+install -m 0644 /opt/vectis/vectis-rosetta.service /etc/systemd/system/vectis-rosetta.service
+systemctl enable vectis-rosetta.service
+install -m 0644 /opt/vectis/vectis-instance-identity.service /etc/systemd/system/vectis-instance-identity.service
+for unit in ssh.service ssh.socket; do
+  mkdir -p "/etc/systemd/system/$unit.d"
+  install -m 0644 /opt/vectis/vectis-identity.conf "/etc/systemd/system/$unit.d/vectis-identity.conf"
+done
+rm -f /etc/ssh/ssh_host_* /var/lib/cloud/instance/user-data.txt /var/lib/cloud/instance/user-data.txt.i
 touch /etc/cloud/cloud-init.disabled
 printf 'uninitialized\\n' > /etc/machine-id
 printf '${marker}\\n' > /dev/hvc0
@@ -101,11 +104,78 @@ printf '${marker}\\n' > /dev/hvc0
         ],
         disable_root: true,
         ssh_pwauth: false,
-        ssh_keys: {
-          ed25519_private: input.hostPrivateKey,
-          ed25519_public: input.hostPublicKey.trim(),
-        },
         write_files: [
+          {
+            path: "/usr/local/sbin/vectis-instance-identity",
+            permissions: "0700",
+            content: `#!/bin/bash
+set -euo pipefail
+mkdir -p /run/vectis-identity
+mount -o ro,nosuid,nodev,noexec /dev/disk/by-label/VECTISIDENTITY /run/vectis-identity
+trap 'umount /run/vectis-identity' EXIT
+rm -f /etc/ssh/ssh_host_*
+install -m 0600 /run/vectis-identity/ssh_host_ed25519_key /etc/ssh/ssh_host_ed25519_key
+install -m 0644 /run/vectis-identity/ssh_host_ed25519_key.pub /etc/ssh/ssh_host_ed25519_key.pub
+install -m 0644 /run/vectis-identity/instance-id /etc/vectis/instance-id
+mkdir -p /run/sshd
+/usr/sbin/sshd -t
+`,
+          },
+          {
+            path: "/opt/vectis/vectis-instance-identity.service",
+            permissions: "0644",
+            content: `[Unit]
+Description=Install the instance SSH host identity
+# SSH socket activation runs before basic.target.
+DefaultDependencies=no
+Requires=dev-disk-by\\x2dlabel-VECTISIDENTITY.device
+After=local-fs.target dev-disk-by\\x2dlabel-VECTISIDENTITY.device
+Before=ssh.service ssh.socket shutdown.target
+Conflicts=shutdown.target
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/vectis-instance-identity
+RemainAfterExit=yes
+`,
+          },
+          {
+            path: "/opt/vectis/vectis-identity.conf",
+            permissions: "0644",
+            content:
+              "[Unit]\nRequires=vectis-instance-identity.service\nAfter=vectis-instance-identity.service\n",
+          },
+          {
+            path: "/usr/local/sbin/vectis-rosetta",
+            permissions: "0700",
+            content: `#!/bin/bash
+set -euo pipefail
+test -x /run/rosetta/rosetta
+if test -e /proc/sys/fs/binfmt_misc/rosetta; then
+  printf '%s\\n' -1 > /proc/sys/fs/binfmt_misc/rosetta
+fi
+printf '%s\\n' ':rosetta:M::\\x7fELF\\x02\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x3e\\x00:\\xff\\xff\\xff\\xff\\xff\\xfe\\xfe\\x00\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xfe\\xff\\xff\\xff:/run/rosetta/rosetta:CF' > /proc/sys/fs/binfmt_misc/register
+`,
+          },
+          {
+            path: "/opt/vectis/vectis-rosetta.service",
+            permissions: "0644",
+            content: `[Unit]
+Description=Enable Rosetta for x86_64 Linux binaries
+DefaultDependencies=no
+Requires=proc-sys-fs-binfmt_misc.mount
+Wants=systemd-binfmt.service
+After=local-fs.target systemd-udev-trigger.service proc-sys-fs-binfmt_misc.mount systemd-binfmt.service
+Before=ssh.service ssh.socket docker.service shutdown.target
+Conflicts=shutdown.target
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'mkdir -p /run/rosetta && mount -t virtiofs -o ro,nosuid,nodev rosetta /run/rosetta'
+ExecStart=/usr/local/sbin/vectis-rosetta
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+`,
+          },
           { path: "/etc/netplan/50-cloud-init.yaml", permissions: "0600", content: network },
           {
             path: "/opt/vectis/prepare.sh",

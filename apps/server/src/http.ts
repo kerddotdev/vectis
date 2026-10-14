@@ -1,8 +1,11 @@
+import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
+import { redact } from "../../../packages/client/src/redact.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { isDeepStrictEqual } from "node:util";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
+import { open, readFile, rename, rm } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join } from "node:path";
 import { Schema } from "effect";
 import {
@@ -20,9 +23,11 @@ import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
+import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { LogRequest } from "../../../packages/protocol/src/logs.js";
 import { readServiceLog } from "./logs.js";
 import { configuredRelay } from "./cloud.js";
+import { privateHome, privateFile } from "./private-files.js";
 
 function reply(response: ServerResponse, status: number, body: unknown) {
   response.writeHead(status, {
@@ -55,7 +60,8 @@ export async function startService(
     onShutdown?: () => void;
   },
 ) {
-  await mkdir(options.home, { recursive: true, mode: 0o700 });
+  privateHome(options.home);
+  privateFile(join(options.home, "connection.json"));
   const lockPath = join(options.home, "service.lock");
   let lock;
   try {
@@ -82,7 +88,13 @@ export async function startService(
   await lock.writeFile(JSON.stringify({ pid: process.pid }));
   await lock.close();
   const token = options.token ?? randomBytes(32).toString("hex");
-  const store = new Store(join(options.home, "state.sqlite"));
+  let store: Store;
+  try {
+    store = new Store(join(options.home, "state.sqlite"));
+  } catch (error) {
+    await rm(lockPath, { force: true });
+    throw error;
+  }
   const service = new Service(
     store,
     new VmRuntime(options),
@@ -174,6 +186,28 @@ export async function startService(
         options.onShutdown?.();
         return;
       }
+      if (request.method === "GET" && request.url?.startsWith("/v1/jobs/logs?")) {
+        const params = new URL(request.url, "http://127.0.0.1").searchParams;
+        const after = params.get("after");
+        const input = {
+          bindingId: params.get("bindingId"),
+          jobId: Number(params.get("jobId")),
+          ...(after === null ? {} : { after: after === "" ? NaN : Number(after) }),
+        };
+        if (!Schema.is(JobLogRequest)(input))
+          throw new VectisError(
+            "invalid_request",
+            "Provide a binding ID, a positive job ID and a nonnegative integer byte cursor.",
+          );
+        const abort = new AbortController();
+        const closed = () => abort.abort();
+        response.once("close", closed);
+        try {
+          return reply(response, 200, await service.jobLogs(input, abort.signal));
+        } finally {
+          response.removeListener("close", closed);
+        }
+      }
       if (request.method === "GET" && request.url?.startsWith("/v1/jobs?")) {
         const bindingId = new URL(request.url, "http://127.0.0.1").searchParams.get("bindingId");
         if (!bindingId)
@@ -181,6 +215,25 @@ export async function startService(
         if (!relay)
           throw new VectisError("cloud_unconfigured", "Connect this machine before reading jobs.");
         return reply(response, 200, await relay.jobs(bindingId));
+      }
+      if (request.method === "GET" && request.url?.startsWith("/v1/repositories/readiness?")) {
+        const params = new URL(request.url, "http://127.0.0.1").searchParams;
+        const input = Schema.decodeUnknownSync(RepositoryReadinessInput, {
+          onExcessProperty: "error",
+        })(Object.fromEntries(params));
+        return reply(
+          response,
+          200,
+          await service.repositoryReadiness(input, async (input) => {
+            if (!relay)
+              throw new VectisError(
+                "cloud_unconfigured",
+                "This machine is not paired with Vectis.",
+                "Pair this machine before checking GitHub repository readiness.",
+              );
+            return relay.repositoryReadiness(input);
+          }),
+        );
       }
       if (request.method === "GET" && request.url === "/v1/github/accounts") {
         if (!relay)
@@ -205,7 +258,11 @@ export async function startService(
         return reply(response, 200, await readServiceLog(options.home, input.lines ?? 200));
       }
       if (request.method === "GET" && request.url === "/v1/doctor")
-        return reply(response, 200, runtimeDiagnostics(options, "service"));
+        return reply(
+          response,
+          200,
+          runtimeDiagnostics(options, "service", store.snapshot().environments),
+        );
       if (request.method === "GET" && request.url === "/v1/storage")
         return reply(response, 200, await inspectStorage());
       if (request.method === "GET" && request.url === "/v1/status") {
@@ -243,8 +300,8 @@ export async function startService(
           : new VectisError("internal_error", "The service could not process the request.");
       reply(response, issue.code === "idempotency_conflict" ? 409 : 400, {
         code: issue.code,
-        message: issue.message,
-        nextStep: issue.nextStep,
+        message: redact(issue.message),
+        nextStep: redact(issue.nextStep),
       });
     });
   });
@@ -267,9 +324,21 @@ export async function startService(
       token,
       pid: process.pid,
     };
-    await writeFile(join(options.home, "connection.json"), JSON.stringify(connection), {
-      mode: 0o600,
-    });
+    const temporary = join(options.home, `connection-${randomBytes(16).toString("hex")}.tmp`);
+    const metadata = await open(
+      temporary,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
+      0o600,
+    );
+    try {
+      await metadata.writeFile(JSON.stringify(connection));
+      await metadata.sync();
+      await metadata.close();
+      await rename(temporary, join(options.home, "connection.json"));
+    } finally {
+      await metadata.close();
+      await rm(temporary, { force: true });
+    }
     await reload();
     return {
       connection,

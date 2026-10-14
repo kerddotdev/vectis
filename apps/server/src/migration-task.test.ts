@@ -17,7 +17,13 @@ test("uncertain publication remains actionable and does not block or duplicate m
     analyzeMigration: async () => {
       throw new Error("unused");
     },
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs: async () => ({ runs: 0, jobs: 0, complete: true }),
+    controlRun: async () => {
+      throw new Error("unused");
+    },
     refreshJob: async () => ({
       jobId: 1,
       runId: 2,
@@ -32,9 +38,13 @@ test("uncertain publication remains actionable and does not block or duplicate m
     repositories: async () => [],
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},
+    setAccess: async () => {},
     setAutomatic: async () => {},
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: async () => {},
   }));
   try {

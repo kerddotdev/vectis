@@ -1,7 +1,9 @@
+import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
+import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import electronUpdater from "electron-updater";
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell, session } from "electron";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Schema } from "effect";
@@ -29,6 +31,9 @@ import { commandLineStatus, installCommandLine, shellPath } from "./command-line
 import { UpdateController, type UpdateService } from "./updates.js";
 import { trafficLightPosition, type Route, type WindowEvent } from "./chrome.js";
 import type { DesktopReply } from "./bridge.js";
+import { NativeNotifications } from "./native-notifications.js";
+import { NotificationPoller } from "./notifications.js";
+import { NotificationPreferences } from "./notification-preferences.js";
 if (app.isPackaged) {
   const runtime = join(process.resourcesPath, "runtime");
   process.env.VECTIS_NODE_EXECUTABLE ??= join(runtime, "bin", "node");
@@ -130,7 +135,33 @@ else {
     window?.show();
     window?.focus();
   });
-  void app.whenReady().then(() => {
+  void app.whenReady().then(async () => {
+    const notificationPreferences = await NotificationPreferences.open(app.getPath("userData"));
+    const notifications = new NativeNotifications(
+      (content) => new Notification(content),
+      (id) => {
+        const route = `/activities?id=${encodeURIComponent(id)}` as const;
+        if (!window) open(route);
+        else {
+          if (window.isMinimized()) window.restore();
+          window.show();
+          window.focus();
+          send(`navigate:${route}`);
+        }
+      },
+    );
+    const notificationPoller = new NotificationPoller({
+      client: () => localClient(home),
+      enabled: () => notificationPreferences.get(),
+      focused: () => window?.isFocused() ?? false,
+      notify: (activity, snapshot) => {
+        if (Notification.isSupported()) notifications.show(activity, snapshot);
+      },
+    });
+    app.once("before-quit", () => {
+      notificationPoller.stop();
+      notifications.close();
+    });
     session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
       callback(false),
     );
@@ -189,6 +220,14 @@ else {
             case "controller.logout":
               data = await logoutController(home, credentials());
               break;
+            case "notifications.get":
+              data = notificationPreferences.get();
+              break;
+            case "notifications.set":
+              data = await notificationPreferences.set(
+                Schema.decodeUnknownSync(Schema.Boolean)(input),
+              );
+              break;
             case "status":
               data = await (await client()).status();
               break;
@@ -197,11 +236,27 @@ else {
               data = await (await client()).jobs(bindingId);
               break;
             }
+            case "job.logs": {
+              const request = Schema.decodeUnknownSync(JobLogRequest, {
+                onExcessProperty: "error",
+              })(input);
+              data = await (await client()).jobLogs(request);
+              break;
+            }
             case "github.accounts":
               data = await (await client()).githubAccounts();
               break;
             case "repositories":
               data = await (await client()).repositories();
+              break;
+            case "repository.readiness":
+              data = await (
+                await client()
+              ).repositoryReadiness(
+                Schema.decodeUnknownSync(RepositoryReadinessInput, { onExcessProperty: "error" })(
+                  input,
+                ),
+              );
               break;
             case "doctor":
               data = await (await client()).doctor();
@@ -454,7 +509,7 @@ else {
         },
       ]),
     );
-    function open() {
+    function open(route?: `/activities?id=${string}`) {
       window = new BrowserWindow({
         width: 1280,
         height: 820,
@@ -487,9 +542,10 @@ else {
       window.on("closed", () => {
         window = undefined;
       });
-      void window.loadFile(page);
+      void window.loadFile(page, route ? { hash: route } : {});
     }
     open();
+    notificationPoller.start();
     updates?.start(15000);
     if (existsSync(restartMarker))
       void rm(restartMarker)

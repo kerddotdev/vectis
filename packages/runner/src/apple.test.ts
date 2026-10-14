@@ -43,3 +43,38 @@ test("retains the owned VM network identity for guest discovery", async () => {
   await expect(waitForAppleVm(child)).resolves.toEqual({ macAddress: "02:00:00:00:00:01" });
   await exited;
 });
+
+test.each([
+  ["rosetta_not_installed", "softwareupdate --install-rosetta"],
+  ["rosetta_unsupported", "configure x64 off"],
+])("maps helper %s to an actionable coded error", async (code, nextStep) => {
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      `process.stdout.write(JSON.stringify({event:"vm.error",code:${JSON.stringify(code)}})+"\\n")`,
+    ],
+    {
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
+  const exited = once(child, "exit");
+  await expect(waitForAppleVm(child)).rejects.toMatchObject({
+    code,
+    nextStep: expect.stringContaining(nextStep),
+  });
+  await exited;
+});
+
+test("unrecognized helper error codes cannot become service error codes", async () => {
+  const child = spawn(
+    process.execPath,
+    ["-e", `process.stdout.write('{"event":"vm.error","code":"arbitrary"}\\n')`],
+    {
+      stdio: ["ignore", "pipe", "ignore"],
+    },
+  );
+  const exited = once(child, "exit");
+  await expect(waitForAppleVm(child)).rejects.toMatchObject({ code: "vm_start_failed" });
+  await exited;
+});

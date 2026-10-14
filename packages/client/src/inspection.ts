@@ -1,3 +1,4 @@
+import { redact } from "./redact.js";
 import { Schema } from "effect";
 import { LocalQuery } from "../../protocol/src/controller.js";
 import { VectisError } from "../../protocol/src/index.js";
@@ -21,6 +22,8 @@ export async function answerInspection(
           return local.storage();
         case "doctor":
           return local.doctor();
+        case "repository.readiness":
+          return local.repositoryReadiness(query.input, signal);
         case "repositories":
           return local.repositories();
         case "github.accounts":
@@ -29,6 +32,10 @@ export async function answerInspection(
           return local.capabilities();
         case "jobs":
           return local.jobs(query.bindingId);
+        case "job.logs": {
+          const { name: _name, ...input } = query;
+          return local.jobLogs(input, signal);
+        }
         case "operation":
           return local.operation(query.id, signal);
         case "logs":
@@ -37,7 +44,7 @@ export async function answerInspection(
     })();
     signal.throwIfAborted();
     const encoded = JSON.stringify({ ok: true, result });
-    if (encoded.length > 262144)
+    if (new TextEncoder().encode(encoded).byteLength > 262144)
       throw new VectisError(
         "query_result_too_large",
         "The inspection exceeds the remote response limit.",
@@ -53,8 +60,8 @@ export async function answerInspection(
     return JSON.stringify({
       ok: false,
       code: issue.code,
-      message: issue.message,
-      nextStep: issue.nextStep,
+      message: redact(issue.message),
+      nextStep: redact(issue.nextStep),
     });
   }
 }

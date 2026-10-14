@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { notify } from "@/lib/notify";
+import { sectionId } from "@/lib/readiness";
 import { Machines } from "@/shell/machine-switcher";
 import { request, RequestError, useStateApi } from "@/state";
 
@@ -16,6 +17,7 @@ const Verification = Schema.Struct({ verificationCode: Schema.String });
 const codes = { pair: "", login: "" };
 
 function Card({
+  id,
   icon,
   title,
   hint,
@@ -23,6 +25,7 @@ function Card({
   description,
   children,
 }: {
+  id?: string;
   icon: ReactNode;
   title: string;
   hint?: ReactNode;
@@ -31,7 +34,11 @@ function Card({
   children?: ReactNode;
 }) {
   return (
-    <section className="rise-in flex flex-col gap-4 rounded-2xl bg-card p-5 ring-1 ring-border">
+    <section
+      id={id ? sectionId(id) : undefined}
+      tabIndex={id ? -1 : undefined}
+      className="rise-in flex scroll-mt-4 flex-col gap-4 rounded-2xl bg-card p-5 ring-1 ring-border outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+    >
       <div className="flex items-start gap-3.5">
         <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted text-foreground/80">
           {icon}
@@ -246,6 +253,7 @@ export function Connections() {
         </Card>
 
         <Card
+          id="github"
           icon={<GitHubIcon className="size-[18px]" />}
           title="GitHub"
           description="Link your GitHub accounts and choose which repositories run on your Macs. This happens on the Vectis website, where you sign in with the same account."

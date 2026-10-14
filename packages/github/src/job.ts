@@ -3,6 +3,9 @@ import { Schema } from "effect";
 export const GitHubJob = Schema.Struct({
   id: Schema.Int,
   run_id: Schema.Int,
+  run_attempt: Schema.optionalKey(Schema.Int),
+  actor_id: Schema.optionalKey(Schema.Int),
+  triggering_actor_id: Schema.optionalKey(Schema.Int),
   name: Schema.String.check(Schema.isMaxLength(200)),
   html_url: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
   workflow_name: Schema.optionalKey(Schema.NullOr(Schema.String.check(Schema.isMaxLength(200)))),

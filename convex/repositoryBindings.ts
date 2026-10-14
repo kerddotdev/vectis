@@ -1,7 +1,10 @@
 import { ConvexError, v, type ObjectType } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server.js";
 import type { QueryCtx, MutationCtx } from "./_generated/server.js";
-import type { Id } from "./_generated/dataModel.js";
+import type { Doc, Id } from "./_generated/dataModel.js";
+import { Schema } from "effect";
+import { RepositoryAccess } from "../packages/protocol/src/repository-access.js";
+import { repositoryAccess } from "./githubValidators.js";
 import { human, machine } from "./auth.js";
 import { workflowLabel } from "../packages/github/src/runner-labels.js";
 
@@ -112,6 +115,7 @@ export const forMachine = query({
           environmentId: binding.environmentId,
           runsOn: workflowLabel(binding.environmentId),
           automatic: binding.automatic ?? false,
+          ...(binding.access ? { access: binding.access } : {}),
         });
     }
     return visible;
@@ -144,6 +148,38 @@ export const setAutomatic = mutation({
     if (account?.owner !== target.owner)
       throw new ConvexError({ code: "repository_access_denied" });
     await ctx.db.patch("repositoryBindings", binding._id, { automatic: args.enabled });
+  },
+});
+
+export const setAccess = mutation({
+  args: { bindingId: v.string(), ...repositoryAccess.fields },
+  handler: async (ctx, args) => {
+    const target = await machine(ctx);
+    const id = ctx.db.normalizeId("repositoryBindings", args.bindingId);
+    const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
+    if (
+      !binding ||
+      !binding.enabled ||
+      binding.machineId !== target._id ||
+      binding.owner !== target.owner
+    )
+      throw new ConvexError({ code: "repository_access_denied" });
+    const account = await ctx.db.get("githubAccounts", binding.accountId);
+    if (account?.owner !== target.owner)
+      throw new ConvexError({ code: "repository_access_denied" });
+    const policy = Schema.decodeUnknownOption(RepositoryAccess)({
+      actors: args.actors,
+      approval: args.approval,
+    });
+    if (policy._tag === "None") throw new ConvexError({ code: "invalid_repository_access" });
+    const access = {
+      ...policy.value,
+      actors:
+        policy.value.actors === "any"
+          ? ("any" as const)
+          : { ids: [...new Set(policy.value.actors.ids)] },
+    };
+    await ctx.db.patch("repositoryBindings", binding._id, { access });
   },
 });
 
@@ -200,5 +236,83 @@ export const disconnectForMachine = mutation({
     if (!binding || binding.machineId !== target._id || binding.owner !== target.owner)
       throw new ConvexError({ code: "repository_access_denied" });
     await ctx.db.patch("repositoryBindings", binding._id, { enabled: false, automatic: false });
+  },
+});
+
+export const readinessAuthority = internalQuery({
+  args: {
+    input: v.union(
+      v.object({ repositoryName: v.string(), environmentId: v.optional(v.string()) }),
+      v.object({ bindingId: v.string() }),
+    ),
+  },
+  handler: async (ctx, { input }) => {
+    const target = await machine(ctx);
+    const accounts = await ctx.db
+      .query("githubAccounts")
+      .withIndex("by_owner", (q) => q.eq("owner", target.owner))
+      .take(100);
+    const bindings = await ctx.db
+      .query("repositoryBindings")
+      .withIndex("by_machine", (q) => q.eq("machineId", target._id))
+      .take(100);
+    let binding: Doc<"repositoryBindings"> | null | undefined;
+    if ("bindingId" in input) {
+      const id = ctx.db.normalizeId("repositoryBindings", input.bindingId);
+      binding = id ? await ctx.db.get("repositoryBindings", id) : null;
+      if (!binding || binding.machineId !== target._id || binding.owner !== target.owner)
+        throw new ConvexError({
+          code: "repository_access_denied",
+          message: "The repository binding does not belong to this machine and account.",
+          nextStep: "Select a repository binding owned by this machine.",
+        });
+    } else {
+      binding = bindings
+        .toSorted((a, b) => Number(b.enabled) - Number(a.enabled))
+        .find((item) => {
+          const account = accounts.find((account) => account._id === item.accountId);
+          return (
+            item.owner === target.owner &&
+            account &&
+            `${item.repositoryOwner ?? account.login}/${item.repositoryName}`.toLowerCase() ===
+              input.repositoryName.toLowerCase() &&
+            (input.environmentId === undefined || input.environmentId === item.environmentId)
+          );
+        });
+    }
+    const bindingAccount = binding ? await ctx.db.get("githubAccounts", binding.accountId) : null;
+    if (bindingAccount && bindingAccount.owner !== target.owner)
+      throw new ConvexError({
+        code: "repository_access_denied",
+        message: "The binding's GitHub account is no longer authorized.",
+        nextStep: "Reconnect your GitHub account and repository.",
+      });
+    const repositoryName =
+      "repositoryName" in input
+        ? input.repositoryName
+        : `${binding?.repositoryOwner ?? bindingAccount?.login}/${binding?.repositoryName}`;
+    const app = await ctx.db.query("githubApps").first();
+    return {
+      repositoryName,
+      environmentId:
+        "environmentId" in input
+          ? (input.environmentId ?? binding?.environmentId)
+          : binding?.environmentId,
+      binding: binding
+        ? {
+            enabled: binding.enabled,
+            automatic: binding.automatic ?? false,
+            repositoryId: binding.repositoryId,
+            installationId: binding.installationId,
+          }
+        : null,
+      accounts: (binding ? (bindingAccount ? [bindingAccount] : []) : accounts).map(
+        ({ githubId, login }) => ({
+          githubId,
+          login,
+        }),
+      ),
+      app: app ? { appId: app.appId, clientId: app.clientId, privateKey: app.privateKey } : null,
+    };
   },
 });
