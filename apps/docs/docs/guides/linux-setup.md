@@ -27,6 +27,8 @@ So a prepared guest has Git, Docker, OpenSSH and the official runner's dependenc
 
 Deliberately absent: language runtimes and their version managers, databases, browsers and drivers, cloud CLIs, Android and Java SDKs. A job that needs one installs it in a step, or runs in a container with `container:` in the workflow, which works because the guest runs Docker. Nothing a job installs survives it, since every VM starts from the same base image, and the base image itself cannot be customized yet.
 
+Docker container jobs (`container:`) and service containers (`services:`) are supported on the Ubuntu environment and covered by the environment validation workflow.
+
 ## Cancel and resume
 
 ```sh
