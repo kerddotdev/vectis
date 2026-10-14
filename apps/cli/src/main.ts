@@ -153,6 +153,9 @@ Workflow run control
   run rerun-failed <binding-id> <run-id>  Rerun failed jobs of a completed GitHub run
   run cancel <binding-id> <run-id>  Request cancellation of an active GitHub run
   workflow dispatch <binding-id> <workflow> --ref <ref>  Dispatch a workflow file or numeric ID
+  Successful rerun/cancel results distinguish requested from observed GitHub state.
+  Ambiguous POST responses require checking GitHub before retrying with a new key.
+  Run command receipts expire after 30 days; do not replay older keys.
 
 Workflow migration
   migration preview <workflow-file> --map <from>=<to>  Rewrite runs-on labels locally without writing files

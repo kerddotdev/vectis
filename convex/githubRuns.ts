@@ -31,6 +31,20 @@ const DispatchDetails = Schema.Struct({
   workflow_run_id: Schema.Int.check(Schema.isGreaterThan(0)),
   html_url: Schema.String,
 });
+function sleep(delay: number, signal: AbortSignal) {
+  signal.throwIfAborted();
+  return new Promise<void>((resolve, reject) => {
+    const abort = () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, delay);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+}
 function rejected(code: string, message: string, nextStep: string): RunControlOutcome {
   return { state: "rejected", code, message, nextStep };
 }
@@ -77,6 +91,7 @@ export const control = action({
     if (!fresh) return receipt.outcome ?? unconfirmedRunCommand(command);
     let posted = false;
     let responseReceived = false;
+    let acceptedOutcome: Extract<RunControlOutcome, { state: "accepted" }> | undefined;
     let outcome: RunControlOutcome;
     try {
       const client = new GitHubAppClient(authority.app);
@@ -95,9 +110,14 @@ export const control = action({
           message: "The repository installation changed.",
           nextStep: "Reconnect this repository binding before retrying.",
         });
-      const readRun = async (runId: number) => {
+      const readRun = async (runId: number, signal?: AbortSignal) => {
         const run = Schema.decodeUnknownSync(Run)(
-          await client.request(access.token, `${access.path}/actions/runs/${runId}`),
+          await client.request(
+            access.token,
+            `${access.path}/actions/runs/${runId}`,
+            undefined,
+            signal,
+          ),
         );
         if (run.id !== runId || run.repository.id !== access.repositoryId)
           throw new ConvexError({
@@ -196,36 +216,71 @@ export const control = action({
           access.token,
           `${access.path}/actions/runs/${command.runId}/${command.type === "run.cancel" ? "cancel" : "rerun-failed-jobs"}`,
           {},
+          "discard",
         );
         responseReceived = true;
-        const after = await readRun(command.runId);
-        const confirmed =
-          command.type === "run.rerun-failed"
-            ? after.run_attempt > before.run_attempt
-            : after.status === "completed" ||
-              after.status === "cancelled" ||
-              (response.status === 202 && after.status === "cancelling");
-        outcome = confirmed
-          ? {
-              state: "accepted",
-              message:
-                command.type === "run.rerun-failed"
-                  ? "A newer GitHub run attempt was observed."
-                  : after.status === "completed" || after.status === "cancelled"
-                    ? "The run was observed stopped after the cancellation request."
-                    : "GitHub accepted cancellation; the run is still stopping.",
-              runId: after.id,
-              runAttempt: after.run_attempt,
-              htmlUrl: after.html_url,
+        if (!(response.status >= 200 && response.status < 300)) {
+          outcome = unconfirmedRunCommand(command);
+        } else {
+          acceptedOutcome = {
+            state: "accepted",
+            message:
+              command.type === "run.cancel"
+                ? "GitHub accepted the cancellation; the run is still stopping."
+                : "GitHub accepted the rerun; the new attempt is not yet visible.",
+            ...(command.type === "run.cancel"
+              ? { cancellation: "requested" as const }
+              : { rerun: "requested" as const }),
+            runId: before.id,
+            runAttempt: before.run_attempt,
+            htmlUrl: before.html_url,
+          };
+          const abort = new AbortController();
+          const windowMs = command.type === "run.cancel" ? 20000 : 5000;
+          const deadline = setTimeout(() => abort.abort(), windowMs);
+          try {
+            let delay = 1000;
+            while (!abort.signal.aborted) {
+              try {
+                const after = await readRun(command.runId, abort.signal);
+                const observed =
+                  command.type === "run.rerun-failed"
+                    ? after.run_attempt > before.run_attempt
+                    : after.status === "completed" || after.status === "cancelled";
+                acceptedOutcome = {
+                  ...acceptedOutcome,
+                  runAttempt: after.run_attempt,
+                  htmlUrl: after.html_url,
+                };
+                if (observed) {
+                  acceptedOutcome = {
+                    ...acceptedOutcome,
+                    message:
+                      command.type === "run.rerun-failed"
+                        ? "A newer GitHub run attempt was observed."
+                        : "The run was observed stopped after the cancellation request.",
+                    ...(command.type === "run.cancel"
+                      ? { cancellation: "observed" as const }
+                      : { rerun: "observed" as const }),
+                  };
+                  break;
+                }
+              } catch {
+                // A failed observation does not undo GitHub's acceptance of the POST.
+              }
+              await sleep(delay, abort.signal);
+              delay = Math.min(delay * 2, 8000);
             }
-          : {
-              ...unconfirmedRunCommand(command),
-              runAttempt: after.run_attempt,
-              htmlUrl: after.html_url,
-            };
+          } finally {
+            clearTimeout(deadline);
+            abort.abort();
+          }
+          outcome = acceptedOutcome;
+        }
       }
     } catch (error) {
-      if (responseReceived) outcome = unconfirmedRunCommand(command);
+      if (acceptedOutcome) outcome = acceptedOutcome;
+      else if (responseReceived) outcome = unconfirmedRunCommand(command);
       else if (error instanceof GitHubPermissionError)
         outcome = rejected(error.code, error.message, error.nextStep);
       else if (

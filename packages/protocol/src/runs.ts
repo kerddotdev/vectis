@@ -70,7 +70,13 @@ const RunDetails = {
   htmlUrl: Schema.optionalKey(Schema.String),
 };
 export const RunControlOutcome = Schema.Union([
-  Schema.Struct({ state: Schema.Literal("accepted"), message: Schema.String, ...RunDetails }),
+  Schema.Struct({
+    state: Schema.Literal("accepted"),
+    message: Schema.String,
+    cancellation: Schema.optionalKey(Schema.Literals(["requested", "observed"])),
+    rerun: Schema.optionalKey(Schema.Literals(["requested", "observed"])),
+    ...RunDetails,
+  }),
   Schema.Struct({
     state: Schema.Literal("uncertain"),
     code: Schema.Literal("run_command_unconfirmed"),

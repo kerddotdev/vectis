@@ -50,9 +50,22 @@ const outcomes: RunControlOutcome[] = [
   {
     state: "accepted",
     message: "Cancellation observed.",
+    cancellation: "observed",
     runId: 5,
     runAttempt: 1,
     htmlUrl: "https://github.com/owner/repo/actions/runs/5",
+  },
+  {
+    state: "accepted",
+    message: "GitHub accepted the cancellation; the run is still stopping.",
+    cancellation: "requested",
+    runId: 5,
+  },
+  {
+    state: "accepted",
+    message: "GitHub accepted the rerun; the new attempt is not yet visible.",
+    rerun: "requested",
+    runId: 5,
   },
   unconfirmedRunCommand(command),
   {

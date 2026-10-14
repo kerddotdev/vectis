@@ -56,11 +56,21 @@ export class GitHubAppClient {
     const data = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: this.app.clientId, iat: now - 60, exp: now + 300 })}`;
     return `${data}.${sign("RSA-SHA256", Buffer.from(data), createPrivateKey(this.app.privateKey)).toString("base64url")}`;
   }
-  async request(token: string, path: string, body?: unknown): Promise<unknown> {
-    return (await this.send(token, path, body === undefined ? "GET" : "POST", body)).body;
+  async request(
+    token: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return (await this.send(token, path, body === undefined ? "GET" : "POST", body, signal)).body;
   }
-  async post(token: string, path: string, body: unknown) {
-    return this.send(token, path, "POST", body);
+  async post(
+    token: string,
+    path: string,
+    body: unknown,
+    responseBody: "json" | "discard" = "json",
+  ) {
+    return this.send(token, path, "POST", body, undefined, responseBody);
   }
   async delete(token: string, path: string): Promise<void> {
     await this.send(token, path, "DELETE");
@@ -70,6 +80,8 @@ export class GitHubAppClient {
     path: string,
     method: "GET" | "POST" | "DELETE",
     body?: unknown,
+    signal?: AbortSignal,
+    responseBody: "json" | "discard" = "json",
   ): Promise<{ status: number; body: unknown }> {
     if (!path.startsWith("/") || path.startsWith("//") || path.includes(".."))
       throw new Error("Invalid GitHub API path.");
@@ -83,8 +95,14 @@ export class GitHubAppClient {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       redirect: "error",
-      signal: AbortSignal.timeout(15000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+        : AbortSignal.timeout(15000),
     });
+    if (response.ok && responseBody === "discard") {
+      await response.body?.cancel().catch(() => {});
+      return { status: response.status, body: null };
+    }
     if (response.status === 204) return { status: response.status, body: null };
     const reader = response.body?.getReader();
     if (!reader) {

@@ -15,6 +15,8 @@ export const runControlOutcome = v.union(
   v.object({
     state: v.literal("accepted"),
     message: v.string(),
+    cancellation: v.optional(v.union(v.literal("requested"), v.literal("observed"))),
+    rerun: v.optional(v.union(v.literal("requested"), v.literal("observed"))),
     runId: v.optional(v.number()),
     runAttempt: v.optional(v.number()),
     htmlUrl: v.optional(v.string()),

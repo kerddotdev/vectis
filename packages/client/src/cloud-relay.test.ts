@@ -391,11 +391,17 @@ test("a mismatched identity sends no heartbeat", async () => {
   expect(transport.mutation).not.toHaveBeenCalled();
 });
 
-test("run control relay sends the caller key and returns observed or uncertain outcomes", async () => {
+test("run control relay sends the caller key and preserves requested, observed and uncertain outcomes", async () => {
   const { relay } = await fixture();
   transport.auth.changed?.(true);
   const command = { type: "run.rerun-failed", bindingId: "binding1", runId: 5 } as const;
-  const accepted = { state: "accepted", message: "New attempt observed.", runId: 5, runAttempt: 2 };
+  const accepted = {
+    state: "accepted",
+    message: "New attempt observed.",
+    rerun: "observed",
+    runId: 5,
+    runAttempt: 2,
+  };
   transport.action.mockResolvedValueOnce(accepted);
   expect(
     await relay.controlRun(command, "remote:operation1", new AbortController().signal),
@@ -404,6 +410,20 @@ test("run control relay sends the caller key and returns observed or uncertain o
   if (!reference) throw new Error("Missing action reference");
   expect(getFunctionName(reference)).toBe("githubRuns:control");
   expect(args).toEqual({ command, key: "remote:operation1" });
+  const requested = {
+    state: "accepted",
+    cancellation: "requested",
+    message: "GitHub accepted the cancellation; the run is still stopping.",
+    runId: 5,
+  };
+  transport.action.mockResolvedValueOnce(requested);
+  expect(
+    await relay.controlRun(
+      { ...command, type: "run.cancel" },
+      "cancel-key",
+      new AbortController().signal,
+    ),
+  ).toEqual(requested);
   const uncertain = {
     state: "uncertain",
     code: "run_command_unconfirmed",

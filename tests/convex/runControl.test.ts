@@ -26,6 +26,7 @@ const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
   .privateKey.export({ format: "pem", type: "pkcs8" })
   .toString();
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -82,7 +83,7 @@ async function fixture() {
   let post: () => Promise<Response> = async () => {
     run.run_attempt++;
     run.status = "queued";
-    return new Response(null, { status: 202 });
+    return new Response(null, { status: 201 });
   };
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     if (url.endsWith("/installation"))
@@ -148,6 +149,7 @@ test("a newer attempt confirms rerun and a stored receipt prevents a second POST
   });
   expect(outcome).toMatchObject({
     state: "accepted",
+    rerun: "observed",
     runId: 5,
     runAttempt: 2,
     htmlUrl: f.run.html_url,
@@ -182,29 +184,42 @@ test("a run from another repository is refused without POST", async () => {
   expect(f.posts()).toHaveLength(0);
 });
 
-test.each(["network", "server"])("ambiguous %s POST stays uncertain on replay", async (failure) => {
-  const f = await fixture();
-  f.setPost(async () => {
-    if (failure === "network") throw new TypeError("Response lost after submission");
-    return new Response("Unavailable", { status: 503 });
-  });
-  const outcome = await f.device.action(api.githubRuns.control, {
-    key: "uncertain",
-    command: f.command,
-  });
-  expect(outcome).toMatchObject({
-    state: "uncertain",
-    code: "run_command_unconfirmed",
-    nextStep: expect.stringContaining("Check the run on GitHub"),
-  });
-  expect(
-    await f.device.action(api.githubRuns.control, { key: "uncertain", command: f.command }),
-  ).toEqual(outcome);
-  expect(f.posts()).toHaveLength(1);
-  expect(await f.t.run((ctx) => ctx.db.query("runCommandReceipts").unique())).toMatchObject({
-    state: "uncertain",
-  });
-});
+test.each([
+  { type: "run.cancel", failure: "network" },
+  { type: "run.cancel", failure: "server" },
+  { type: "run.cancel", failure: "no-status" },
+  { type: "run.rerun-failed", failure: "network" },
+  { type: "run.rerun-failed", failure: "server" },
+  { type: "run.rerun-failed", failure: "no-status" },
+] as const)(
+  "ambiguous $type $failure POST stays uncertain on replay",
+  async ({ type, failure }) => {
+    const f = await fixture();
+    const command = { ...f.command, type };
+    if (type === "run.cancel") f.run.status = "in_progress";
+    f.setPost(async () => {
+      if (failure === "no-status") return Response.error();
+      if (failure === "network") throw new TypeError("Response lost after submission");
+      return new Response("Unavailable", { status: 503 });
+    });
+    const outcome = await f.device.action(api.githubRuns.control, {
+      key: "uncertain",
+      command,
+    });
+    expect(outcome).toMatchObject({
+      state: "uncertain",
+      code: "run_command_unconfirmed",
+      nextStep: expect.stringContaining("Check the run on GitHub"),
+    });
+    expect(await f.device.action(api.githubRuns.control, { key: "uncertain", command })).toEqual(
+      outcome,
+    );
+    expect(f.posts()).toHaveLength(1);
+    expect(await f.t.run((ctx) => ctx.db.query("runCommandReceipts").unique())).toMatchObject({
+      state: "uncertain",
+    });
+  },
+);
 
 test("an in-flight receipt prevents concurrent POSTs and a crash receipt never resubmits", async () => {
   const f = await fixture();
@@ -249,37 +264,145 @@ test.each(["completed-cancel", "running-rerun", "no-failed-jobs"])(
   },
 );
 
-test.each(["completed", "cancelling", "in_progress"])(
-  "cancellation reports observed %s state honestly",
+test.each(["completed", "cancelled"])(
+  "202 cancellation observes a delayed %s state without resubmitting",
   async (status) => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    f.run.status = "in_progress";
+    f.setPost(async () => new Response(null, { status: 202 }));
+    const command = { ...f.command, type: "run.cancel" } as const;
+    const pending = f.device.action(api.githubRuns.control, { key: "cancel", command });
+    await vi.waitFor(() =>
+      expect(f.fetch.mock.calls.filter(([url]) => url.endsWith("/actions/runs/5"))).toHaveLength(2),
+    );
+    f.run.status = status;
+    f.run.conclusion = "cancelled";
+    await vi.advanceTimersByTimeAsync(1000);
+    const outcome = await pending;
+    expect(outcome).toMatchObject({
+      state: "accepted",
+      cancellation: "observed",
+      runId: 5,
+      runAttempt: 1,
+    });
+    expect(await f.device.action(api.githubRuns.control, { key: "cancel", command })).toEqual(
+      outcome,
+    );
+    expect(f.posts()).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test.each(["in_progress", "cancelling"])(
+  "202 cancellation still %s after 20 seconds is requested, not uncertain",
+  async (status) => {
+    vi.useFakeTimers();
     const f = await fixture();
     f.run.status = "in_progress";
     f.setPost(async () => {
       f.run.status = status;
-      f.run.conclusion = "cancelled";
       return new Response(null, { status: 202 });
     });
-    const outcome = await f.device.action(api.githubRuns.control, {
-      key: "cancel",
-      command: { ...f.command, type: "run.cancel" },
-    });
+    const command = { ...f.command, type: "run.cancel" } as const;
+    const pending = f.device.action(api.githubRuns.control, { key: "cancel-requested", command });
+    await vi.waitFor(() =>
+      expect(f.fetch.mock.calls.filter(([url]) => url.endsWith("/actions/runs/5"))).toHaveLength(2),
+    );
+    await vi.advanceTimersByTimeAsync(20000);
+    const outcome = await pending;
     expect(outcome).toMatchObject({
-      state: status === "in_progress" ? "uncertain" : "accepted",
+      state: "accepted",
+      cancellation: "requested",
+      message: "GitHub accepted the cancellation; the run is still stopping.",
       runId: 5,
       runAttempt: 1,
     });
+    expect(f.fetch.mock.calls.filter(([url]) => url.endsWith("/actions/runs/5"))).toHaveLength(6);
+    expect(
+      await f.device.action(api.githubRuns.control, { key: "cancel-requested", command }),
+    ).toEqual(outcome);
+    expect(f.posts()).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
   },
 );
 
-test("a queued status without a newer attempt does not confirm rerun", async () => {
+test.each([200, 201, 202, 204])(
+  "rerun acceptance %s without a newer attempt is requested after five seconds",
+  async (status) => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    f.setPost(async () => {
+      f.run.status = "queued";
+      return new Response(null, { status });
+    });
+    const pending = f.device.action(api.githubRuns.control, {
+      key: "unchanged",
+      command: f.command,
+    });
+    await vi.waitFor(() =>
+      expect(f.fetch.mock.calls.filter(([url]) => url.endsWith("/actions/runs/5"))).toHaveLength(2),
+    );
+    await vi.advanceTimersByTimeAsync(5000);
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ state: "accepted", rerun: "requested", runAttempt: 1 });
+    expect(
+      await f.device.action(api.githubRuns.control, { key: "unchanged", command: f.command }),
+    ).toEqual(outcome);
+    expect(f.posts()).toHaveLength(1);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("rerun acceptance observes a newer attempt after backoff", async () => {
+  vi.useFakeTimers();
   const f = await fixture();
-  f.setPost(async () => {
-    f.run.status = "queued";
-    return new Response(null, { status: 202 });
+  f.setPost(async () => new Response(null, { status: 201 }));
+  const pending = f.device.action(api.githubRuns.control, {
+    key: "delayed-rerun",
+    command: f.command,
   });
-  expect(
-    await f.device.action(api.githubRuns.control, { key: "unchanged", command: f.command }),
-  ).toMatchObject({ state: "uncertain", code: "run_command_unconfirmed" });
+  await vi.waitFor(() =>
+    expect(f.fetch.mock.calls.filter(([url]) => url.endsWith("/actions/runs/5"))).toHaveLength(2),
+  );
+  await vi.advanceTimersByTimeAsync(1000);
+  f.run.run_attempt = 2;
+  f.run.status = "queued";
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(await pending).toMatchObject({ state: "accepted", rerun: "observed", runAttempt: 2 });
+  expect(f.posts()).toHaveLength(1);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a stalled post-acceptance read is aborted when the observation window ends", async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  f.run.status = "in_progress";
+  f.setPost(async () => new Response(null, { status: 202 }));
+  const original = f.fetch.getMockImplementation();
+  if (!original) throw new Error("Missing fetch");
+  let readSignal: AbortSignal | undefined;
+  f.fetch.mockImplementation((url, init) => {
+    if (url.endsWith("/actions/runs/5") && f.posts().length) {
+      readSignal = init?.signal ?? undefined;
+      if (!readSignal) throw new Error("Missing observation signal");
+      const signal = readSignal;
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
+    }
+    return original(url, init);
+  });
+  const pending = f.device.action(api.githubRuns.control, {
+    key: "stalled-read",
+    command: { ...f.command, type: "run.cancel" },
+  });
+  await vi.waitFor(() => expect(readSignal).toBeDefined());
+  await vi.advanceTimersByTimeAsync(20000);
+  expect(await pending).toMatchObject({ state: "accepted", cancellation: "requested" });
+  expect(readSignal?.aborted).toBe(true);
+  expect(f.posts()).toHaveLength(1);
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 test.each([200, 204])(
@@ -320,7 +443,8 @@ test.each([200, 204])(
   },
 );
 
-test("permission denial is coded and a successful POST followed by unreadable state is uncertain", async () => {
+test("permission denial is coded and an accepted POST stays requested despite unreadable state", async () => {
+  vi.useFakeTimers();
   const f = await fixture();
   f.setPost(async () =>
     Response.json({ message: "Resource not accessible by integration" }, { status: 403 }),
@@ -336,9 +460,11 @@ test("permission denial is coded and a successful POST followed by unreadable st
     f.run.repository.id = 99;
     return new Response(null, { status: 202 });
   });
-  expect(
-    await f.device.action(api.githubRuns.control, { key: "read-lost", command: f.command }),
-  ).toMatchObject({ state: "uncertain", code: "run_command_unconfirmed" });
+  const pending = f.device.action(api.githubRuns.control, { key: "read-lost", command: f.command });
+  await vi.waitFor(() => expect(f.posts()).toHaveLength(2));
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(await pending).toMatchObject({ state: "accepted", rerun: "requested" });
+  expect(vi.getTimerCount()).toBe(0);
 });
 
 test("binding access is rechecked immediately before POST", async () => {
@@ -530,5 +656,22 @@ test("revocation after POST leaves an unconfirmed receipt instead of claiming a 
   expect(await f.t.run((ctx) => ctx.db.query("runCommandReceipts").unique())).toMatchObject({
     state: "submitted",
   });
+  expect(f.posts()).toHaveLength(1);
+});
+
+test("202 cancellation acceptance does not depend on parsing the response body", async () => {
+  const f = await fixture();
+  f.run.status = "in_progress";
+  f.setPost(async () => {
+    f.run.status = "completed";
+    f.run.conclusion = "cancelled";
+    return new Response("Accepted", { status: 202 });
+  });
+  expect(
+    await f.device.action(api.githubRuns.control, {
+      key: "accepted-body",
+      command: { ...f.command, type: "run.cancel" },
+    }),
+  ).toMatchObject({ state: "accepted", cancellation: "observed" });
   expect(f.posts()).toHaveLength(1);
 });
