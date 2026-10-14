@@ -5,6 +5,7 @@ import {
   GitHubApprovalError,
   GitHubAdminError,
   GitHubInstallationError,
+  GitHubPermissionError,
 } from "../packages/github/src/app-client.js";
 
 export async function repositoryAccess(
@@ -17,7 +18,8 @@ export async function repositoryAccess(
     if (
       error instanceof GitHubApprovalError ||
       error instanceof GitHubAdminError ||
-      error instanceof GitHubInstallationError
+      error instanceof GitHubInstallationError ||
+      error instanceof GitHubPermissionError
     )
       throw new ConvexError({ code: error.code, message: error.message, nextStep: error.nextStep });
     throw error;

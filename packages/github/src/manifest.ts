@@ -23,7 +23,7 @@ export function appManifest(
     setup_on_update: true,
     default_permissions: {
       administration: "write",
-      actions: "read",
+      actions: "write",
       contents: "write",
       metadata: "read",
       pull_requests: "write",

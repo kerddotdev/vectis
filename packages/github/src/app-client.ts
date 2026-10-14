@@ -39,6 +39,15 @@ export class GitHubApiError extends Error {
     super(`GitHub API request failed (${status}).`);
   }
 }
+export class GitHubPermissionError extends GitHubApiError {
+  readonly code = "github_app_permission_required";
+  readonly nextStep =
+    "Approve the updated Vectis GitHub App permissions on GitHub (Settings -> Applications), then retry.";
+  constructor(status = 403) {
+    super(status);
+    this.message = "The Vectis GitHub App needs updated Actions write permission.";
+  }
+}
 export class GitHubAppClient {
   constructor(private readonly app: { appId: number; clientId: string; privateKey: string }) {}
   private jwt() {
@@ -48,7 +57,10 @@ export class GitHubAppClient {
     return `${data}.${sign("RSA-SHA256", Buffer.from(data), createPrivateKey(this.app.privateKey)).toString("base64url")}`;
   }
   async request(token: string, path: string, body?: unknown): Promise<unknown> {
-    return this.send(token, path, body === undefined ? "GET" : "POST", body);
+    return (await this.send(token, path, body === undefined ? "GET" : "POST", body)).body;
+  }
+  async post(token: string, path: string, body: unknown) {
+    return this.send(token, path, "POST", body);
   }
   async delete(token: string, path: string): Promise<void> {
     await this.send(token, path, "DELETE");
@@ -58,7 +70,7 @@ export class GitHubAppClient {
     path: string,
     method: "GET" | "POST" | "DELETE",
     body?: unknown,
-  ): Promise<unknown> {
+  ): Promise<{ status: number; body: unknown }> {
     if (!path.startsWith("/") || path.startsWith("//") || path.includes(".."))
       throw new Error("Invalid GitHub API path.");
     const response = await fetch(`https://api.github.com${path}`, {
@@ -73,13 +85,14 @@ export class GitHubAppClient {
       redirect: "error",
       signal: AbortSignal.timeout(15000),
     });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new GitHubApiError(response.status);
-    }
-    if (response.status === 204) return null;
+    if (response.status === 204) return { status: response.status, body: null };
     const reader = response.body?.getReader();
-    if (!reader) throw new Error("GitHub returned no response body.");
+    if (!reader) {
+      if (!response.ok) throw new GitHubApiError(response.status);
+      if (response.status === 202 || response.status === 201)
+        return { status: response.status, body: null };
+      throw new Error("GitHub returned no response body.");
+    }
     let size = 0;
     const chunks: Uint8Array[] = [];
     try {
@@ -96,7 +109,13 @@ export class GitHubAppClient {
     } finally {
       reader.releaseLock();
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const text = Buffer.concat(chunks).toString("utf8");
+    if (!response.ok) {
+      if (response.status === 403 && text.includes("Resource not accessible by integration"))
+        throw new GitHubPermissionError();
+      throw new GitHubApiError(response.status);
+    }
+    return { status: response.status, body: text ? JSON.parse(text) : null };
   }
   async repositoryToken(input: {
     owner: string;
@@ -104,7 +123,14 @@ export class GitHubAppClient {
     repositoryId?: number;
     githubUserId: number;
     githubLogin?: string;
-    purpose?: "runners" | "cleanup" | "jobs" | "migration-read" | "migration-write";
+    purpose?:
+      | "runners"
+      | "cleanup"
+      | "jobs"
+      | "migration-read"
+      | "migration-write"
+      | "actions-write";
+    actionsOperation?: "cancel";
   }) {
     if (
       !/^[A-Za-z0-9-]+$/.test(input.owner) ||
@@ -137,18 +163,28 @@ export class GitHubAppClient {
           ? { repositories: [input.repo] }
           : { repository_ids: [input.repositoryId] }),
         permissions:
-          input.purpose === "jobs"
-            ? { actions: "read", metadata: "read" }
-            : input.purpose === "migration-read"
-              ? { contents: "read", metadata: "read" }
-              : input.purpose === "migration-write"
-                ? {
-                    contents: "write",
-                    workflows: "write",
-                    pull_requests: "write",
-                    metadata: "read",
-                  }
-                : { administration: "write", metadata: "read" },
+          input.purpose === "actions-write"
+            ? { actions: "write", metadata: "read" }
+            : input.purpose === "jobs"
+              ? { actions: "read", metadata: "read" }
+              : input.purpose === "migration-read"
+                ? { contents: "read", metadata: "read" }
+                : input.purpose === "migration-write"
+                  ? {
+                      contents: "write",
+                      workflows: "write",
+                      pull_requests: "write",
+                      metadata: "read",
+                    }
+                  : { administration: "write", metadata: "read" },
+      }).catch((error: unknown) => {
+        if (
+          input.purpose === "actions-write" &&
+          error instanceof GitHubApiError &&
+          (error.status === 403 || error.status === 422)
+        )
+          throw new GitHubPermissionError(error.status);
+        throw error;
       }),
     );
     const repository = Schema.decodeUnknownSync(
@@ -178,10 +214,12 @@ export class GitHubAppClient {
       !repository.private &&
       (input.purpose === undefined ||
         input.purpose === "runners" ||
-        input.purpose === "migration-write")
+        input.purpose === "migration-write" ||
+        (input.purpose === "actions-write" && input.actionsOperation !== "cancel"))
     ) {
       let policyToken = token;
-      if (input.purpose === "migration-write") {
+      // Starting runs consumes host capacity; cancellation never needs the fork approval policy.
+      if (input.purpose === "migration-write" || input.purpose === "actions-write") {
         policyToken = Schema.decodeUnknownSync(AccessToken)(
           await this.request(jwt, `/app/installations/${installation.id}/access_tokens`, {
             repository_ids: [repository.id],
