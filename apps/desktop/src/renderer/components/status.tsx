@@ -8,6 +8,7 @@ import {
   ClockIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import { runnerStagePresentation, type RunnerStageKey } from "@/lib/runner-stage";
 import { cn } from "@/lib/utils";
 
 export const tones = {
@@ -39,6 +40,11 @@ export function StatusBadge({ tone, label }: { tone: Tone; label: string }) {
       {label}
     </span>
   );
+}
+
+export function RunnerStage({ stage }: { stage: RunnerStageKey }) {
+  const { tone, label } = runnerStagePresentation(stage);
+  return <StatusBadge tone={tone} label={label} />;
 }
 
 const operationStates = {
