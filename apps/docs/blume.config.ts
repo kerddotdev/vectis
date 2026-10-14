@@ -79,6 +79,7 @@ export default defineConfig({
           { label: "Your account", root: "guides/account" },
           { label: "Remote control", root: "guides/remote-control" },
           { label: "Agents", root: "guides/agents" },
+          { label: "Limits and boundaries", root: "guides/limits" },
           { label: "Troubleshooting", root: "guides/troubleshooting" },
         ],
       },

@@ -109,7 +109,7 @@ An environment is a prepared guest image. Its ID becomes the runner label.
 
 A job that stays queued usually has one of these causes. Check them in order:
 
-1. The machine is paused (`status`), offline (`cloud.state`), or busy with another VM or a preparation.
+1. The machine is paused (`status`), offline (`cloud.state`), or at its concurrent VM limit (`vectis machine configure --max-runners`, default 5, bounded by host CPU and 75% of memory), or busy with a preparation.
 2. Automatic runners are off for the repository, so nobody starts a runner.
 3. The workflow's `runs-on` labels do not match the connection's `runsOn` label.
 4. The environment is not ready, or it was removed.
