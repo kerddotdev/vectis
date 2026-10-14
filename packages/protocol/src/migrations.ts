@@ -1,5 +1,13 @@
 import { Schema } from "effect";
 
+export const MigrationJob = Schema.Struct({
+  job: Schema.String,
+  changed: Schema.Boolean,
+  reasons: Schema.Array(Schema.String),
+  needs: Schema.optional(Schema.Array(Schema.String)),
+});
+export type MigrationJob = typeof MigrationJob.Type;
+
 export const RepositoryMigration = Schema.Struct({
   baseBranch: Schema.NonEmptyString,
   baseCommit: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/)),
@@ -10,6 +18,7 @@ export const RepositoryMigration = Schema.Struct({
       before: Schema.String,
       after: Schema.String,
       changed: Schema.Boolean,
+      jobs: Schema.optional(Schema.Array(MigrationJob)),
       findings: Schema.Array(Schema.Struct({ job: Schema.String, reason: Schema.String })),
     }),
   ).check(Schema.isMaxLength(100)),
