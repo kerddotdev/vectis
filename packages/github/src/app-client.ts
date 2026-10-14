@@ -9,11 +9,20 @@ const Installation = Schema.Struct({
 });
 const AccessToken = Schema.Struct({ token: Schema.NonEmptyString });
 export class GitHubApprovalError extends Error {
-  readonly code = "public_runner_approval_required";
-  readonly nextStep =
-    "In GitHub repository Settings > Actions > General, require approval for all external contributors, then retry. Vectis never approves runs automatically.";
-  constructor() {
-    super("Public runner admission requires approval for every external contributor.");
+  readonly code;
+  readonly nextStep;
+  constructor(privateRepository = false) {
+    super(
+      privateRepository
+        ? "Private runner admission requires disabled fork workflows or approval for every fork run."
+        : "Public runner admission requires approval for every external contributor.",
+    );
+    this.code = privateRepository
+      ? "private_runner_approval_required"
+      : "public_runner_approval_required";
+    this.nextStep = privateRepository
+      ? "In GitHub repository Settings > Actions > General, disable fork pull request workflows or require approval for fork pull request workflows, then retry. Vectis never approves runs automatically."
+      : "In GitHub repository Settings > Actions > General, require approval for all external contributors, then retry. Vectis never approves runs automatically.";
   }
 }
 export class GitHubAdminError extends Error {
@@ -175,10 +184,9 @@ export class GitHubAppClient {
         throw new GitHubAdminError();
     }
     if (
-      !repository.private &&
-      (input.purpose === undefined ||
-        input.purpose === "runners" ||
-        input.purpose === "migration-write")
+      input.purpose === undefined ||
+      input.purpose === "runners" ||
+      input.purpose === "migration-write"
     ) {
       let policyToken = token;
       if (input.purpose === "migration-write") {
@@ -189,10 +197,32 @@ export class GitHubAppClient {
           }),
         ).token;
       }
-      const policy = Schema.decodeUnknownSync(Schema.Struct({ approval_policy: Schema.String }))(
-        await this.request(policyToken, `${path}/actions/permissions/fork-pr-contributor-approval`),
-      );
-      if (policy.approval_policy !== "all_external_contributors") throw new GitHubApprovalError();
+      if (repository.private) {
+        const policy = Schema.decodeUnknownSync(
+          Schema.Struct({
+            run_workflows_from_fork_pull_requests: Schema.Boolean,
+            require_approval_for_fork_pr_workflows: Schema.Boolean,
+          }),
+        )(
+          await this.request(
+            policyToken,
+            `${path}/actions/permissions/fork-pr-workflows-private-repos`,
+          ),
+        );
+        if (
+          policy.run_workflows_from_fork_pull_requests &&
+          !policy.require_approval_for_fork_pr_workflows
+        )
+          throw new GitHubApprovalError(true);
+      } else {
+        const policy = Schema.decodeUnknownSync(Schema.Struct({ approval_policy: Schema.String }))(
+          await this.request(
+            policyToken,
+            `${path}/actions/permissions/fork-pr-contributor-approval`,
+          ),
+        );
+        if (policy.approval_policy !== "all_external_contributors") throw new GitHubApprovalError();
+      }
     }
     return { token, path, installationId: installation.id, repositoryId: repository.id };
   }
