@@ -9,7 +9,6 @@ import { Mono, Notice } from "@/components/layout";
 import { StatusBadge } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { addedVectisLabels } from "@/lib/job-graph";
 import { diffLines } from "@/lib/line-diff";
 import { useStateApi } from "@/state";
 import { MigrationDiff } from "@/views/migration-diff";
@@ -78,7 +77,6 @@ function MigrationFileDetails({ file }: { file: MigrationAnalysis["files"][numbe
     () => (file.changed ? diffLines(file.before, file.after) : undefined),
     [file.changed, file.before, file.after],
   );
-  const labels = useMemo(() => diff && addedVectisLabels(diff), [diff]);
   return (
     <div className="flex flex-col gap-5 px-3 pt-1 pb-3">
       {!file.changed && file.findings.length === 0 && (
@@ -87,7 +85,7 @@ function MigrationFileDetails({ file }: { file: MigrationAnalysis["files"][numbe
         </p>
       )}
       {file.jobs && file.jobs.length > 0 ? (
-        <MigrationJobs jobs={file.jobs} labels={labels} />
+        <MigrationJobs jobs={file.jobs} />
       ) : (
         file.findings.map((finding, index) => (
           <p key={index} className="text-muted-foreground">

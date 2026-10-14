@@ -1,6 +1,5 @@
 import { expect, test } from "vitest";
-import { addedVectisLabels, jobLevels, layoutJobGraph } from "./job-graph";
-import { diffLines } from "./line-diff";
+import { jobLevels, layoutJobGraph } from "./job-graph";
 
 const metrics = { nodeWidth: 100, nodeHeight: 40, columnGap: 20, rowGap: 10 };
 
@@ -39,28 +38,4 @@ test("ignores unknown, self, and cyclic needs without dropping jobs", () => {
   expect(layout.nodes.map((node) => node.job.job).sort()).toEqual(["a", "b", "c"]);
   expect(layout.edges.every((edge) => edge.from !== edge.to)).toBe(true);
   expect(layoutJobGraph([], metrics)).toMatchObject({ nodes: [], edges: [], width: 0, height: 0 });
-});
-
-test("attributes added Vectis labels to the job that contains them", () => {
-  const before = [
-    "on: push",
-    "jobs:",
-    "  build:",
-    "    runs-on: ubuntu-24.04",
-    '  "test suite":',
-    "    strategy:",
-    "      matrix:",
-    "        os: [ubuntu-24.04, macos-15]",
-    "    runs-on: ${{ matrix.os }}",
-    "  docs:",
-    "    runs-on: ubuntu-24.04 # vectis-not-a-target",
-  ].join("\n");
-  const after = before
-    .replace("runs-on: ubuntu-24.04\n", "runs-on: vectis-ubuntu\n")
-    .replace("[ubuntu-24.04, macos-15]", "[vectis-ubuntu, vectis-macos]");
-  const labels = addedVectisLabels(diffLines(before, after) ?? []);
-  expect(Object.fromEntries(labels)).toEqual({
-    build: ["vectis-ubuntu"],
-    "test suite": ["vectis-ubuntu", "vectis-macos"],
-  });
 });

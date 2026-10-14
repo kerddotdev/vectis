@@ -112,7 +112,14 @@ export function previewMigration(
     const name = isScalar(entry.key) ? String(entry.key.value) : "unknown";
     const reasons: string[] = [];
     const needs = isMap(entry.value) ? staticNeeds(entry.value.get("needs", true)) : undefined;
-    const summary = { job: name, changed: false, reasons, ...(needs ? { needs } : {}) };
+    const jobTargets: string[] = [];
+    const summary = {
+      job: name,
+      changed: false,
+      reasons,
+      targets: jobTargets,
+      ...(needs ? { needs } : {}),
+    };
     summaries.push(summary);
     const finding = (reason: string) => {
       findings.push({ job: name, reason });
@@ -126,6 +133,7 @@ export function previewMigration(
         return;
       }
       replacements.push(replacement);
+      if (!jobTargets.includes(target)) jobTargets.push(target);
       summary.changed = true;
     };
     if (!isMap(entry.value)) {

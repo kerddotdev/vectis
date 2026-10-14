@@ -5,13 +5,7 @@ import { layoutJobGraph, type GraphNode } from "@/lib/job-graph";
 
 const metrics = { nodeWidth: 216, nodeHeight: 84, columnGap: 40, rowGap: 12 };
 
-export function MigrationJobs({
-  jobs,
-  labels,
-}: {
-  jobs: readonly MigrationJob[];
-  labels: ReadonlyMap<string, readonly string[]> | undefined;
-}) {
+export function MigrationJobs({ jobs }: { jobs: readonly MigrationJob[] }) {
   const layout = layoutJobGraph(jobs, metrics);
   const moving = jobs.filter((job) => job.changed).length;
   const unknownNeeds = jobs.filter((job) => job.needs === undefined).length;
@@ -47,7 +41,7 @@ export function MigrationJobs({
           </svg>
           <ul aria-label="Workflow jobs" className="absolute inset-0">
             {layout.nodes.map((node) => (
-              <JobNode key={node.job.job} node={node} labels={labels?.get(node.job.job)} />
+              <JobNode key={node.job.job} node={node} />
             ))}
           </ul>
         </div>
@@ -56,16 +50,11 @@ export function MigrationJobs({
   );
 }
 
-function JobNode({
-  node,
-  labels,
-}: {
-  node: GraphNode<MigrationJob>;
-  labels: readonly string[] | undefined;
-}) {
-  const { job, changed, reasons, needs } = node.job;
+function JobNode({ node }: { node: GraphNode<MigrationJob> }) {
+  const { job, changed, reasons, needs, targets } = node.job;
+  const hasTargets = changed && targets !== undefined && targets.length > 0;
   const details = [
-    ...(changed && labels ? [`Runs on ${labels.join(", ")}`] : []),
+    ...(hasTargets ? [`Runs on ${targets.join(", ")}`] : []),
     ...(changed || reasons.length > 0 ? reasons : ["No runner label to replace."]),
   ];
   const body = (
@@ -81,9 +70,9 @@ function JobNode({
           <StatusText tone="idle" label="Not moved" />
         )}
       </span>
-      {changed && labels ? (
+      {hasTargets ? (
         <span className="truncate font-mono text-[11px] text-muted-foreground">
-          {labels.join(", ")}
+          {targets.join(", ")}
         </span>
       ) : (
         details.length > 0 && (

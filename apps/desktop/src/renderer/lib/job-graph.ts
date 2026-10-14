@@ -1,5 +1,3 @@
-import type { DiffLine } from "./line-diff";
-
 export interface GraphJob {
   readonly job: string;
   readonly needs?: readonly string[] | undefined;
@@ -99,41 +97,4 @@ export function layoutJobGraph<Job extends GraphJob>(
     ),
     height: Math.max(0, rows * (metrics.nodeHeight + metrics.rowGap) - metrics.rowGap),
   };
-}
-
-const vectisLabel = /\bvectis-[a-z0-9][a-z0-9-]*/g;
-const jobKey = /^(\s+)(?:"([^"]+)"|'([^']+)'|([^\s"'#:][^:#]*?))\s*:(?:\s|$)/;
-
-function indentation(line: string): number | undefined {
-  const trimmed = line.trimStart();
-  if (trimmed === "" || trimmed.startsWith("#")) return undefined;
-  return line.length - trimmed.length;
-}
-
-export function addedVectisLabels(diff: readonly DiffLine[]): Map<string, string[]> {
-  const labels = new Map<string, string[]>();
-  let inJobs = false;
-  let jobIndent: number | undefined;
-  let current: string | undefined;
-  for (const line of diff) {
-    if (line.kind === "remove") continue;
-    const indent = indentation(line.text);
-    if (indent === 0) {
-      inJobs = /^jobs\s*:\s*(?:#.*)?$/.test(line.text);
-      jobIndent = undefined;
-      current = undefined;
-    } else if (inJobs && indent !== undefined) {
-      jobIndent ??= indent;
-      if (indent === jobIndent) {
-        const match = jobKey.exec(line.text);
-        current = match ? (match[2] ?? match[3] ?? match[4]) : undefined;
-      }
-    }
-    if (line.kind !== "add" || !current) continue;
-    const found = labels.get(current) ?? [];
-    for (const [label] of line.text.matchAll(vectisLabel))
-      if (!found.includes(label)) found.push(label);
-    if (found.length > 0) labels.set(current, found);
-  }
-  return labels;
 }
