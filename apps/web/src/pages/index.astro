@@ -64,6 +64,10 @@ const promises = [
     "Guests start empty.",
     "No host folders, no Docker socket, no host credentials. Guest SSH host keys are pinned.",
   ],
+  [
+    "You choose who can run.",
+    "Limit each repository to named GitHub users and optionally approve every job. After GitHub assigns a job, a hook inside the VM checks it again and stops the runner if it does not match.",
+  ],
 ];
 const phaseLog = phases
   .map(
@@ -210,6 +214,18 @@ jobs:
             <dt class="font-medium">MCP server</dt>
             <dd class="text-muted">
               Tools for every capability, from <code>vectis_status</code> to <code>vectis_command</code>, <code>vectis_wait</code> and <code>vectis_logs</code>.
+            </dd>
+          </div>
+          <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
+            <dt class="font-medium">Job logs</dt>
+            <dd class="text-muted">
+              <code>vectis_job_logs</code> pages through a GitHub job's log with a cursor.
+            </dd>
+          </div>
+          <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
+            <dt class="font-medium">Readiness</dt>
+            <dd class="text-muted">
+              <code>vectis_readiness</code> lists what a repository still needs, with a code and the next step.
             </dd>
           </div>
           <div class="grid gap-1 sm:grid-cols-[9rem_1fr]">
