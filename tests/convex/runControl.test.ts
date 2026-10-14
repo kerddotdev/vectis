@@ -94,6 +94,11 @@ async function fixture() {
         suspended_at: null,
       });
     if (url.endsWith("/access_tokens")) return Response.json({ token: "test-actions-token" });
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: true,
+      });
     if (url === "https://api.github.com/repos/owner/sandbox")
       return Response.json({ id: 2, private: true, owner: { id: 7 } });
     if (init?.method === "POST") {
@@ -504,7 +509,14 @@ test("remote replay after a lost local response and lost local database still PO
     refreshJob: async () => {
       throw new Error("unused");
     },
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
+    jobLogs: async () => {
+      throw new Error("unused");
+    },
+    setAccess: async () => {},
     prepareRunner: async () => ({ state: "released" as const, id: "unused" }),
     releaseRunner: async () => {},
   };

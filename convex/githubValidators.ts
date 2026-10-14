@@ -6,9 +6,22 @@ export const verifiedUser = v.object({
   installations: v.array(installation),
 });
 
+export const repositoryAccess = v.object({
+  actors: v.union(v.literal("any"), v.object({ ids: v.array(v.number()) })),
+  approval: v.union(v.literal("automatic"), v.literal("required")),
+});
+export const runnerAccess = v.object({
+  repositoryId: v.number(),
+  ...repositoryAccess.fields,
+  approvedRun: v.optional(v.object({ runId: v.number(), runAttempt: v.number() })),
+});
+
 export const githubJob = v.object({
   id: v.number(),
   run_id: v.number(),
+  run_attempt: v.optional(v.number()),
+  actor_id: v.optional(v.number()),
+  triggering_actor_id: v.optional(v.number()),
   name: v.string(),
   html_url: v.optional(v.string()),
   workflow_name: v.optional(v.union(v.string(), v.null())),

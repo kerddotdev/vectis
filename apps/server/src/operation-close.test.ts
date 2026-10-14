@@ -21,6 +21,7 @@ async function fixture() {
   const broker = {
     connectRepository: vi.fn(async () => "binding"),
     disconnectRepository: async () => {},
+    setAccess: async () => {},
     setAutomatic: vi.fn(async () => {}),
     analyzeMigration: vi.fn(async () => {
       throw new Error("unused");
@@ -28,6 +29,9 @@ async function fixture() {
     publishMigration: vi.fn(async () => {
       throw new Error("unused");
     }),
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     controlRun: async () => {
       throw new Error("unused");
@@ -43,8 +47,11 @@ async function fixture() {
       status: "completed" as const,
       conclusion: "success",
     })),
-    findRunner: vi.fn(async () => null),
+    reconcileRunner: vi.fn(async () => {
+      throw new Error("unused");
+    }),
     prepareRunner: vi.fn(),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: vi.fn(async () => {}),
     repositories: async () => [],
   };
@@ -129,6 +136,46 @@ test("a refused repository connection fails with its cause instead of waiting fo
     store.close();
   }
 });
+test.each(["public_runner_approval_required", "private_runner_approval_required"])(
+  "%s refuses repository connection with setup guidance",
+  async (code) => {
+    const { store, service, broker, status } = await fixture();
+    try {
+      store.put("environment", "test", {
+        id: "test",
+        name: "Test",
+        os: "linux",
+        basePath: "/unused",
+        cpu: 2,
+        memoryMiB: 2048,
+        state: "ready",
+      });
+      broker.connectRepository.mockRejectedValue(
+        new VectisError(
+          code,
+          "Approval is required.",
+          "Update the repository's fork approval setting.",
+        ),
+      );
+      const operation = service.submit("policy", {
+        type: "repository.connect",
+        accountId: "account",
+        repositoryName: "repo",
+        environmentId: "test",
+      });
+      await service.drain();
+      await vi.waitFor(() =>
+        expect(status(operation.id)).toMatchObject({
+          status: "failed",
+          result: { code, nextStep: "Update the repository's fork approval setting." },
+        }),
+      );
+    } finally {
+      await service.close();
+      store.close();
+    }
+  },
+);
 
 test("activity cancellation preserves setup ownership and runner reconciliation, but closes a waiting connection", async () => {
   const { store, service, status } = await fixture();
@@ -173,6 +220,76 @@ test("activity cancellation preserves setup ownership and runner reconciliation,
     });
     await service.drain();
     expect(status(closedAgain.id)?.result).toMatchObject({ code: "operation_not_cancellable" });
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
+
+test("an uncertain repository connection outcome stays unconfirmed in activity results", async () => {
+  const { store, service, broker, status } = await fixture();
+  try {
+    store.put("environment", "test", {
+      id: "test",
+      name: "Test",
+      os: "linux",
+      basePath: "/unused",
+      cpu: 1,
+      memoryMiB: 512,
+      state: "ready",
+    });
+    broker.connectRepository.mockRejectedValue(new Error("Response lost after submission."));
+    const operation = service.submit("connect-unknown", {
+      type: "repository.connect",
+      accountId: "account",
+      repositoryName: "repo",
+      environmentId: "test",
+    });
+    await service.drain();
+    await vi.waitFor(() => expect(status(operation.id)?.status).toBe("failed"));
+    expect(status(operation.id)).toMatchObject({
+      message: "Repository connection could not be confirmed.",
+      result: {
+        code: "repository_connection_unconfirmed",
+        nextStep: expect.stringContaining("List repository connections"),
+      },
+    });
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
+
+test("repository connect distinguishes an absent environment from incomplete preparation before cloud submission", async () => {
+  const { store, service, broker, status } = await fixture();
+  try {
+    store.put("environment", "setup", {
+      id: "setup",
+      name: "Setup",
+      os: "linux",
+      basePath: "/unused",
+      cpu: 1,
+      memoryMiB: 512,
+      state: "action_required",
+    });
+    for (const [environmentId, code] of [
+      ["missing", "environment_unavailable"],
+      ["setup", "setup_required"],
+    ]) {
+      if (!environmentId) throw new Error("Missing test environment ID.");
+      const operation = service.submit(`connect:${environmentId}`, {
+        type: "repository.connect",
+        accountId: "account",
+        repositoryName: "repo",
+        environmentId,
+      });
+      await service.drain();
+      expect(status(operation.id)).toMatchObject({
+        status: code === "setup_required" ? "action_required" : "failed",
+        result: { code, nextStep: expect.stringContaining("preparation") },
+      });
+    }
+    expect(broker.connectRepository).not.toHaveBeenCalled();
   } finally {
     await service.close();
     store.close();

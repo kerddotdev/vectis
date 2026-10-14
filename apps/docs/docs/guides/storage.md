@@ -29,6 +29,8 @@ vectis environment start ubuntu --wait --json
 
 The original base image is preserved. The instance receives its own working disk and directory. Stopping an owned instance removes its disposable working directory, preserving the selected parent directory and base image.
 
+For Linux runner access, use an image from [Linux preparation](/docs/guides/linux-setup). Its registration includes `sshUser`, `sshKeyPath` and `sshHostKeyMode: "instance"`. Custom Linux images must install the SSH identity from Vectis instance setup media before starting SSH; a shared image host key is not accepted.
+
 ## Change defaults or one VM
 
 Change defaults for future instances:

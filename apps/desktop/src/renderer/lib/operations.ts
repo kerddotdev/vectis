@@ -55,6 +55,7 @@ export const commandLabels: Record<string, string> = {
   "run.rerun-failed": "Rerun failed GitHub jobs",
   "run.cancel": "Cancel GitHub run",
   "workflow.dispatch": "Dispatch GitHub workflow",
+  "repository.access": "Change repository access",
   "job.refresh": "Recover GitHub job",
   "job.scan": "Discover missing jobs",
   "migration.analyze": "Analyze workflow migration",
@@ -68,6 +69,7 @@ export const commandLabels: Record<string, string> = {
 // A setting is confirmed after it happened, so its message is what changed, not what was asked.
 export const settingLabels: Record<string, string> = {
   "repository.automatic": "Automatic runners updated",
+  "repository.access": "Repository access updated",
   "environment.configure": "Environment updated",
   "environment.register": "Environment registered",
   "environment.remove": "Environment removed",

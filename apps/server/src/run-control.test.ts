@@ -32,7 +32,14 @@ async function fixture(controlRun: RunControlBroker["controlRun"]) {
     connectRepository: async () => "unused",
     disconnectRepository: async () => {},
     setAutomatic: async () => {},
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
+    jobLogs: async () => {
+      throw new Error("unused");
+    },
+    setAccess: async () => {},
     prepareRunner: async () => ({ state: "released", id: "unused" }),
     releaseRunner: async () => {},
   }));

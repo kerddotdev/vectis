@@ -31,7 +31,9 @@ vectis runner run <binding-id> --key <any-unique-key> --json
 vectis runner run <binding-id> --job-id <github-job-id> --json   # only if that job is still queued
 ```
 
-A manual runner waits up to six hours for a job.
+A manual runner without a job ID waits up to six hours for a job.
+
+A runner requested for a specific job is drained after 10 minutes of inactivity if that job no longer needs queued capacity. Vectis stops the VM and releases the runner lease, reporting the operation as `cancelled` with result code `runner_idle`; busy runners and runners whose jobs still need queued capacity keep listening.
 
 ## Read job results
 
@@ -72,6 +74,21 @@ GitHub has no idempotency keys for these requests. Vectis saves a cloud receipt 
 
 Only an ambiguous POST response (such as a network error, 5xx response or missing status) leaves rerun or cancellation `action_required` with `run_command_unconfirmed`. Check the run on GitHub before submitting a new key; never blindly retry. Cancelling the Vectis operation stops waiting and can leave the GitHub outcome unconfirmed.
 
+## Read a job's log
+
+Read a failed job directly through Vectis, using its GitHub job ID and repository binding:
+
+```sh
+vectis job logs <job-id> --binding <binding-id>
+vectis job logs <job-id> --binding <binding-id> --follow
+```
+
+The first command prints the retained log. `--follow` starts polling every 2 seconds, doubles the interval after empty chunks up to 30 seconds, and resets it to 2 seconds when text arrives. It stops when the job has completed and its available log has been read. Stop following with Ctrl-C. GitHub may only publish logs after the job finishes. Add `--machine <machine-id>` for a remote host; `--json` prints one response per chunk.
+
+Agents can use MCP `vectis_job_logs` with `{bindingId, jobId, after?}`. Pass the returned `next` as `after` to read the next chunk. Both cursors are absolute, nonnegative integer byte offsets in GitHub's UTF-8 log. The response includes `text`, `next`, the observed job `status`, `complete` and `truncated`. `complete` is true only when the job is completed and the cursor reaches the end. `truncated` means earlier unread bytes fell outside the retained window and were skipped.
+
+Logs are fetched from GitHub on demand without storing log archives. Remote reads use temporary inspection responses that expire after 60 seconds. Vectis reads within the last 4 MiB, uses UTF-8 safe chunks of at most 32 KiB, and preserves GitHub's masking. Downloads request one chunk at a time with bounded HTTP Range requests when supported; otherwise they stream the file with a 64 MiB download limit and retain only its tail. GitHub access, expired logs or the download limit can prevent a read.
+
 ## Cancel
 
 Cancel a runner from its operation in **Overview**, or:
@@ -97,9 +114,13 @@ An unreachable guest is reported as such, with SSH's reason (timeout, no route, 
 
 If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Vectis never guesses: it cleans up only after it has evidence that the VM process exited.
 
+If deleting an owned VM's files fails after its process exits, Vectis retains an exit receipt so reconciliation can retry the file cleanup.
+
 ```sh
 vectis instance reconcile <instance-id> --wait
 vectis runner reconcile <operation-id> --wait
 ```
 
 The app offers the same actions as **Reconcile** in **Overview**. Until an interrupted VM is reconciled, the Mac starts no new VMs and offers no runner slots. Do not start new runners to work around an unresolved one.
+
+Runner reconciliation also works when registration stopped before creating a cloud lease. After confirming VM cleanup, Vectis records the request as released in the cloud so a delayed registration cannot create a duplicate runner. If the cloud cannot confirm this, the operation stays unresolved.

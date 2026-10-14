@@ -1,3 +1,4 @@
+import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -22,6 +23,7 @@ import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import type { VectisClient } from "../../../packages/client/src/index.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
 import { cloudDeployment } from "../../../packages/client/src/deployment.js";
+import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { LogRequest } from "../../../packages/protocol/src/logs.js";
 
 const commandSchema = Schema.toJsonSchemaDocument(Request);
@@ -29,6 +31,8 @@ const waitInput = Schema.Struct({ id: Identifier, timeoutMs: Schema.optional(Sch
 const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
 const jobInput = Schema.Struct({ bindingId: Identifier });
+const readinessSchema = Schema.toJsonSchemaDocument(RepositoryReadinessInput);
+const jobLogSchema = Schema.toJsonSchemaDocument(JobLogRequest);
 const jobSchema = Schema.toJsonSchemaDocument(jobInput);
 const operationInput = Schema.Struct({ id: Identifier });
 const operationSchema = Schema.toJsonSchemaDocument(operationInput);
@@ -59,10 +63,24 @@ const tools = [
     annotations: { readOnlyHint: true },
   },
   {
+    name: "vectis_job_logs",
+    description:
+      "Read a GitHub job log on demand in UTF-8 chunks from its last 4 MiB. Pass next back as after (an absolute byte offset) to continue. Poll until complete; running jobs may not have logs yet. truncated means earlier content was skipped. GitHub masking is preserved.",
+    inputSchema: { ...jobLogSchema.schema, $defs: jobLogSchema.definitions },
+    annotations: { readOnlyHint: true },
+  },
+  {
     name: "vectis_repositories",
     description:
       "List repositories connected to this machine and their environment IDs. Requires cloud pairing and current account authorization.",
     inputSchema: emptyInput,
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "vectis_readiness",
+    description:
+      "Check repository readiness before connecting a repository or when jobs stay queued. Returns each prerequisite with its status, code, next step and symbolic fix target.",
+    inputSchema: { type: "object", ...readinessSchema.schema, $defs: readinessSchema.definitions },
     annotations: { readOnlyHint: true },
   },
   {
@@ -168,8 +186,10 @@ export function createMcpServer(
       | "storage"
       | "doctor"
       | "repositories"
+      | "repositoryReadiness"
       | "githubAccounts"
       | "jobs"
+      | "jobLogs"
       | "submit"
       | "wait"
       | "shutdown"
@@ -279,12 +299,26 @@ export function createMcpServer(
           result = await (await connect()).jobs(input.bindingId);
           break;
         }
+        case "vectis_job_logs": {
+          const input = Schema.decodeUnknownSync(JobLogRequest, { onExcessProperty: "error" })(
+            request.params.arguments,
+          );
+          result = await (await connect()).jobLogs(input);
+          break;
+        }
         case "vectis_github_accounts":
           result = await (await connect()).githubAccounts();
           break;
         case "vectis_repositories":
           result = await (await connect()).repositories();
           break;
+        case "vectis_readiness": {
+          const input = Schema.decodeUnknownSync(RepositoryReadinessInput, {
+            onExcessProperty: "error",
+          })(request.params.arguments);
+          result = await (await connect()).repositoryReadiness(input);
+          break;
+        }
         case "vectis_doctor":
           result = await (await connect()).doctor();
           break;

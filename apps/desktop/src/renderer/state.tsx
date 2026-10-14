@@ -1,3 +1,4 @@
+import { JobLogRequest, JobLogs } from "../../../../packages/protocol/src/jobs.js";
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Schema } from "effect";
 import {
@@ -26,11 +27,16 @@ export async function request(action: DesktopAction, input?: unknown, machineId?
     throw new RequestError(reply.error.code, `${reply.error.message} ${reply.error.nextStep}`);
   return reply.data;
 }
+export async function readJobLogs(input: JobLogRequest, machineId?: string) {
+  return Schema.decodeUnknownSync(JobLogs)(await request("job.logs", input, machineId));
+}
 // Reads never change anything, so they never need the views to look again.
 const reads: ReadonlySet<DesktopAction> = new Set([
   "status",
   "jobs",
+  "job.logs",
   "repositories",
+  "repository.readiness",
   "github.accounts",
   "doctor",
   "storage",

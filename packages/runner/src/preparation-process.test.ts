@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, writeFile, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
@@ -119,5 +119,38 @@ test("failure to persist a setup event closes its owned process", () =>
         ),
       ).rejects.toMatchObject({ code: "guest_preparation_failed" });
       expect(await preparationStopped(directory, "failed-network")).toBe(true);
+    },
+  ));
+
+test("preparation logs redact credentials split across stdout and stderr chunks", () =>
+  fixture(
+    'process.stdout.write("token=PreparationStdoutCanary123456789\\n");process.stderr.write("Authorization: Bearer Preparation");setTimeout(()=>process.stderr.write("StderrCanary123456789\\nVECTIS_READY\\n"),10);',
+    async (helper, directory) => {
+      await runPreparationGuest(
+        { helper, directory, id: "setup", cpu: 2, memoryMiB: 2048, marker: "VECTIS_READY" },
+        new AbortController().signal,
+      );
+      const log = await readFile(join(directory, "preparation.log"), "utf8");
+      expect(log).toContain("token=[redacted]");
+      expect(log).toContain("Authorization: Bearer [redacted]");
+      expect(log).not.toContain("PreparationStdoutCanary123456789");
+      expect(log).not.toContain("PreparationStderrCanary123456789");
+      expect(log).toContain("VECTIS_READY");
+    },
+  ));
+
+test("bounded preparation output discards credential fragments without their identifying prefix", () =>
+  fixture(
+    'process.stdout.write("token="+"StdoutCanary123456789".repeat(5000)+"\\nrunner-name\\n");process.stderr.write("Authorization: Bearer "+"StderrCanary123456789".repeat(5000)+"\\nVECTIS_READY\\n");',
+    async (helper, directory) => {
+      await runPreparationGuest(
+        { helper, directory, id: "setup", cpu: 2, memoryMiB: 2048, marker: "VECTIS_READY" },
+        new AbortController().signal,
+      );
+      const log = await readFile(join(directory, "preparation.log"), "utf8");
+      expect(log).not.toContain("StdoutCanary");
+      expect(log).not.toContain("StderrCanary");
+      expect(log).toContain("runner-name");
+      expect(log).toContain("VECTIS_READY");
     },
   ));

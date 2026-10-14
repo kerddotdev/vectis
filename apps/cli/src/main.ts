@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { parseArgs } from "node:util";
 import { readFile, mkdir, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -51,11 +54,16 @@ async function main() {
       "non-interactive": { type: "boolean" },
       timeout: { type: "string" },
       cpu: { type: "string" },
+      x64: { type: "string" },
+      egress: { type: "string" },
       "max-runners": { type: "string" },
       "job-id": { type: "string" },
       ref: { type: "string" },
       input: { type: "string", multiple: true },
+      actors: { type: "string" },
+      approval: { type: "string" },
       account: { type: "string" },
+      binding: { type: "string" },
       owner: { type: "string" },
       name: { type: "string" },
       "disk-gib": { type: "string" },
@@ -72,6 +80,7 @@ async function main() {
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
       map: { type: "string", multiple: true },
+      follow: { type: "boolean" },
       lines: { type: "string" },
       limit: { type: "string" },
       kind: { type: "string" },
@@ -138,6 +147,8 @@ Cloud and GitHub
   machine configure --max-runners <N>  Set concurrent runner limit (1-16, default 5)
 
 Repositories and jobs
+  repository readiness <owner/name> [--environment <id>]  Check readiness before connecting
+  repository readiness --binding <id>                     Check an existing binding
   repository list               List repositories connected to this machine, with their runs-on label
   repository connect <name>     Connect with --account <id> and --environment <id>, optional --owner <org>
   repository enable-auto <id>   Start runners automatically for matching queued jobs
@@ -145,7 +156,10 @@ Repositories and jobs
   repository disconnect <id>    Stop future runners without interrupting running jobs
   runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
   runner reconcile <operation-id>  Clean up an interrupted runner after verifying its VM stopped
+  repository access <binding-id> --actors any|<id,id,...> --approval automatic|required
+                               Actor IDs are numeric GitHub user IDs: gh api users/<login> --jq .id
   job list <binding-id>         Read recent GitHub job states for a connected repository
+  job logs <job-id> --binding <id> [--follow]  Read the retained log; follow backs off from 2 to 30 seconds when empty
   job scan <binding-id>         Discover missing jobs through the GitHub API
   job refresh <binding-id> <job-id>  Recover one job state directly from GitHub
 
@@ -175,7 +189,8 @@ Environments
   environment install-windows <id>  Experimental: install Windows 11 from your ISO, drivers and firmware
   environment resume-windows <setup-id>  Continue an interrupted Windows installation
   environment register --file <path>  Register an existing prepared environment JSON file
-  environment configure <id>    Set default --cpu, --memory-mib or --storage-path for future VMs
+  environment list              List environments and effective network egress
+  environment configure <id>    Set --cpu, --memory-mib, --storage-path, --x64 rosetta|off or --egress internet_only|open for future VMs
   environment start <id>        Start a clean VM, optionally overriding --cpu, --memory-mib, --storage-path
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>            Stop a VM owned by this service
@@ -242,6 +257,11 @@ Documentation: https://vectis.kerd.dev/docs
 `);
     return;
   }
+  if (values.egress !== undefined && !(command === "environment" && subcommand === "configure"))
+    throw new VectisError(
+      "invalid_arguments",
+      "--egress is supported only by environment configure.",
+    );
   if (values.machine && ["service", "cloud", "login", "logout", "machine"].includes(command))
     throw new VectisError("invalid_target", "This command does not accept --machine.");
   if (
@@ -465,6 +485,63 @@ Documentation: https://vectis.kerd.dev/docs
     output(await api.jobs(id));
     return;
   }
+  if (command === "repository" && subcommand === "readiness") {
+    if ((values.binding && (id || values.environment)) || (!values.binding && !id))
+      throw new VectisError(
+        "invalid_arguments",
+        "Use repository readiness <owner/name> [--environment <id>] or repository readiness --binding <id>.",
+      );
+    const input = Schema.decodeUnknownSync(RepositoryReadinessInput)(
+      values.binding
+        ? { bindingId: values.binding }
+        : {
+            repositoryName: id,
+            ...(values.environment ? { environmentId: values.environment } : {}),
+          },
+    );
+    output(await api.repositoryReadiness(input));
+    return;
+  }
+  if (command === "job" && subcommand === "logs") {
+    const input = { bindingId: values.binding, jobId: Number(id) };
+    if (!Schema.is(JobLogRequest)(input))
+      throw new VectisError(
+        "invalid_argument",
+        "Use job logs <job-id> --binding <binding-id> with a positive whole job ID.",
+      );
+    const abort = new AbortController();
+    const stop = () => abort.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    let after: number | undefined;
+    let pollDelay = 2000;
+    try {
+      while (!abort.signal.aborted) {
+        const log = await api.jobLogs(
+          { ...input, ...(after === undefined ? {} : { after }) },
+          abort.signal,
+        );
+        if (values.json) output(log);
+        else process.stdout.write(log.text);
+        if (log.truncated)
+          process.stderr.write("Earlier job log content was skipped (4 MiB retained window).\n");
+        after = log.next;
+        if (log.complete) break;
+        if (!log.text && !values.follow) break;
+        if (values.follow) {
+          if (log.text) pollDelay = 2000;
+          await delay(pollDelay, undefined, { signal: abort.signal });
+          if (!log.text) pollDelay = Math.min(pollDelay * 2, 30000);
+        }
+      }
+    } catch (error) {
+      if (!abort.signal.aborted) throw error;
+    } finally {
+      process.removeListener("SIGINT", stop);
+      process.removeListener("SIGTERM", stop);
+    }
+    return;
+  }
   if (command === "repository" && subcommand === "list") {
     output(await api.repositories());
     return;
@@ -475,6 +552,10 @@ Documentation: https://vectis.kerd.dev/docs
   }
   if (command === "status") {
     output(await api.status());
+    return;
+  }
+  if (command === "environment" && subcommand === "list") {
+    output((await api.status()).environments);
     return;
   }
   if (command === "activity" && subcommand === "list") {
@@ -529,7 +610,25 @@ Documentation: https://vectis.kerd.dev/docs
       bindingId: id,
       enabled: subcommand === "enable-auto",
     });
-  else if (command === "migration" && subcommand === "analyze" && id)
+  else if (command === "repository" && subcommand === "access" && id) {
+    if (
+      !values.actors ||
+      (values.actors !== "any" && !/^[1-9][0-9]*(,[1-9][0-9]*)*$/.test(values.actors))
+    )
+      throw new VectisError(
+        "invalid_repository_access",
+        "Use any or comma-separated numeric GitHub user IDs.",
+      );
+    request = decodeCommand({
+      type: "repository.access",
+      bindingId: id,
+      actors:
+        values.actors === "any"
+          ? "any"
+          : { ids: [...new Set(values.actors.split(",").map(Number))] },
+      approval: values.approval,
+    });
+  } else if (command === "migration" && subcommand === "analyze" && id)
     request = decodeCommand({ type: "migration.analyze", bindingId: id });
   else if (command === "migration" && subcommand === "preview" && id)
     request = decodeCommand({
@@ -679,6 +778,8 @@ Documentation: https://vectis.kerd.dev/docs
     request = decodeCommand({
       type: "environment.configure",
       id,
+      ...(values.x64 !== undefined ? { x64: values.x64 } : {}),
+      ...(values.egress !== undefined ? { egress: values.egress } : {}),
       ...(values.cpu !== undefined ? { cpu: Number(values.cpu) } : {}),
       ...(values["memory-mib"] !== undefined ? { memoryMiB: Number(values["memory-mib"]) } : {}),
       ...(values["storage-path"] !== undefined ? { storagePath: values["storage-path"] } : {}),

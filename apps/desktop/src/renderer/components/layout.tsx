@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { sectionId } from "@/lib/readiness";
 import { cn } from "@/lib/utils";
 import { useWindowChrome } from "@/shell/window-chrome";
 import { useStateApi } from "@/state";
@@ -116,6 +117,7 @@ export function Page({
 }
 
 export function Section({
+  id,
   title,
   description,
   hint,
@@ -123,6 +125,7 @@ export function Section({
   children,
   className,
 }: {
+  id?: string;
   title: string;
   description?: ReactNode;
   hint?: ReactNode;
@@ -131,7 +134,14 @@ export function Section({
   className?: string;
 }) {
   return (
-    <section className={cn("flex min-w-0 flex-col gap-3", className)}>
+    <section
+      id={id ? sectionId(id) : undefined}
+      tabIndex={id ? -1 : undefined}
+      className={cn(
+        "flex min-w-0 scroll-mt-4 flex-col gap-3 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-4 focus-visible:ring-offset-background",
+        className,
+      )}
+    >
       <div className="flex min-h-7 items-end justify-between gap-4">
         <div className="min-w-0">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold">
@@ -253,6 +263,7 @@ export function EmptyState({ children }: { children: ReactNode }) {
 }
 
 export function ExpandableRow({
+  id,
   leading,
   title,
   summary,
@@ -261,6 +272,7 @@ export function ExpandableRow({
   defaultOpen = false,
   children,
 }: {
+  id?: string;
   leading?: ReactNode;
   title: ReactNode;
   summary?: ReactNode;
@@ -270,7 +282,11 @@ export function ExpandableRow({
   children: ReactNode;
 }) {
   return (
-    <Collapsible defaultOpen={defaultOpen} className="rise-in">
+    <Collapsible
+      defaultOpen={defaultOpen}
+      className="rise-in scroll-mt-4"
+      id={id ? sectionId(id) : undefined}
+    >
       <div className="flex items-center gap-2 pr-3">
         <CollapsibleTrigger className="group/trigger flex min-w-0 flex-1 items-center gap-3 py-3 pl-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-inset">
           <ChevronRightIcon

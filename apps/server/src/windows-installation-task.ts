@@ -174,7 +174,7 @@ export async function startWindowsInstallation(
           phase: record.phase,
           directory: record.directory,
           code: issue.code,
-          nextStep: `Inspect the private setup screenshot and preparation log, then use environment resume-windows ${record.id}.`,
+          nextStep: `Inspect the private setup screenshot, preparation.log and bootstrap-diagnostic.json when available, then use environment resume-windows ${record.id}.`,
         },
       });
     });
