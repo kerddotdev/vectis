@@ -29,6 +29,28 @@ So a prepared guest has Git, Docker, OpenSSH and the official runner's dependenc
 
 Deliberately absent: language runtimes and their version managers, databases, browsers and drivers, cloud CLIs, Android and Java SDKs. A job that needs one installs it in a step, or runs in a container with `container:` in the workflow, which works because the guest runs Docker. Nothing a job installs survives it, since every VM starts from the same base image, and the base image itself cannot be customized yet.
 
+## Run x86_64 Linux tools
+
+Enable Rosetta per Linux environment to run x86_64 Linux binaries and Docker images requested with `docker run --platform linux/amd64`. The Mac must have Rosetta installed, and the Linux image must have been prepared with Rosetta guest support. Older images need re-preparation; enabling the option alone does not update an image. Prepare a new Linux environment and reconnect its repositories if the existing image lacks support.
+
+```sh
+# Run on the Mac if Rosetta is not installed:
+softwareupdate --install-rosetta
+vectis environment configure ubuntu-24-arm64 --x64 rosetta --json
+# Run inside a job:
+docker run --rm --platform linux/amd64 ubuntu:24.04 uname -m
+# Disable translation for future instances:
+vectis environment configure ubuntu-24-arm64 --x64 off --json
+```
+
+Vectis shares only [Apple's read-only Rosetta runtime](https://developer.apple.com/documentation/virtualization/running-intel-binaries-in-linux-vms) with an opted-in Linux guest. A conditional boot unit mounts it read-only at `/run/rosetta` and registers an x86_64 ELF handler with `binfmt_misc`. It registers after `systemd-binfmt` has finished, so the normal boot registration cannot clear the handler. The `CF` flags preserve binary credentials and keep the interpreter available in container mount namespaces. The mount attempt is the unit condition: a missing tag skips registration without failing the unit, including on Ubuntu kernels that do not expose a sysfs tag file.
+
+Instance startup verifies the guest handler before reporting success. Missing host support reports `rosetta_not_installed` or `rosetta_unsupported`; a missing or disabled guest handler reports `rosetta_guest_unprepared` with the next step "Prepare the Linux environment again". Translation does not provide x86_64 libraries for standalone dynamically linked binaries; the binary needs compatible libraries, for example inside an amd64 container.
+
+The runner and guest kernel stay ARM64. Jobs requesting `X64` labels still do not match, and `setup-*` actions still install ARM64 tools by default. Rosetta does not change label matching or workflow migration.
+
+The setting applies to future instances. Like other environment configuration changes, enabling or disabling it changes `environmentRevision`, invalidates previous environment evidence and prevents preparing runner leases from completing against the old revision. Those attempts need cleanup and a fresh lease.
+
 ## Cancel and resume
 
 ```sh
