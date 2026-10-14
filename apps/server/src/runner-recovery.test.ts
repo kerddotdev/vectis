@@ -48,6 +48,7 @@ async function fixture() {
       phase: "ready",
     })),
     prepareRunner: vi.fn<RunnerBroker["prepareRunner"]>(),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: vi.fn<RunnerBroker["releaseRunner"]>(async () => {}),
     repositories: async () => [],
   };

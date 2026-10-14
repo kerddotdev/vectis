@@ -13,9 +13,15 @@ import {
   runnerStartScript,
 } from "../../../packages/runner/src/runner-release.js";
 
+const idleTimeoutMs = 10 * 60 * 1000;
+const pollIntervalMs = 30000;
+
 interface Controls {
   broker: RunnerBroker;
-  needed?: () => Promise<boolean>;
+  needed?: (signal: AbortSignal) => Promise<boolean>;
+  now?: () => number;
+  pollIntervalMs?: number;
+  idleTimeoutMs?: number;
   start(): Promise<Instance>;
   stop(): Promise<void>;
   progress(value: RunnerProgress): void;
@@ -47,7 +53,7 @@ export async function runRunnerTask(
   update({});
   try {
     signal.throwIfAborted();
-    if (controls.needed && !(await controls.needed()))
+    if (controls.needed && !(await controls.needed(signal)))
       throw new VectisError(
         "job_not_queued",
         "The GitHub job no longer needs queued runner capacity.",
@@ -69,7 +75,7 @@ export async function runRunnerTask(
         "The verified runner installation failed.",
         "Inspect the base image prerequisites before starting a fresh runner.",
       );
-    if (controls.needed && !(await controls.needed()))
+    if (controls.needed && !(await controls.needed(signal)))
       throw new VectisError(
         "job_not_queued",
         "The GitHub job no longer needs queued runner capacity.",
@@ -91,17 +97,28 @@ export async function runRunnerTask(
         "The runner grant targets another environment.",
       );
     update({ runnerId: grant.runnerId, stage: "listening" });
+    const listening = new AbortController();
+    const listeningSignal = AbortSignal.any([
+      signal,
+      listening.signal,
+      AbortSignal.timeout(6 * 60 * 60 * 1000),
+    ]);
+    const watcher = watchIdleRunner(grant.id, controls, listening, listeningSignal);
     const execution = await executeGuest(
       connection,
       runnerStartScript(environment.os, grant.encodedConfig),
-      {
-        shell,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(6 * 60 * 60 * 1000)]),
-      },
-    ).catch((error: unknown) => {
-      if (error instanceof GuestUnavailableError) listener = `connection lost: ${error.detail}`;
-      throw error;
-    });
+      { shell, signal: listeningSignal },
+    )
+      .catch((error: unknown) => {
+        if (!signal.aborted && listening.signal.reason instanceof VectisError)
+          throw listening.signal.reason;
+        if (error instanceof GuestUnavailableError) listener = `connection lost: ${error.detail}`;
+        throw error;
+      })
+      .finally(async () => {
+        listening.abort();
+        await watcher;
+      });
     if (execution.exitCode !== 0) {
       listener = `exit ${execution.exitCode}\n${execution.stdout}\n${execution.stderr}`;
       throw new VectisError(
@@ -162,6 +179,8 @@ export async function runRunnerTask(
       code: "runner_registration_uncertain",
     };
   update({ stage: "finished" });
+  if (failure instanceof VectisError && failure.code === "runner_idle")
+    return { status: "cancelled" as const, progress, message: failure.message, code: failure.code };
   if (failure instanceof VectisError && failure.code === "job_not_queued")
     return { status: "cancelled" as const, progress, message: failure.message };
   if (signal.aborted)
@@ -178,4 +197,54 @@ export async function runRunnerTask(
     progress,
     message: "Runner lifecycle completed and cleaned up. Check GitHub for the job result.",
   };
+}
+
+async function watchIdleRunner(
+  leaseId: string,
+  controls: Controls,
+  listening: AbortController,
+  signal: AbortSignal,
+) {
+  if (!controls.needed) return;
+  const now = controls.now ?? Date.now;
+  const timeoutMs = controls.idleTimeoutMs ?? idleTimeoutMs;
+  let idleSince = now();
+  while (!signal.aborted) {
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      const timer = setTimeout(done, controls.pollIntervalMs ?? pollIntervalMs);
+      signal.addEventListener("abort", done, { once: true });
+      if (signal.aborted) done();
+    });
+    if (signal.aborted) return;
+    try {
+      const status = await controls.broker.runnerStatus(leaseId, signal);
+      if (signal.aborted) return;
+      if ("busy" in status && status.busy) {
+        idleSince = now();
+        continue;
+      }
+      if (now() - idleSince < timeoutMs || (await controls.needed(signal))) continue;
+      if (signal.aborted) return;
+      // Refreshing the job may take long enough for GitHub to assign this runner work.
+      const confirmed = await controls.broker.runnerStatus(leaseId, signal);
+      if (signal.aborted) return;
+      if ("busy" in confirmed && confirmed.busy) {
+        idleSince = now();
+        continue;
+      }
+      listening.abort(
+        new VectisError(
+          "runner_idle",
+          "The runner was idle for 10 minutes and its job no longer needs capacity; the VM was released.",
+        ),
+      );
+    } catch {
+      idleSince = now();
+    }
+  }
 }

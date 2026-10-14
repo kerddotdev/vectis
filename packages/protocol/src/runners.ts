@@ -16,6 +16,12 @@ export const RunnerGrant = Schema.Union([
   }),
 ]);
 export type RunnerGrant = typeof RunnerGrant.Type;
+export const RunnerStatus = Schema.Union([
+  Schema.Struct({ busy: Schema.Boolean, status: Schema.Literals(["online", "offline"]) }),
+  Schema.Struct({ missing: Schema.Literal(true) }),
+]);
+export type RunnerStatus = typeof RunnerStatus.Type;
+
 export interface RunnerBroker {
   reconcileRunner(
     request: { bindingId: string; environmentId: string; key: string },
@@ -23,6 +29,7 @@ export interface RunnerBroker {
   ): Promise<RunnerLease>;
   prepareRunner(bindingId: string, key: string, signal: AbortSignal): Promise<RunnerGrant>;
   releaseRunner(id: string, signal: AbortSignal): Promise<void>;
+  runnerStatus(leaseId: string, signal: AbortSignal): Promise<RunnerStatus>;
 }
 
 export const RunnerProgress = Schema.Struct({

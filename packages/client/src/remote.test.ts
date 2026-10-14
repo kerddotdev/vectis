@@ -150,3 +150,41 @@ test("remote capability discovery uses a fresh inspection and completed operatio
     result: { verified: true },
   });
 });
+
+test("a remotely replayed idle drain preserves its cancelled outcome and local result code", async () => {
+  const { request, client } = fixture();
+  const message = "The idle runner's VM was released.";
+  request
+    .mockResolvedValueOnce({
+      ...record,
+      commandJson: JSON.stringify({ type: "runner.run", bindingId: "binding", jobId: 1 }),
+      phase: "cancelled",
+      resultJson: JSON.stringify({ message, operationId: "local1", resultAvailableLocally: true }),
+    })
+    .mockResolvedValueOnce({ queryId: "query1" })
+    .mockResolvedValueOnce({
+      pending: false,
+      responseJson: JSON.stringify({
+        ok: true,
+        result: {
+          id: "local1",
+          key: "remote:remote1",
+          command: "runner.run",
+          status: "cancelled",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:01:00Z",
+          message,
+          result: { code: "runner_idle", stage: "finished", leaseId: "lease" },
+        },
+      }),
+    });
+  expect(await client.operation("remote1")).toMatchObject({
+    status: "cancelled",
+    message,
+    result: { code: "runner_idle", leaseId: "lease" },
+  });
+  expect(request.mock.calls[1]?.[0]).toMatchObject({
+    type: "query.submit",
+    query: { name: "operation", id: "local1" },
+  });
+});

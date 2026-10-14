@@ -7,6 +7,7 @@ const modules = {
   "../../convex/runnerLeases.ts": () => import("../../convex/runnerLeases.js"),
   "../../convex/githubRunners.ts": () => import("../../convex/githubRunners.js"),
   "../../convex/repositoryBindings.ts": () => import("../../convex/repositoryBindings.js"),
+  "../../convex/purge.ts": () => import("../../convex/purge.js"),
   "../../convex/machines.ts": () => import("../../convex/machines.js"),
   "../../convex/_generated/server.js": () => import("../../convex/_generated/server.js"),
 };
@@ -86,18 +87,21 @@ async function fixture() {
       expect(body.labels).toEqual(["self-hosted", "macOS", "ARM64", "vectis-mac"]);
       await onRegistration?.();
       if (loseResponse) throw new Error("Response lost after registration");
-      return Response.json({ runner: { id: 501, name }, encoded_jit_config: "c2VjcmV0" });
+      return Response.json({
+        runner: { id: 501, name, busy: false, status: "offline" },
+        encoded_jit_config: "c2VjcmV0",
+      });
     }
     if (url.endsWith("/actions/runners/501"))
       return init?.method === "DELETE"
         ? new Response(null, { status: 204 })
-        : Response.json({ id: 501, name });
+        : Response.json({ id: 501, name, busy: false, status: "online" });
     if (url.includes("/actions/runners?"))
       return Response.json({
         total_count: 2,
         runners: [
-          { id: 500, name: "foreign-runner" },
-          { id: 501, name },
+          { id: 500, name: "foreign-runner", busy: false, status: "offline" },
+          { id: 501, name, busy: false, status: "online" },
         ],
       });
     if (url === "https://api.github.com/repos/owner/sandbox") {
@@ -245,3 +249,103 @@ test("foreign machines and mismatched environments cannot fence runner requests"
   ).rejects.toThrow();
   expect(await device.query(api.runnerLeases.find, { key: request.key })).toBeNull();
 });
+
+test.each([
+  { busy: false, status: "online" },
+  { busy: true, status: "online" },
+  { busy: false, status: "offline" },
+])("runner status decodes %j without changing the lease or registration", async (status) => {
+  const { device, bindingId, fetch } = await fixture();
+  const grant = await device.action(api.githubRunners.prepare, { bindingId, key: "status" });
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (url, init) => {
+    if (url.endsWith("/actions/runners/501"))
+      return Response.json({ id: 501, name: `vectis-${grant.id}`, ...status });
+    if (!original) throw new Error("Missing fetch fixture");
+    return original(url, init);
+  });
+  expect(await device.action(api.githubRunners.status, { id: grant.id })).toEqual(status);
+  expect(await device.query(api.runnerLeases.list, {})).toHaveLength(1);
+  expect(fetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});
+
+test("runner status rejects another owner's lease, other machines and human credentials before GitHub access", async () => {
+  const { t, device, owner, machineId, bindingId, fetch } = await fixture();
+  const grant = await device.action(api.githubRunners.prepare, {
+    bindingId,
+    key: "private-status",
+  });
+  const otherOwner = t.withIdentity({
+    issuer: identity.issuer,
+    subject: "other",
+    tokenIdentifier: `${identity.issuer}|other`,
+  });
+  const otherId = await otherOwner.mutation(api.machines.enroll, {
+    localId: "other",
+    name: "Other",
+  });
+  const otherDevice = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: otherId,
+    credentialVersion: 0,
+  });
+  const siblingId = await owner.mutation(api.machines.enroll, {
+    localId: "sibling",
+    name: "Sibling",
+  });
+  const sibling = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: siblingId,
+    credentialVersion: 0,
+  });
+  fetch.mockClear();
+  for (const denied of [otherDevice, sibling, owner])
+    await expect(denied.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
+  await owner.mutation(api.machines.remove, { id: machineId });
+  await expect(device.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test.each([
+  { id: 502, busy: false, status: "online" },
+  { name: "foreign-runner", busy: false, status: "online" },
+  { busy: "false", status: "online" },
+  { busy: false, status: "unknown" },
+])("runner status rejects mismatched identity or malformed status %j", async (patch) => {
+  const { device, bindingId, fetch } = await fixture();
+  const grant = await device.action(api.githubRunners.prepare, {
+    bindingId,
+    key: "invalid-status",
+  });
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (url, init) => {
+    if (url.endsWith("/actions/runners/501"))
+      return Response.json({ id: 501, name: `vectis-${grant.id}`, ...patch });
+    if (!original) throw new Error("Missing fetch fixture");
+    return original(url, init);
+  });
+  await expect(device.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
+});
+
+test.each([404, 403, 500])(
+  "runner status treats only a runner endpoint 404 as missing, not %s errors",
+  async (status) => {
+    const { device, bindingId, fetch } = await fixture();
+    const grant = await device.action(api.githubRunners.prepare, {
+      bindingId,
+      key: "missing-status",
+    });
+    const original = fetch.getMockImplementation();
+    fetch.mockImplementation(async (url, init) => {
+      if (url.endsWith("/actions/runners/501"))
+        return Response.json({ message: "Unavailable" }, { status });
+      if (!original) throw new Error("Missing fetch fixture");
+      return original(url, init);
+    });
+    if (status === 404)
+      expect(await device.action(api.githubRunners.status, { id: grant.id })).toEqual({
+        missing: true,
+      });
+    else await expect(device.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
+  },
+);

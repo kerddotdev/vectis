@@ -44,6 +44,7 @@ async function fixture() {
       throw new Error("unused");
     }),
     prepareRunner: vi.fn(),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: vi.fn(async () => {}),
     repositories: async () => [],
   };
