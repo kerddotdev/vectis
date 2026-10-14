@@ -402,3 +402,52 @@ test("runner recovery uses an authenticated atomic mutation and validates its le
   transport.mutation.mockResolvedValueOnce(null);
   await expect(relay.reconcileRunner(request, signal)).rejects.toThrow();
 });
+
+test("remote acknowledgements redact older hosts' task errors before truncating or sending", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  const canary = "CloudAcknowledgementCanary123456789";
+  const message = "x".repeat(960) + ` Authorization: Bearer ${canary} exit 23`;
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-operation",
+    key: "remote:remote-operation",
+    command: "machine.pause",
+    status: "failed",
+    message,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    result: { diagnostics: "private local details" },
+  });
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [
+        {
+          _id: "remote-operation",
+          phase: "running",
+          commandJson: JSON.stringify({ type: "machine.pause", paused: true }),
+        },
+      ];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const acknowledgement = transport.mutation.mock.calls.find(
+    ([mutation]) => getFunctionName(mutation) === "operations:acknowledge",
+  )?.[1];
+  expect(acknowledgement).toMatchObject({
+    id: "remote-operation",
+    phase: "failed",
+    resultJson: JSON.stringify({
+      operationId: "local-operation",
+      status: "failed",
+      message: "x".repeat(960) + " Authorization: Bearer [redacted] exit 2",
+      resultAvailableLocally: true,
+    }),
+  });
+  expect(JSON.stringify(acknowledgement)).not.toContain(canary);
+  expect(JSON.stringify(acknowledgement)).not.toContain(canary.slice(0, 10));
+  expect(JSON.stringify(acknowledgement)).not.toContain("private local details");
+});
