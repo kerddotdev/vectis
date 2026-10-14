@@ -130,7 +130,11 @@ export function StateProvider({ children }: { children: ReactNode }) {
       const title = activityTitle(activity, snapshot);
       const open = { action: { label: "View", onClick: () => openActivity(activity.id) } };
       // A runner can finish cleanly while the GitHub job it ran failed.
-      if (activity.status === "succeeded" && activity.subject?.actualJob?.conclusion === "failure")
+      if (
+        activity.status === "succeeded" &&
+        activity.subject?.type === "runner" &&
+        activity.subject.actualJob?.conclusion === "failure"
+      )
         notify.error(title, { ...open, description: "The GitHub job failed." });
       else if (activity.status === "succeeded") notify.success(title, open);
       else if (activity.status === "failed")
