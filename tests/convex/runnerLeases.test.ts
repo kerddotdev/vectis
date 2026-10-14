@@ -7,6 +7,7 @@ const modules = {
   "../../convex/runnerLeases.ts": () => import("../../convex/runnerLeases.js"),
   "../../convex/githubRunners.ts": () => import("../../convex/githubRunners.js"),
   "../../convex/repositoryBindings.ts": () => import("../../convex/repositoryBindings.js"),
+  "../../convex/purge.ts": () => import("../../convex/purge.js"),
   "../../convex/machines.ts": () => import("../../convex/machines.js"),
   "../../convex/_generated/server.js": () => import("../../convex/_generated/server.js"),
 };
@@ -70,6 +71,7 @@ async function fixture() {
   let name = "";
   let loseResponse = false;
   let onRegistration: (() => Promise<unknown>) | undefined;
+  let onRepositoryRead: (() => Promise<unknown>) | undefined;
   const fetch = vi.fn(async (url: string, init?: RequestInit): Promise<Response> => {
     if (url.endsWith("/installation"))
       return Response.json({
@@ -90,22 +92,27 @@ async function fixture() {
       expect(body.labels).toEqual(["self-hosted", "macOS", "ARM64", "vectis-mac"]);
       await onRegistration?.();
       if (loseResponse) throw new Error("Response lost after registration");
-      return Response.json({ runner: { id: 501, name }, encoded_jit_config: "c2VjcmV0" });
+      return Response.json({
+        runner: { id: 501, name, busy: false, status: "offline" },
+        encoded_jit_config: "c2VjcmV0",
+      });
     }
     if (url.endsWith("/actions/runners/501"))
       return init?.method === "DELETE"
         ? new Response(null, { status: 204 })
-        : Response.json({ id: 501, name });
+        : Response.json({ id: 501, name, busy: false, status: "online" });
     if (url.includes("/actions/runners?"))
       return Response.json({
         total_count: 2,
         runners: [
-          { id: 500, name: "foreign-runner" },
-          { id: 501, name },
+          { id: 500, name: "foreign-runner", busy: false, status: "offline" },
+          { id: 501, name, busy: false, status: "online" },
         ],
       });
-    if (url === "https://api.github.com/repos/owner/sandbox")
+    if (url === "https://api.github.com/repos/owner/sandbox") {
+      await onRepositoryRead?.();
       return Response.json({ id: 600, private: true, owner: { id: 71 } });
+    }
     throw new Error("Unexpected test request");
   });
   vi.stubGlobal("fetch", fetch);
@@ -121,6 +128,9 @@ async function fixture() {
     },
     onRegistration: (callback: () => Promise<unknown>) => {
       onRegistration = callback;
+    },
+    onRepositoryRead: (callback: () => Promise<unknown>) => {
+      onRepositoryRead = callback;
     },
   };
 }
@@ -206,6 +216,161 @@ test("a private fork policy change blocks JIT registration after binding", async
   ).rejects.toThrow("private_runner_approval_required");
   expect(fetch.mock.calls.some(([url]) => url.endsWith("/generate-jitconfig"))).toBe(false);
 });
+
+test("missing-lease reconciliation fences a registration already waiting for repository access", async () => {
+  const { device, bindingId, fetch, onRepositoryRead } = await fixture();
+  const request = { bindingId, environmentId: "mac", key: "interrupted-before-claim" };
+  onRepositoryRead(() => device.mutation(api.runnerLeases.reconcile, request));
+  const grant = await device.action(api.githubRunners.prepare, {
+    bindingId,
+    key: request.key,
+  });
+  expect(grant).toMatchObject({ state: "released" });
+  const expected = {
+    id: grant.id,
+    bindingId,
+    environmentId: "mac",
+    phase: "released",
+  };
+  expect(await device.query(api.runnerLeases.find, { key: request.key })).toEqual(expected);
+  expect(await device.mutation(api.runnerLeases.reconcile, request)).toEqual(expected);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/generate-jitconfig"))).toBe(false);
+  expect(await device.query(api.runnerLeases.list, {})).toEqual([]);
+});
+
+test("reconciliation preserves an existing registration for verified runner cleanup", async () => {
+  const { device, bindingId, fetch } = await fixture();
+  const args = { bindingId, key: "existing-registration" };
+  const grant = await device.action(api.githubRunners.prepare, args);
+  const lease = await device.mutation(api.runnerLeases.reconcile, {
+    ...args,
+    environmentId: "mac",
+  });
+  expect(lease).toEqual({ id: grant.id, bindingId, environmentId: "mac", phase: "ready" });
+  expect(await device.query(api.runnerLeases.list, {})).toHaveLength(1);
+  expect(fetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  await device.action(api.githubRunners.release, { id: lease.id });
+  expect(await device.query(api.runnerLeases.list, {})).toEqual([]);
+});
+
+test("foreign machines and mismatched environments cannot fence runner requests", async () => {
+  const { t, owner, device, bindingId } = await fixture();
+  const foreignId = await owner.mutation(api.machines.enroll, {
+    localId: "foreign",
+    name: "Other",
+  });
+  const foreign = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: foreignId,
+    credentialVersion: 0,
+  });
+  const request = { bindingId, environmentId: "mac", key: "protected" };
+  await expect(foreign.mutation(api.runnerLeases.reconcile, request)).rejects.toThrow();
+  await expect(
+    device.mutation(api.runnerLeases.reconcile, { ...request, environmentId: "other" }),
+  ).rejects.toThrow();
+  expect(await device.query(api.runnerLeases.find, { key: request.key })).toBeNull();
+});
+
+test.each([
+  { busy: false, status: "online" },
+  { busy: true, status: "online" },
+  { busy: false, status: "offline" },
+])("runner status decodes %j without changing the lease or registration", async (status) => {
+  const { device, bindingId, fetch } = await fixture();
+  const grant = await device.action(api.githubRunners.prepare, { bindingId, key: "status" });
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (url, init) => {
+    if (url.endsWith("/actions/runners/501"))
+      return Response.json({ id: 501, name: `vectis-${grant.id}`, ...status });
+    if (!original) throw new Error("Missing fetch fixture");
+    return original(url, init);
+  });
+  expect(await device.action(api.githubRunners.status, { id: grant.id })).toEqual(status);
+  expect(await device.query(api.runnerLeases.list, {})).toHaveLength(1);
+  expect(fetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+});
+
+test("runner status rejects another owner's lease, other machines and human credentials before GitHub access", async () => {
+  const { t, device, owner, machineId, bindingId, fetch } = await fixture();
+  const grant = await device.action(api.githubRunners.prepare, {
+    bindingId,
+    key: "private-status",
+  });
+  const otherOwner = t.withIdentity({
+    issuer: identity.issuer,
+    subject: "other",
+    tokenIdentifier: `${identity.issuer}|other`,
+  });
+  const otherId = await otherOwner.mutation(api.machines.enroll, {
+    localId: "other",
+    name: "Other",
+  });
+  const otherDevice = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: otherId,
+    credentialVersion: 0,
+  });
+  const siblingId = await owner.mutation(api.machines.enroll, {
+    localId: "sibling",
+    name: "Sibling",
+  });
+  const sibling = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: siblingId,
+    credentialVersion: 0,
+  });
+  fetch.mockClear();
+  for (const denied of [otherDevice, sibling, owner])
+    await expect(denied.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
+  await owner.mutation(api.machines.remove, { id: machineId });
+  await expect(device.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test.each([
+  { id: 502, busy: false, status: "online" },
+  { name: "foreign-runner", busy: false, status: "online" },
+  { busy: "false", status: "online" },
+  { busy: false, status: "unknown" },
+])("runner status rejects mismatched identity or malformed status %j", async (patch) => {
+  const { device, bindingId, fetch } = await fixture();
+  const grant = await device.action(api.githubRunners.prepare, {
+    bindingId,
+    key: "invalid-status",
+  });
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (url, init) => {
+    if (url.endsWith("/actions/runners/501"))
+      return Response.json({ id: 501, name: `vectis-${grant.id}`, ...patch });
+    if (!original) throw new Error("Missing fetch fixture");
+    return original(url, init);
+  });
+  await expect(device.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
+});
+
+test.each([404, 403, 500])(
+  "runner status treats only a runner endpoint 404 as missing, not %s errors",
+  async (status) => {
+    const { device, bindingId, fetch } = await fixture();
+    const grant = await device.action(api.githubRunners.prepare, {
+      bindingId,
+      key: "missing-status",
+    });
+    const original = fetch.getMockImplementation();
+    fetch.mockImplementation(async (url, init) => {
+      if (url.endsWith("/actions/runners/501"))
+        return Response.json({ message: "Unavailable" }, { status });
+      if (!original) throw new Error("Missing fetch fixture");
+      return original(url, init);
+    });
+    if (status === 404)
+      expect(await device.action(api.githubRunners.status, { id: grant.id })).toEqual({
+        missing: true,
+      });
+    else await expect(device.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
+  },
+);
 
 test("access settings enforce machine, binding and account ownership and deduplicate actor IDs", async () => {
   const { t, device, bindingId, machineId } = await fixture();

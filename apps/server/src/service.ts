@@ -1,4 +1,6 @@
 import { environmentNetwork } from "../../../packages/runner/src/environment-network.js";
+import { inspect } from "node:util";
+import { redact } from "../../../packages/client/src/redact.js";
 import { startMacGuestAccess, completedMacEnvironment } from "./macos-access-task.js";
 import { discardMacInstallation } from "./macos-discard.js";
 import {
@@ -133,7 +135,7 @@ export class Service {
           try {
             sweep();
           } catch (error) {
-            console.error("Activity retention failed:", error);
+            console.error("Activity retention failed:", redact(inspect(error)));
           }
         },
         60 * 60 * 1000,
@@ -503,7 +505,7 @@ export class Service {
               ...(demandJobId === undefined
                 ? {}
                 : {
-                    needed: async () => {
+                    needed: async (signal) => {
                       if (
                         command.automatic &&
                         !(await broker.repositories()).some(
@@ -511,11 +513,7 @@ export class Service {
                         )
                       )
                         return false;
-                      const job = await broker.refreshJob(
-                        command.bindingId,
-                        demandJobId,
-                        abort.signal,
-                      );
+                      const job = await broker.refreshJob(command.bindingId, demandJobId, signal);
                       this.store.updateActivity(operation.id, (base) => ({
                         ...base,
                         subject: {
@@ -524,7 +522,7 @@ export class Service {
                           requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
                         },
                       }));
-                      if (job.status !== "queued") return false;
+                      if (job.status !== "queued" || job.runnerId !== null) return false;
                       if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
                         throw new VectisError(
                           "runner_labels_mismatch",
@@ -611,12 +609,16 @@ export class Service {
                   ...("code" in completed
                     ? {
                         code: completed.code,
-                        nextStep:
-                          "nextStep" in completed
-                            ? completed.nextStep
-                            : completed.status === "action_required"
-                              ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
-                              : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                        ...(completed.status === "cancelled"
+                          ? {}
+                          : {
+                              nextStep:
+                                "nextStep" in completed
+                                  ? completed.nextStep
+                                  : completed.status === "action_required"
+                                    ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
+                                    : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                            }),
                       }
                     : {}),
                 },
@@ -658,13 +660,14 @@ export class Service {
               "Stop or reconcile the owned instance, then retry runner reconciliation.",
             );
           const broker = this.runnerConnection();
-          const lease = await broker.findRunner(progress.leaseKey, AbortSignal.timeout(10000));
-          if (!lease)
-            throw new VectisError(
-              "reconciliation_required",
-              "The registration request has no confirmed cloud lease.",
-              "Inspect the cloud connection and retry reconciliation; do not start a duplicate runner.",
-            );
+          const lease = await broker.reconcileRunner(
+            {
+              bindingId: progress.bindingId,
+              environmentId: progress.environmentId,
+              key: progress.leaseKey,
+            },
+            AbortSignal.timeout(10000),
+          );
           if (
             lease.bindingId !== progress.bindingId ||
             lease.environmentId !== progress.environmentId ||
@@ -674,7 +677,8 @@ export class Service {
               "runner_identity_mismatch",
               "The cloud lease does not match this operation.",
             );
-          await broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
+          if (lease.phase !== "released")
+            await broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
           this.store.update(interrupted, {
             status: "cancelled",
             message: "Interrupted runner cleaned up. Check GitHub for the job result.",
