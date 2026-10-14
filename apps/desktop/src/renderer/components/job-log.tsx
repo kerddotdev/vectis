@@ -6,7 +6,9 @@ import { appendChunk, emptyLog, segmentLog, stripAnsi, type LogSegmentKind } fro
 import { cn } from "@/lib/utils";
 import { readJobLogs, useStateApi } from "@/state";
 
+// Each read costs several GitHub API calls, so an empty log backs off to stay within rate limits.
 const pollInterval = 2000;
+const maxPollInterval = 30000;
 const followThreshold = 40;
 
 const segmentTones: Record<LogSegmentKind, string> = {
@@ -68,6 +70,7 @@ export function JobLog({
     const { signal } = controller;
     void (async () => {
       setError(undefined);
+      let delay = pollInterval;
       try {
         while (!signal.aborted) {
           await untilVisible(signal);
@@ -81,7 +84,11 @@ export function JobLog({
           setLog(loaded.current);
           setReading(false);
           if (chunk.complete) return;
-          if (chunk.text === "") await wait(signal, pollInterval);
+          if (chunk.text !== "") delay = pollInterval;
+          else {
+            await wait(signal, delay);
+            delay = Math.min(delay * 2, maxPollInterval);
+          }
         }
       } catch (caught) {
         if (signal.aborted) return;
