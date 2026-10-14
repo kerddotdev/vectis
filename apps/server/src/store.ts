@@ -35,7 +35,7 @@ const decodeOperation = Schema.decodeUnknownSync(Operation);
 function readOperation(body: unknown): Operation[] {
   if (typeof body !== "string") return [];
   try {
-    return [redactOperation(decodeOperation(JSON.parse(body)))];
+    return [decodeOperation(JSON.parse(body))];
   } catch {
     return [];
   }
@@ -182,7 +182,7 @@ export class Store {
             "This request key was used for a different command.",
             "Use the original command or a new request key.",
           );
-        const operation = redactOperation(decodeOperation(record));
+        const operation = decodeOperation(record);
         this.db.exec("COMMIT");
         return { operation, fresh: false };
       }
