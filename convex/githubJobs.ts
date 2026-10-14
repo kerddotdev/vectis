@@ -34,7 +34,17 @@ export const refresh = action({
     if (access.installationId !== authority.binding.installationId)
       throw new ConvexError({ code: "installation_changed" });
     const job = Schema.decodeUnknownSync(GitHubJob)(
-      await client.request(access.token, `${access.path}/actions/jobs/${args.jobId}`),
+      await client
+        .request(access.token, `${access.path}/actions/jobs/${args.jobId}`)
+        .catch((error: unknown) => {
+          if (error instanceof GitHubApiError && error.status === 404)
+            throw new ConvexError({
+              code: "job_not_found",
+              message: "GitHub has no job with this ID in the repository.",
+              nextStep: "Check the job ID with vectis job list, then retry.",
+            });
+          throw error;
+        }),
     );
     if (job.id !== args.jobId) throw new ConvexError({ code: "job_identity_mismatch" });
     const restrictive = await ctx.runQuery(internal.jobs.restrictiveAuthority, {

@@ -120,6 +120,21 @@ test("recovers a completely missing webhook using the authorized repository API"
     JSON.stringify(await t.run(async (ctx) => ctx.db.query("githubJobs").collect())),
   ).not.toContain("read-only-test-token");
 });
+test("a job GitHub does not know is reported as job_not_found", async () => {
+  const { device, bindingId, fetch, t } = await fixture();
+  const original = fetch.getMockImplementation();
+  fetch.mockImplementation(async (url: string) =>
+    url.endsWith("/actions/jobs/9")
+      ? new Response(JSON.stringify({ message: "Not Found" }), { status: 404 })
+      : original!(url),
+  );
+  await expect(
+    device.action(api.githubJobs.refresh, { bindingId, jobId: 9 }),
+  ).rejects.toMatchObject({
+    data: { code: "job_not_found" },
+  });
+  expect(await t.run(async (ctx) => ctx.db.query("githubJobs").collect())).toHaveLength(0);
+});
 test("removing the machine during the API request prevents persisting an authorized-looking result", async () => {
   const { device, bindingId, t, machineId, setBeforeJob } = await fixture();
   setBeforeJob(async () => {
