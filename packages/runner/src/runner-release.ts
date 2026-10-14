@@ -86,6 +86,7 @@ if (Test-Path -LiteralPath $rejected) { Write-Output '${assignmentRejectedMarker
 exit $runnerExit
 `;
   return `set -eu
+job_umask=$(umask)
 umask 077
 gate="$HOME/vectis-actions-runner/_vectis"
 mkdir -p "$gate"
@@ -96,6 +97,7 @@ ${bashJobStartedHook()}VECTIS_HOOK
 chmod 700 "$gate/job-started.sh"
 rm -f "$gate/assignment-rejected"
 export ACTIONS_RUNNER_HOOK_JOB_STARTED="$gate/job-started.sh"
+umask "$job_umask"
 cd "$HOME/vectis-actions-runner"
 runner_exit=0
 ./run.sh --jitconfig '${jitConfig}' || runner_exit=$?
