@@ -3,7 +3,7 @@ import { Schema } from "effect";
 import { EllipsisIcon } from "lucide-react";
 import { Jobs } from "../../../../../packages/protocol/src/jobs.js";
 import { Notice } from "@/components/layout";
-import { JobStatus } from "@/components/status";
+import { JobStatus, RunnerStage } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,6 +22,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
+import { findRunnerActivity } from "@/lib/runner-stage";
 import { useStateApi } from "@/state";
 
 export function RepositoryJobs({ bindingId }: { bindingId: string }) {
@@ -84,26 +85,34 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
       )}
       {jobs && jobs.length > 0 && (
         <div className="flex flex-col divide-y divide-border rounded-xl ring-1 ring-border ring-inset">
-          {jobs.map((job) => (
-            <div key={job.jobId} className="flex items-center gap-3 px-3.5 py-2.5">
-              <Tooltip>
-                <TooltipTrigger
-                  render={<span tabIndex={0} />}
-                  className="min-w-0 flex-1 truncate rounded outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                >
-                  {job.name}
-                </TooltipTrigger>
-                <TooltipContent>
-                  Run {job.runId}, job {job.jobId}
-                  {job.runnerName ? `, runner ${job.runnerName}` : ""}
-                </TooltipContent>
-              </Tooltip>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                {formatRelative(job.updatedAt)}
-              </span>
-              <JobStatus status={job.status} conclusion={job.conclusion} />
-            </div>
-          ))}
+          {jobs.map((job) => {
+            const stage = findRunnerActivity(
+              job,
+              snapshot?.activities ?? [],
+              snapshot?.operations ?? [],
+            );
+            return (
+              <div key={job.jobId} className="flex items-center gap-3 px-3.5 py-2.5">
+                <Tooltip>
+                  <TooltipTrigger
+                    render={<span tabIndex={0} />}
+                    className="min-w-0 flex-1 truncate rounded outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                  >
+                    {job.name}
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Run {job.runId}, job {job.jobId}
+                    {job.runnerName ? `, runner ${job.runnerName}` : ""}
+                  </TooltipContent>
+                </Tooltip>
+                <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                  {formatRelative(job.updatedAt)}
+                </span>
+                {stage && <RunnerStage stage={stage} />}
+                <JobStatus status={job.status} conclusion={job.conclusion} />
+              </div>
+            );
+          })}
         </div>
       )}
       <Dialog open={recovering} onOpenChange={setRecovering}>
