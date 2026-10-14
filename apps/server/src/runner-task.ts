@@ -13,6 +13,8 @@ import {
   runnerStartScript,
 } from "../../../packages/runner/src/runner-release.js";
 
+import { assignmentRejectedMarker } from "../../../packages/runner/src/runner-access.js";
+
 interface Controls {
   broker: RunnerBroker;
   needed?: () => Promise<boolean>;
@@ -109,10 +111,15 @@ export async function runRunnerTask(
         "runner_identity_mismatch",
         "The runner grant targets another environment.",
       );
+    if (!grant.access)
+      throw new VectisError(
+        "runner_policy_missing",
+        "The runner grant has no repository assignment policy.",
+      );
     update({ runnerId: grant.runnerId, stage: "listening" });
     const execution = await executeGuest(
       connection,
-      runnerStartScript(environment.os, grant.encodedConfig),
+      runnerStartScript(environment.os, grant.encodedConfig, grant.access),
       {
         shell,
         signal: AbortSignal.any([signal, AbortSignal.timeout(6 * 60 * 60 * 1000)]),
@@ -121,6 +128,15 @@ export async function runRunnerTask(
       if (error instanceof GuestUnavailableError) listener = `connection lost: ${error.detail}`;
       throw error;
     });
+    if (
+      [execution.stdout, execution.stderr].some((output) =>
+        output.split(/\r?\n/).includes(assignmentRejectedMarker),
+      )
+    )
+      throw new VectisError(
+        "runner_assignment_rejected",
+        "Vectis refused the assigned GitHub job under this binding access policy.",
+      );
     if (execution.exitCode !== 0) {
       listener = `exit ${execution.exitCode}\n${execution.stdout}\n${execution.stderr}`;
       throw new VectisError(

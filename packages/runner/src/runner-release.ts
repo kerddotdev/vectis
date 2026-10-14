@@ -1,3 +1,9 @@
+import type { RunnerAccess } from "../../protocol/src/repository-access.js";
+import {
+  renderRunnerPolicy,
+  bashJobStartedHook,
+  powershellJobStartedHook,
+} from "./runner-access.js";
 import type { Environment } from "../../protocol/src/index.js";
 import { VectisError } from "../../protocol/src/index.js";
 
@@ -53,20 +59,45 @@ rm runner.tar.gz
 `;
 }
 
-export function runnerStartScript(os: Environment["os"], jitConfig: string) {
+export function runnerStartScript(os: Environment["os"], jitConfig: string, access: RunnerAccess) {
   if (!/^[A-Za-z0-9+/=]{1,60000}$/.test(jitConfig))
     throw new VectisError(
       "invalid_runner_configuration",
       "The JIT runner configuration is invalid.",
     );
+  const policy = renderRunnerPolicy(access);
   if (os === "windows")
     return `$ErrorActionPreference = 'Stop'
+$gate = Join-Path $env:USERPROFILE 'vectis-runner-access'
+New-Item -ItemType Directory -Path $gate -Force | Out-Null
+@'
+${policy}'@ | Set-Content -LiteralPath (Join-Path $gate 'policy') -Encoding utf8
+@'
+${powershellJobStartedHook()}'@ | Set-Content -LiteralPath (Join-Path $gate 'job-started.ps1') -Encoding utf8
+$rejected = Join-Path $gate 'rejected'
+Remove-Item -LiteralPath $rejected -ErrorAction SilentlyContinue
+$env:ACTIONS_RUNNER_HOOK_JOB_STARTED = Join-Path $gate 'job-started.ps1'
 Set-Location (Join-Path $env:USERPROFILE 'vectis-actions-runner')
 & .\\bin\\Runner.Listener.exe run --jitconfig '${jitConfig}'
-exit $LASTEXITCODE
+$runnerExit = $LASTEXITCODE
+if (Test-Path -LiteralPath $rejected) { Get-Content -LiteralPath $rejected; exit 1 }
+exit $runnerExit
 `;
   return `set -eu
+umask 077
+gate="$HOME/vectis-runner-access"
+mkdir -p "$gate"
+cat > "$gate/policy" <<'VECTIS_POLICY'
+${policy}VECTIS_POLICY
+cat > "$gate/job-started.sh" <<'VECTIS_HOOK'
+${bashJobStartedHook()}VECTIS_HOOK
+chmod 700 "$gate/job-started.sh"
+rm -f "$gate/rejected"
+export ACTIONS_RUNNER_HOOK_JOB_STARTED="$gate/job-started.sh"
 cd "$HOME/vectis-actions-runner"
-exec ./run.sh --jitconfig '${jitConfig}'
+runner_exit=0
+./run.sh --jitconfig '${jitConfig}' || runner_exit=$?
+if test -f "$gate/rejected"; then cat "$gate/rejected"; exit 1; fi
+exit "$runner_exit"
 `;
 }

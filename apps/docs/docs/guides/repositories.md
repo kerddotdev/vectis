@@ -27,6 +27,25 @@ vectis repository list --json
 
 `repository list` shows each connection's ID (the binding ID used by other commands) and its `runsOn` label. Connecting the same repository and environment again reuses the connection.
 
+## Who can use this Mac
+
+Each connection can limit the numeric GitHub user IDs that may use its runner capacity, and require a manual start. Existing connections allow any actor and use automatic approval unless a policy is set. Automatic runner admission must still be enabled separately.
+
+```sh
+gh api users/<login> --jq .id
+vectis repository access <binding-id> --actors <id,id,...> --approval required
+vectis job list <binding-id> --json
+vectis runner run <binding-id> --job-id <job-id> --key <stable-key> --wait
+```
+
+Use `--actors any` to allow all actors and `--approval automatic` to remove the manual approval requirement. Actor lists accept at most 100 positive integer user IDs and remove duplicates. Both the original run actor and the triggering actor must be allowed. Starting a specific job manually approves this Mac's capacity for that run ID and attempt; it cannot override the actor list or approve an external pull request on GitHub. Unknown actor IDs leave the job waiting. Job lists expose `access` as `approval_required`, `actor_not_allowed`, or `actor_unknown` when admission is blocked.
+
+Vectis checks before starting a VM and again through GitHub's public job-started hook inside Linux, macOS and Windows guests. This second check matters because GitHub can assign a different matching queued job to an ephemeral runner. Every assignment must match the repository ID. Required approvals also match the approved run ID and attempt. A rejected assignment fails the GitHub job, and the host operation fails with `runner_assignment_rejected` after cleanup.
+
+The hook is a policy check, not a complete execution security boundary. In the pinned runner, a hook failure sets the job result to failed, but subsequent workflow steps with `always()` or `failure()` conditions can still execute. Do not rely on the hook alone to stop hostile workflow code. This behavior needs verification against a real runner before treating the assignment gate as a complete block.
+
+Actor-restricted assignments fail closed when the event does not identify the triggering actor. In particular, reruns are refused because their original event sender cannot attest the new triggering actor's numeric ID. Bash guests need `jq` or `python3` for this check; Ubuntu images include both, while macOS setup must provide one. Windows uses PowerShell's JSON parser. Policy changes apply to new admission and registration; a listening runner retains the policy granted when it registered.
+
 ## Choose the runs-on label
 
 Each environment has one Vectis label: `vectis-<environment-id>`. The app, the web page and `repository list` show it next to every connection.

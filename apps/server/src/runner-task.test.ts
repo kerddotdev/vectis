@@ -260,3 +260,27 @@ test("successful and cancelled runners gather no diagnostics", async () => {
   await runRunnerTask("binding", "key", environment, controls, abort.signal);
   expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
 });
+
+test.each([0, 1])(
+  "a refused assignment is failed even when the listener exits %s",
+  async (exitCode) => {
+    const { controls, events } = fixture();
+    vi.mocked(executeGuest)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+      .mockResolvedValueOnce({
+        exitCode,
+        stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\n",
+        stderr: "",
+        truncated: false,
+      });
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      environment,
+      controls,
+      AbortSignal.timeout(1000),
+    );
+    expect(result).toMatchObject({ status: "failed", code: "runner_assignment_rejected" });
+    expect(events).toEqual(["stop", "release"]);
+  },
+);

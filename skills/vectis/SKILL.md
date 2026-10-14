@@ -73,6 +73,13 @@ An environment is a prepared guest image. Its ID becomes the runner label.
 - A workflow reaches an environment with `runs-on: vectis-<environment-id>`. It may also list `self-hosted`, the OS label (`Linux`, `macOS` or `Windows`) and `ARM64`, and nothing else. Any other label keeps the job away from Vectis.
 - `repository enable-auto <binding-id>` starts runners automatically for matching queued jobs; `disable-auto` stops that. `repository disconnect <binding-id>` stops future runners and lets running jobs finish.
 
+- `vectis repository access <binding-id> --actors any|<id,id,...> --approval automatic|required` sets a per-binding capacity policy. IDs are positive numeric GitHub user IDs (up to 100, deduplicated), never logins: find one with `gh api users/<login> --jq .id`. Absent policy preserves `any` and `automatic`; enabling automatic runners is a separate setting.
+- Restrictive policies use the run API's actor and triggering actor IDs. Both must be allowed. Job lists expose `access: approval_required|actor_not_allowed|actor_unknown` for waiting capacity. Unknown actors never auto-start. Reset with `--actors any --approval automatic`.
+- For required approval, starting `runner run <binding-id> --job-id <id>` manually approves this host's capacity for the job's run ID and attempt. It never overrides the actor allowlist or GitHub's maintainer approval of an external pull request. A restrictive policy requires a specific job ID.
+- A public job-started hook inside every Linux, macOS and Windows guest checks the assigned repository ID and policy, because JIT runners can receive a different matching job. Required approval pins the run ID and attempt. A rejected assignment fails the job on GitHub and returns `runner_assignment_rejected` locally after cleanup.
+- The hook is not a complete execution security boundary: the pinned runner can still execute workflow steps guarded by `always()` or `failure()` after a hook failure. Report this limitation, and do not claim the gate fully blocks hostile code without real runner verification.
+- Actor-restricted reruns fail closed: the original event sender does not attest the rerun's triggering actor ID. Missing event sender or JSON parser also refuses the assignment. Ubuntu includes `jq` and `python3`; macOS must provide one. Windows uses `ConvertFrom-Json`. Listening runners retain their granted policy; changes affect subsequent admission and registration.
+
 ## Runners and jobs
 
 - `vectis runner run <binding-id> --key <key> [--job-id <id>] --json` starts one disposable runner. Its success means the VM ran and was cleaned up, not that the job passed. Read job results with `vectis job list <binding-id> --json` or MCP `vectis_jobs`.
@@ -89,7 +96,8 @@ A job that stays queued usually has one of these causes. Check them in order:
 3. The workflow's `runs-on` labels do not match the connection's `runsOn` label.
 4. The environment is not ready, or it was removed.
 5. The job comes from a fork and waits for a maintainer's approval on GitHub.
-6. The GitHub App is not installed on the repository's owner.
+6. The binding access policy requires manual capacity approval, rejects an actor, or has unknown actor IDs (`job list` exposes `access`).
+7. The GitHub App is not installed on the repository's owner.
 
 ## Workflow migration
 
