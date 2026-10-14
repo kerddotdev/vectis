@@ -35,6 +35,8 @@ So a prepared guest has Git, Docker, OpenSSH and the official runner's dependenc
 
 Deliberately absent: language runtimes and their version managers, databases, browsers and drivers, cloud CLIs, Android and Java SDKs. A job that needs one installs it in a step, or runs in a container with `container:` in the workflow, which works because the guest runs Docker. Nothing a job installs survives it, since every VM starts from the same base image, and the base image itself cannot be customized yet.
 
+Docker container jobs (`container:`) and service containers (`services:`) are supported on the Ubuntu environment and covered by the environment validation workflow.
+
 ## Run x86_64 Linux tools
 
 Enable Rosetta per Linux environment to run x86_64 Linux binaries and Docker images requested with `docker run --platform linux/amd64`. The Mac must have Rosetta installed, and the Linux image must have been prepared with Rosetta guest support. Older images need re-preparation; enabling the option alone does not update an image. Prepare a new Linux environment and reconnect its repositories if the existing image lacks support.
