@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Schema } from "effect";
-import { EllipsisIcon } from "lucide-react";
+import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
 import { Jobs } from "../../../../../packages/protocol/src/jobs.js";
+import { JobLog } from "@/components/job-log";
 import { Notice } from "@/components/layout";
 import { JobStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { useStateApi } from "@/state";
 
 export function RepositoryJobs({ bindingId }: { bindingId: string }) {
@@ -30,6 +32,8 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
   const [recovering, setRecovering] = useState(false);
   const [jobId, setJobId] = useState("");
   const [notice, setNotice] = useState<string>();
+  const [openJobId, setOpenJobId] = useState<number>();
+  const seeded = useRef(false);
   // The service raises its revision when GitHub reports something new for this repository, so the
   // list follows the jobs by itself. A service too old to report one still moves its operations.
   const revision = snapshot?.revision ?? `${snapshot?.operations.length ?? 0}`;
@@ -39,7 +43,13 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
       void (async () => {
         try {
           const value = await perform("jobs", bindingId);
-          if (value !== undefined && !cancelled) setJobs(Schema.decodeUnknownSync(Jobs)(value));
+          if (value === undefined || cancelled) return;
+          const next = Schema.decodeUnknownSync(Jobs)(value);
+          setJobs(next);
+          if (!seeded.current) {
+            seeded.current = true;
+            setOpenJobId(next.find((job) => job.conclusion === "failure")?.jobId);
+          }
         } catch {
           if (!cancelled) setNotice("GitHub job records could not be read.");
         }
@@ -84,26 +94,54 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
       )}
       {jobs && jobs.length > 0 && (
         <div className="flex flex-col divide-y divide-border rounded-xl ring-1 ring-border ring-inset">
-          {jobs.map((job) => (
-            <div key={job.jobId} className="flex items-center gap-3 px-3.5 py-2.5">
-              <Tooltip>
-                <TooltipTrigger
-                  render={<span tabIndex={0} />}
-                  className="min-w-0 flex-1 truncate rounded outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                >
-                  {job.name}
-                </TooltipTrigger>
-                <TooltipContent>
-                  Run {job.runId}, job {job.jobId}
-                  {job.runnerName ? `, runner ${job.runnerName}` : ""}
-                </TooltipContent>
-              </Tooltip>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                {formatRelative(job.updatedAt)}
-              </span>
-              <JobStatus status={job.status} conclusion={job.conclusion} />
-            </div>
-          ))}
+          {jobs.map((job) => {
+            const open = openJobId === job.jobId;
+            const logId = `${bindingId}-job-${job.jobId}-log`;
+            return (
+              <div key={job.jobId}>
+                <div className="flex items-center gap-3 px-3.5 py-2.5">
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-expanded={open}
+                    aria-controls={open ? logId : undefined}
+                    aria-label={`${open ? "Hide" : "Show"} log for ${job.name}`}
+                    onClick={() => setOpenJobId(open ? undefined : job.jobId)}
+                  >
+                    <ChevronRightIcon
+                      className={cn("motion-safe:transition-transform", open && "rotate-90")}
+                    />
+                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={<span tabIndex={0} />}
+                      className="min-w-0 flex-1 truncate rounded outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    >
+                      {job.name}
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Run {job.runId}, job {job.jobId}
+                      {job.runnerName ? `, runner ${job.runnerName}` : ""}
+                    </TooltipContent>
+                  </Tooltip>
+                  <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {formatRelative(job.updatedAt)}
+                  </span>
+                  <JobStatus status={job.status} conclusion={job.conclusion} />
+                </div>
+                {open && (
+                  <div id={logId} className="px-3.5 pb-3">
+                    <JobLog
+                      key={job.jobId}
+                      bindingId={bindingId}
+                      jobId={job.jobId}
+                      htmlUrl={job.htmlUrl}
+                    />
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
       <Dialog open={recovering} onOpenChange={setRecovering}>
