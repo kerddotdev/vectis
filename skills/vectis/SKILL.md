@@ -36,6 +36,7 @@ Every change is an operation: `accepted`, `running`, `action_required`, `succeed
 - Completed activity history expires after 30 days, or beyond the newest 300 completions once older than 24 hours. Recent, unfinished and actively owned work stays; unlinked terminal maintenance expires after 24 hours. A pruned request key returns `operation_expired` and must not be replayed as new work. An older service may omit `activities` (treat as empty) and `revision` (change state is unknown).
 - The same command closes an `action_required` operation that nothing is working on any more, after you reported it to the user. An interrupted runner and an image preparation refuse it: they have their own recovery commands.
 - Output is always JSON. Exit codes: 0 success, 1 failed or cancelled, 3 action required or still pending. Errors look like `{"error":{"code","message","nextStep"}}`; follow `nextStep`.
+- Displayed logs, stored operation details and retained runner and preparation diagnostics redact recognized credentials.
 - When something fails or hangs, read `vectis logs --lines 200 --json` or MCP `vectis_logs` before retrying.
 
 ## Service
@@ -63,6 +64,7 @@ An environment is a prepared guest image. Its ID becomes the runner label.
 - Ubuntu 24.04: `vectis environment prepare-linux <id> --image-directory <dir> --storage-path <dir> --wait --json`. Needs about 8 GiB free. Resume an interrupted preparation with `environment resume <setup-id>`.
 - macOS 26: `environment install-macos <id> --image-directory <dir> --storage-path <dir>` downloads Apple's large restore image unless `--restore-path` points at a local one, and needs 40 to 60 GiB. It stops at `action_required`: the user completes Setup Assistant in `environment open-macos-setup`, then `connect-macos-guest`, `verify-macos-guest`, shuts the guest down and `finish-macos-setup`. `discard-macos` deletes an unregistered attempt only with the user's confirmation.
 - Windows 11 (experimental): `environment install-windows` needs the user's own ISO, VirtIO drivers ISO, ARM64 UEFI firmware and license acceptance, plus QEMU, qemu-img and swtpm that the user installs.
+- Interrupted Windows setup preserves its disk and setup identity. Inspect the private `setup.ppm`, host `preparation.log` and `bootstrap-diagnostic.json` when available. The latter retains the guest bootstrap error; only its known stage is exposed in the operation message. Resume with `environment resume-windows <setup-id>` after confirmed VM exit. Resume regenerates setup media and retries a failed bootstrap once over SSH; unreachable SSH requires human recovery. Never share setup media, credentials or detailed diagnostics.
 - `environment configure <id> --cpu --memory-mib --storage-path` changes defaults for future VMs; a VM may use at most 75% of host memory. `vectis storage --json` separates image and VM disk usage.
 - Downloading or preparing images uses many gigabytes. Only start it when the user asked.
 
@@ -83,6 +85,7 @@ An environment is a prepared guest image. Its ID becomes the runner label.
 - A failed runner whose guest connection was lost or whose runner process exited keeps `diagnostics` (runner output, SSH error, host network and guest state) in its operation `result`; read it with `vectis operation get <id> --json` before retrying.
 - An interrupted runner or VM needs `runner reconcile <operation-id>` or `instance reconcile <id>` after the VM is confirmed stopped. Do not start new runners to hide an uncertain cleanup.
 - Runner reconciliation can close a request with no cloud lease only after confirming VM cleanup and recording the request as released in the cloud. An unavailable cloud remains unresolved; missing local lease metadata alone never proves cleanup.
+- Failed file cleanup after an owned VM exits retains an exit receipt for instance reconciliation. A leftover directory alone does not prove the VM is running or stopped.
 
 A job that stays queued usually has one of these causes. Check them in order:
 

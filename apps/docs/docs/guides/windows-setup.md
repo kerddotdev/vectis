@@ -57,7 +57,9 @@ The service reports success only after checking guest ARM64 architecture, clock 
 
 ## What the guest contains
 
-Windows installs unattended from start to finish, so nobody is ever inside the guest to add anything by hand. Preparation therefore installs one thing a workflow cannot do without: Git. It downloads the pinned MinGit ARM64 build published by Git for Windows, the same portable build GitHub's own runner images use, verifies its SHA-256, unpacks it into `C:\Program Files\Git` and puts it on the machine `Path`. Without it `actions/checkout` has no `git`. The installed version is recorded in the guest at `C:\ProgramData\Vectis\toolchain.json` together with the Windows build.
+The recipe is designed to install Windows unattended. Preparation installs one thing a workflow cannot do without: Git. It downloads the pinned MinGit ARM64 build published by Git for Windows, the same portable build GitHub's own runner images use, verifies its SHA-256, unpacks it into `C:\Program Files\MinGit` and puts it on the machine `Path`. MinGit's configuration includes the standard `C:\Program Files\Git` configuration, so installing MinGit there would create a circular include. Without Git, `actions/checkout` cannot check out the repository. The installed version is recorded in the guest at `C:\ProgramData\Vectis\toolchain.json` together with the Windows build.
+
+The download uses basic parsing to avoid the [Windows PowerShell 5.1 web-content confirmation prompt](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest?view=powershell-5.1). It still verifies the pinned SHA-256 before extracting Git.
 
 Everything else comes from the workflow. Windows 11 provides PowerShell, `curl` and `tar`; `actions/setup-*` actions download their own toolchains at job time; build tools, SDKs and package managers are a job's own step. Nothing a job installs survives it, because every VM starts from the same base image.
 
@@ -70,4 +72,8 @@ vectis environment resume-windows <setup-id> --json
 
 Closing the desktop does not cancel the service operation. Cancellation preserves the owned disk for diagnosis and resume. The previous VM must have a matching exit receipt before another attempt is admitted. An uncertain process state blocks new VM starts.
 
-An interrupted operation reports `action_required` with the setup ID and private directory. Its `setup.ppm` screenshot and `preparation.log` can help diagnose guest setup failures. Screenshots may contain guest information; keep them local. Resume uses the same setup identity and disk, not a second fresh installation. A changed environment configuration requires a separate setup.
+An interrupted operation reports `action_required` with the setup ID and private directory. Its `setup.ppm` screenshot and `preparation.log` can help diagnose guest setup failures. The preparation log contains host runtime output, not the guest PowerShell error. The bootstrap records its failing stage, error message and script line in `C:\ProgramData\Vectis\diagnostic.json`. When SSH remains reachable, Vectis saves a bounded copy as `bootstrap-diagnostic.json` in the private setup directory before stopping the VM. Only the known stage appears in the operation message; the detailed error stays local. Older setup media may have only the generic failure marker. Keep screenshots, diagnostics and setup credentials local.
+
+Resume uses the same setup identity and disk, not a second fresh installation. It regenerates setup media from the current service recipe and retries a failed bootstrap once if SSH is reachable. A new bootstrap attempt clears old completion and failure markers before running. A changed environment configuration requires a separate setup.
+
+If SSH cannot start or the firewall blocks it, automatic bootstrap retry cannot reach the guest. The setup may need human console recovery; repeatedly resuming does not fix unreachable SSH. Preserve the setup disk and inspect its screenshot and local diagnostics before deciding how to recover. Do not treat a stopped or unreachable guest as a completed environment, or disable pinned host-key checking to reach it.

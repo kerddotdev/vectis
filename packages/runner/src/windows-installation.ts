@@ -1,3 +1,4 @@
+import { redact } from "../../client/src/redact.js";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, copyFile, mkdir, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
@@ -18,6 +19,7 @@ import { verifyGuestReadiness } from "./guest-ready.js";
 import { runProcess } from "./process.js";
 import { waitForQemu } from "./qmp.js";
 import { windowsBootstrapCommand } from "./windows-seed.js";
+import { windowsBootstrapFailure } from "./windows-bootstrap.js";
 import { windowsVmArguments } from "./windows-arguments.js";
 import { prepareWindowsMedia, type SetupCredentials } from "./windows-media.js";
 import type { RuntimeOptions } from "./runtime.js";
@@ -208,8 +210,10 @@ export async function installWindowsGuest(
   child.stdin.on("error", () => {});
   child.on("error", () => {});
   let diagnostic = "";
+  let diagnosticTruncated = false;
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
+    diagnosticTruncated ||= diagnostic.length + chunk.length > 65536;
     diagnostic = (diagnostic + chunk).slice(-65536);
   });
   const exited = new AbortController();
@@ -266,9 +270,10 @@ export async function installWindowsGuest(
         const lines = result.stdout.trim().split(/\r?\n/);
         if (lines.at(-1)?.trim() === "VECTIS_SETUP_FAILED") {
           if (!resuming || bootstrapRetried)
-            throw new VectisError(
-              "guest_preparation_failed",
-              "Windows bootstrap reported a failure. Inspect guest diagnostics and resume setup after correcting the cause.",
+            throw await windowsBootstrapFailure(
+              connection,
+              directory,
+              AbortSignal.any([bounded, AbortSignal.timeout(15000)]),
             );
           bootstrapRetried = true;
           const retry = await executeGuest(
@@ -280,9 +285,10 @@ export async function installWindowsGuest(
             },
           );
           if (retry.exitCode !== 0)
-            throw new VectisError(
-              "guest_preparation_failed",
-              "Windows bootstrap could not complete with the resumed setup media.",
+            throw await windowsBootstrapFailure(
+              connection,
+              directory,
+              AbortSignal.any([bounded, AbortSignal.timeout(15000)]),
             );
           continue;
         }
@@ -346,7 +352,13 @@ export async function installWindowsGuest(
       ]);
     } finally {
       timer.abort();
-      await writeFile(join(directory, "preparation.log"), diagnostic, { mode: 0o600 });
+      const newline = diagnostic.indexOf("\n");
+      const complete = diagnosticTruncated
+        ? newline < 0
+          ? ""
+          : diagnostic.slice(newline + 1)
+        : diagnostic;
+      await writeFile(join(directory, "preparation.log"), redact(complete), { mode: 0o600 });
     }
   }
 }
