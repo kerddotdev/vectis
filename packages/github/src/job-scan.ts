@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { readRunActors, withRunActors } from "./run-actors.js";
 import { GitHubJob } from "./job.js";
 
 const RunsPage = Schema.Struct({
@@ -12,6 +13,7 @@ export async function scanRepositoryJobs(
   save: (jobs: readonly GitHubJob[]) => Promise<void>,
   knownRunIds: readonly number[],
   requestLimit = 80,
+  actorRepositoryId?: number,
 ) {
   let requests = 0;
   let jobs = 0;
@@ -41,6 +43,12 @@ export async function scanRepositoryJobs(
     }
   }
   for (const runId of runIds) {
+    let actors: Awaited<ReturnType<typeof readRunActors>> | undefined;
+    if (actorRepositoryId !== undefined) {
+      if (!available()) return { runs, jobs, complete: false };
+      requests++;
+      actors = await readRunActors(read, actorRepositoryId, runId);
+    }
     let page = 1;
     while (true) {
       if (!available()) return { runs, jobs, complete: false };
@@ -50,7 +58,7 @@ export async function scanRepositoryJobs(
       );
       if (result.jobs.some((job) => job.run_id !== runId))
         throw new Error("GitHub returned a job from a different workflow run.");
-      await save(result.jobs);
+      await save(actors ? result.jobs.map((job) => withRunActors(job, actors)) : result.jobs);
       jobs += result.jobs.length;
       if (page * 50 >= result.total_count) {
         runs++;

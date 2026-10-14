@@ -1,8 +1,11 @@
 import { afterEach, expect, test, vi } from "vitest";
+import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
 import { runRunnerTask } from "./runner-task.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
+import { VectisError, type Environment } from "../../../packages/protocol/src/index.js";
+
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
 vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../packages/runner/src/guest.js")>()),
@@ -11,7 +14,19 @@ vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
 vi.mock("../../../packages/runner/src/guest-diagnostics.js", () => ({
   collectRunnerDiagnostics: vi.fn(async () => "collected"),
 }));
-afterEach(() => vi.resetAllMocks());
+const listeningTasks: Array<{ abort: AbortController; done: Promise<unknown> }> = [];
+afterEach(async () => {
+  for (const task of listeningTasks) task.abort.abort();
+  await Promise.all(listeningTasks.map((task) => task.done));
+  listeningTasks.length = 0;
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.resetAllMocks();
+});
+afterEach(() => {
+  vi.resetAllMocks();
+  vi.useRealTimers();
+});
 const environment = {
   id: "test",
   name: "Test",
@@ -21,17 +36,24 @@ const environment = {
   cpu: 1,
   memoryMiB: 512,
 };
-function fixture() {
+function fixture(os: Environment["os"] = "linux") {
   const events: string[] = [];
   const broker = {
-    findRunner: vi.fn(async () => null),
+    reconcileRunner: vi.fn(async () => {
+      throw new Error("unused");
+    }),
     prepareRunner: vi.fn(async () => ({
       state: "ready" as const,
       id: "lease",
       runnerId: 12,
       encodedConfig: "c2VjcmV0",
       environmentId: "test",
-      os: "linux" as const,
+      access: { repositoryId: 2, actors: "any" as const, approval: "automatic" as const },
+      os,
+    })),
+    runnerStatus: vi.fn<RunnerBroker["runnerStatus"]>(async () => ({
+      busy: false,
+      status: "online",
     })),
     releaseRunner: vi.fn(async () => {
       events.push("release");
@@ -67,6 +89,23 @@ function fixture() {
   });
   return { controls, broker, events };
 }
+test("a failed pinned guest identity never allocates JIT credentials or sends runner scripts", async () => {
+  const { controls, broker } = fixture();
+  vi.mocked(readyGuest).mockRejectedValue(
+    new GuestUnavailableError("Host key verification failed"),
+  );
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({ status: "failed", code: "guest_unavailable" });
+  expect(broker.prepareRunner).not.toHaveBeenCalled();
+  expect(executeGuest).not.toHaveBeenCalled();
+  expect(controls.stop).toHaveBeenCalledOnce();
+});
 test("stops the VM before removing registration and never persists JIT configuration", async () => {
   const { controls, events } = fixture();
   const result = await runRunnerTask(
@@ -111,6 +150,31 @@ test("a lost registration response requires reconciliation instead of a fresh re
   expect(controls.stop).toHaveBeenCalledOnce();
   expect(broker.prepareRunner).toHaveBeenCalledOnce();
 });
+test.each(["public_runner_approval_required", "private_runner_approval_required"])(
+  "%s stops the owned VM and retains actionable policy guidance",
+  async (code) => {
+    const { controls, broker } = fixture();
+    broker.prepareRunner.mockRejectedValue(
+      new VectisError(code, "Approval is required.", "Change the GitHub fork approval policy."),
+    );
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      environment,
+      controls,
+      AbortSignal.timeout(1000),
+    );
+    expect(result).toMatchObject({
+      status: "action_required",
+      code,
+      message: "Approval is required.",
+      nextStep: expect.stringContaining("Change the GitHub fork approval policy."),
+    });
+    expect(controls.stop).toHaveBeenCalledOnce();
+    expect(broker.releaseRunner).not.toHaveBeenCalled();
+    expect(executeGuest).toHaveBeenCalledTimes(1);
+  },
+);
 test("cancellation during VM startup still waits for owned cleanup and never registers", async () => {
   const { controls, broker } = fixture();
   const abort = new AbortController();
@@ -216,3 +280,396 @@ test("successful and cancelled runners gather no diagnostics", async () => {
   await runRunnerTask("binding", "key", environment, controls, abort.signal);
   expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
 });
+
+async function listeningFixture(withJob = true) {
+  vi.useFakeTimers();
+  const { controls, broker, events } = fixture();
+  const abort = new AbortController();
+  const needed = vi.fn(async (_signal: AbortSignal) => true);
+  let complete = () => {};
+  vi.mocked(executeGuest)
+    .mockImplementationOnce(async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+    }))
+    .mockImplementationOnce(async (_connection, _script, { signal }) => {
+      await new Promise<void>((resolve, reject) => {
+        const cancelled = () => reject(new VectisError("guest_cancelled", "Guest cancelled."));
+        complete = () => {
+          signal.removeEventListener("abort", cancelled);
+          resolve();
+        };
+        signal.addEventListener("abort", cancelled, { once: true });
+        if (signal.aborted) cancelled();
+      });
+      return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+    });
+  const done = runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    { ...controls, ...(withJob ? { needed } : {}) },
+    abort.signal,
+  );
+  listeningTasks.push({ abort, done });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(controls.progress).toHaveBeenLastCalledWith(
+    expect.objectContaining({ stage: "listening" }),
+  );
+  return { controls, broker, events, abort, needed, done, complete };
+}
+
+test.each([
+  { busy: false, status: "online" as const },
+  { busy: false, status: "offline" as const },
+  { missing: true as const },
+])(
+  "an idle runner with status %j drains only after ten minutes and releases capacity",
+  async (status) => {
+    const { broker, events, needed, done } = await listeningFixture();
+    broker.runnerStatus.mockResolvedValue(status);
+    needed.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+    expect(events).toEqual([]);
+    expect(needed).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await done).toMatchObject({
+      status: "cancelled",
+      code: "runner_idle",
+      progress: { stage: "finished" },
+    });
+    expect(events).toEqual(["stop", "release"]);
+    expect(broker.releaseRunner).toHaveBeenCalledWith("lease", expect.any(AbortSignal));
+    expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("a busy runner keeps its VM even after the requested job no longer needs capacity", async () => {
+  const { broker, events, needed, done, complete } = await listeningFixture();
+  needed.mockResolvedValue(false);
+  await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+  expect(events).toEqual([]);
+  expect(needed).toHaveBeenCalledTimes(2);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+  expect(events).toEqual(["stop", "release"]);
+});
+
+test("the idle window restarts after the runner was busy", async () => {
+  const { broker, events, needed, done } = await listeningFixture();
+  needed.mockResolvedValue(false);
+  await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+  await vi.advanceTimersByTimeAsync(30000);
+  broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
+  await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+  expect(events).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
+});
+
+test("an idle runner whose requested job still needs queued capacity keeps listening", async () => {
+  const { events, needed, done, complete } = await listeningFixture();
+  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+  expect(needed.mock.calls.length).toBeGreaterThan(2);
+  expect(events).toEqual([]);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
+test.each(["status", "job"] as const)(
+  "%s lookup errors keep listening and require a fresh idle window",
+  async (lookup) => {
+    const { broker, events, needed, done } = await listeningFixture();
+    if (lookup === "status") {
+      broker.runnerStatus.mockRejectedValue(new Error("GitHub unavailable"));
+      needed.mockResolvedValue(false);
+    } else needed.mockRejectedValue(new Error("Job unknown"));
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+    expect(events).toEqual([]);
+    broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
+    needed.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+    expect(events).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
+  },
+);
+
+test("a job assigned during the demand read prevents drain", async () => {
+  const { broker, events, needed, done, complete } = await listeningFixture();
+  needed.mockImplementation(async () => {
+    broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+    return false;
+  });
+  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+  expect(events).toEqual([]);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
+test.each(["stop", "release"] as const)(
+  "idle drain with failed %s cleanup needs reconciliation",
+  async (step) => {
+    const { controls, broker, needed, done } = await listeningFixture();
+    needed.mockResolvedValue(false);
+    if (step === "stop") controls.stop.mockRejectedValue(new Error("VM exit unknown"));
+    else broker.releaseRunner.mockRejectedValue(new Error("Registration unknown"));
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(await done).toMatchObject({
+      status: "action_required",
+      code: "runner_cleanup_required",
+    });
+    if (step === "stop") expect(broker.releaseRunner).not.toHaveBeenCalled();
+  },
+);
+
+test("cancellation interrupts an in-flight status read and releases its watcher", async () => {
+  const { broker, abort, done } = await listeningFixture();
+  broker.runnerStatus.mockImplementation(
+    (_id, signal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+  );
+  await vi.advanceTimersByTimeAsync(30000);
+  abort.abort();
+  expect(await done).toMatchObject({ status: "cancelled" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("the six-hour listening timeout still cleans up without reporting idle drain", async () => {
+  const timeout = new AbortController();
+  const originalTimeout = AbortSignal.timeout;
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) =>
+    ms === 6 * 60 * 60 * 1000 ? timeout.signal : originalTimeout(ms),
+  );
+  const { done, events } = await listeningFixture();
+  timeout.abort(new DOMException("Timed out", "TimeoutError"));
+  expect(await done).toMatchObject({ status: "failed", code: "guest_cancelled" });
+  expect(events).toEqual(["stop", "release"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a manual runner without a requested job keeps listening beyond the idle window", async () => {
+  const { broker, events, done, complete } = await listeningFixture(false);
+  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+  expect(events).toEqual([]);
+  expect(broker.runnerStatus).not.toHaveBeenCalled();
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
+test.each([0, 1])(
+  "a refused assignment is failed even when the listener exits %s",
+  async (exitCode) => {
+    const { controls, events } = fixture();
+    vi.mocked(executeGuest)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+      .mockResolvedValueOnce({
+        exitCode,
+        stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\n",
+        stderr: "",
+        truncated: false,
+      });
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      environment,
+      controls,
+      AbortSignal.timeout(1000),
+    );
+    expect(result).toMatchObject({ status: "failed", code: "runner_assignment_rejected" });
+    expect(events).toEqual(["stop", "release"]);
+  },
+);
+
+function heldListener() {
+  const state: { signal?: AbortSignal; finish?: () => void } = {};
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockImplementationOnce(async (_connection, _script, options) => {
+      state.signal = options.signal;
+      return new Promise((resolve, reject) => {
+        const cancel = () => reject(new VectisError("guest_cancelled", "Listening aborted."));
+        options.signal.addEventListener("abort", cancel, { once: true });
+        state.finish = () => {
+          options.signal.removeEventListener("abort", cancel);
+          resolve({ exitCode: 0, stdout: "", stderr: "", truncated: false });
+        };
+      });
+    });
+  return state;
+}
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s marker backstop aborts listening and stops the VM before releasing the runner",
+  async (os) => {
+    vi.useFakeTimers();
+    const { controls, events } = fixture(os);
+    const state = heldListener();
+    vi.mocked(executeGuest).mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\nactor not allowed\n",
+      stderr: "",
+      truncated: false,
+    });
+    const result = runRunnerTask(
+      "binding",
+      "key",
+      { ...environment, os },
+      controls,
+      new AbortController().signal,
+    );
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(executeGuest).toHaveBeenCalledTimes(2);
+    expect(state.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toMatchObject({
+      status: "failed",
+      code: "runner_assignment_rejected",
+      message: "Vectis refused the assigned GitHub job: actor not allowed.",
+    });
+    expect(state.signal?.aborted).toBe(true);
+    expect(events).toEqual(["stop", "release"]);
+    expect(executeGuest).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.stringContaining("assignment-rejected"),
+      expect.objectContaining({ shell: os === "windows" ? "powershell" : "bash" }),
+    );
+    expect(vi.getTimerCount()).toBe(0);
+    expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
+  },
+);
+
+test("transient marker check errors leave listening active and the next check can reject", async () => {
+  vi.useFakeTimers();
+  const { controls, events } = fixture();
+  const state = heldListener();
+  vi.mocked(executeGuest)
+    .mockRejectedValueOnce(new GuestUnavailableError("SSH connection reset"))
+    .mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\nrepository id mismatch\n",
+      stderr: "",
+      truncated: false,
+    });
+  const result = runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    new AbortController().signal,
+  );
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(state.signal?.aborted).toBe(false);
+  expect(events).toEqual([]);
+  await vi.advanceTimersByTimeAsync(10000);
+  await expect(result).resolves.toMatchObject({
+    status: "failed",
+    code: "runner_assignment_rejected",
+    message: expect.stringContaining("repository id mismatch"),
+  });
+  expect(events).toEqual(["stop", "release"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a listener that exits before the first poll still reads the rejection reason", async () => {
+  const { controls, events } = fixture();
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\nrun approval mismatch\n",
+      stderr: "",
+      truncated: false,
+    });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({
+    status: "failed",
+    code: "runner_assignment_rejected",
+    message: expect.stringContaining("run approval mismatch"),
+  });
+  expect(events).toEqual(["stop", "release"]);
+});
+
+test("cancellation stops an in-flight marker check and releases all monitoring timers", async () => {
+  vi.useFakeTimers();
+  const { controls, events } = fixture();
+  heldListener();
+  let probeSignal: AbortSignal | undefined;
+  vi.mocked(executeGuest).mockImplementationOnce(async (_connection, _script, options) => {
+    probeSignal = options.signal;
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener(
+        "abort",
+        () => reject(new GuestUnavailableError("SSH aborted")),
+        { once: true },
+      );
+    });
+  });
+  const abort = new AbortController();
+  const result = runRunnerTask("binding", "key", environment, controls, abort.signal);
+  await vi.advanceTimersByTimeAsync(19000);
+  expect(executeGuest).toHaveBeenCalledTimes(3);
+  expect(probeSignal?.aborted).toBe(false);
+  abort.abort();
+  await expect(result).resolves.toMatchObject({ status: "cancelled" });
+  expect(probeSignal?.aborted).toBe(true);
+  expect(events).toEqual(["stop", "release"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a witnessed policy rejection stays failed if cancellation arrives during cleanup", async () => {
+  const { controls } = fixture();
+  const abort = new AbortController();
+  controls.stop.mockImplementation(async () => {
+    abort.abort();
+  });
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\nactor not allowed\n",
+      stderr: "",
+      truncated: false,
+    });
+  const result = await runRunnerTask("binding", "key", environment, controls, abort.signal);
+  expect(result).toMatchObject({ status: "failed", code: "runner_assignment_rejected" });
+});
+
+test.each(["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprepared"])(
+  "runner startup preserves actionable %s without allocating credentials",
+  async (code) => {
+    const { controls, broker } = fixture();
+    controls.start.mockRejectedValue(
+      new VectisError(code, "Rosetta needs setup.", "Fix Rosetta setup."),
+    );
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      { ...environment, x64: "rosetta" },
+      controls,
+      AbortSignal.timeout(1000),
+    );
+    expect(result).toMatchObject({
+      status: "action_required",
+      code,
+      nextStep: "Fix Rosetta setup.",
+    });
+    expect(broker.prepareRunner).not.toHaveBeenCalled();
+    expect(controls.stop).toHaveBeenCalledOnce();
+  },
+);

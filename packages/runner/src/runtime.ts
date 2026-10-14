@@ -1,3 +1,4 @@
+import { validateEnvironmentEgress } from "./environment-network.js";
 import { windowsVmArguments } from "./windows-arguments.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
@@ -11,7 +12,10 @@ import { availableHostMemory } from "./memory.js";
 import { runProcess } from "./process.js";
 import { probeStorage } from "./storage-probe.js";
 import { waitForAppleVm } from "./apple.js";
+import { readyGuest } from "./guest-ready.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
+import { instanceIdentity } from "./instance-identity.js";
+import { verifyQemuIsolation } from "./qemu-isolation.js";
 
 export interface RuntimeOptions {
   readonly home: string;
@@ -28,7 +32,25 @@ export interface OwnedInstance {
   readonly macAddress?: string;
   readonly sshHost?: string;
   readonly sshPort?: number;
+  readonly knownHostsPath?: string;
 }
+
+async function removeInstanceDirectory(
+  directory: string,
+  receipt?: { instanceId: string; pid: number },
+) {
+  try {
+    await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+  } catch (error) {
+    // Recursive removal may delete the helper's receipt before failing on Finder metadata.
+    if (receipt)
+      await writeFile(join(directory, "exit-receipt.json"), JSON.stringify(receipt), {
+        mode: 0o600,
+      }).catch(() => {});
+    throw error;
+  }
+}
+
 export class VmRuntime {
   private readonly owned = new Map<string, OwnedInstance>();
   constructor(readonly options: RuntimeOptions) {}
@@ -36,6 +58,12 @@ export class VmRuntime {
     return join(environment.storagePath ?? join(this.options.home, "instances"), id);
   }
   validateResources(environment: Environment) {
+    validateEnvironmentEgress(environment);
+    if (environment.x64 === "rosetta" && environment.os !== "linux")
+      throw new VectisError(
+        "unsupported",
+        "Rosetta x86_64 support is available only for Linux environments.",
+      );
     if (
       !isAbsolute(environment.basePath) ||
       (environment.storagePath && !isAbsolute(environment.storagePath))
@@ -104,6 +132,16 @@ export class VmRuntime {
         "The environment still needs setup.",
         "Complete guest setup and mark the prepared environment ready.",
       );
+    if (
+      environment.os === "linux" &&
+      environment.sshUser &&
+      environment.sshHostKeyMode !== "instance"
+    )
+      throw new VectisError(
+        "setup_required",
+        "This Linux image shares its SSH host identity between instances.",
+        "Prepare a new Linux environment to enable per-instance SSH host keys.",
+      );
     const executable = environment.os === "windows" ? this.options.qemu : this.options.appleHelper;
     if (!executable)
       throw new VectisError(
@@ -114,6 +152,7 @@ export class VmRuntime {
     await access(executable, constants.X_OK).catch(() => {
       throw new VectisError("runtime_missing", "The configured VM runtime is not executable.");
     });
+    if (environment.os === "windows") await verifyQemuIsolation(executable, signal);
     const root = environment.storagePath ?? join(this.options.home, "instances");
     await probeStorage(
       environment.os === "macos" ? join(environment.basePath, "disk.img") : environment.basePath,
@@ -123,9 +162,11 @@ export class VmRuntime {
     );
     const directory = this.directoryFor(id, environment);
     await mkdir(directory, { mode: 0o700 });
+    let launched = false;
     try {
       signal?.throwIfAborted();
       let args: string[];
+      let knownHostsPath: string | undefined;
       if (environment.os === "windows") {
         if (
           !environment.firmwarePath ||
@@ -158,12 +199,19 @@ export class VmRuntime {
         );
         args = windowsVmArguments({
           firmwarePath: environment.firmwarePath,
+          ...(environment.egress !== undefined ? { egress: environment.egress } : {}),
           cpu: environment.cpu,
           memoryMiB: environment.memoryMiB,
         });
       } else {
         const destination = join(directory, environment.os === "macos" ? "bundle" : "disk.img");
         await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination], signal);
+        let seedPath = environment.seedPath;
+        if (environment.os === "linux" && environment.sshHostKeyMode === "instance") {
+          const identity = await instanceIdentity(directory, id, signal);
+          seedPath = identity.seedPath;
+          knownHostsPath = identity.knownHostsPath;
+        }
         args = [
           "run",
           environment.os,
@@ -171,7 +219,8 @@ export class VmRuntime {
           String(environment.cpu),
           String(environment.memoryMiB),
           join(directory, "efi.bin"),
-          ...(environment.seedPath ? [resolve(environment.seedPath)] : []),
+          ...(seedPath ? [resolve(seedPath)] : []),
+          ...(environment.x64 === "rosetta" ? ["--rosetta"] : []),
         ];
       }
       await writeFile(
@@ -204,12 +253,16 @@ export class VmRuntime {
           },
         },
       );
+      launched = true;
       child.stdin?.on("error", () => {});
       const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
       const settled = closed.then(async () => {
         let cleaned = false;
         try {
-          await rm(directory, { recursive: true, force: true });
+          await removeInstanceDirectory(
+            directory,
+            child.pid ? { instanceId: id, pid: child.pid } : undefined,
+          );
           cleaned = true;
         } finally {
           this.owned.delete(id);
@@ -217,7 +270,13 @@ export class VmRuntime {
         }
       });
       void settled.catch(() => {});
-      const instance = { id, process: child, directory, settled };
+      const instance = {
+        id,
+        process: child,
+        directory,
+        settled,
+        ...(knownHostsPath ? { knownHostsPath } : {}),
+      };
       this.owned.set(id, instance);
       const cancel = () => {
         void this.stop(id).catch(() => {});
@@ -229,6 +288,20 @@ export class VmRuntime {
         if (environment.os === "windows")
           network = { sshHost: "127.0.0.1", sshPort: await waitForQemu(child) };
         else network = await waitForAppleVm(child);
+        if (environment.x64 === "rosetta")
+          await readyGuest(
+            environment,
+            {
+              id,
+              environmentId: environment.id,
+              status: "running",
+              pid: child.pid ?? 0,
+              createdAt: new Date().toISOString(),
+              ...network,
+              ...(knownHostsPath ? { knownHostsPath } : {}),
+            },
+            signal ?? new AbortController().signal,
+          );
         signal?.throwIfAborted();
         if (child.exitCode !== null || child.signalCode !== null)
           throw new VectisError("vm_start_failed", "The VM stopped during startup.");
@@ -245,7 +318,7 @@ export class VmRuntime {
       this.owned.set(id, ready);
       return ready;
     } catch (error) {
-      await rm(directory, { recursive: true, force: true });
+      if (!launched) await removeInstanceDirectory(directory);
       throw error;
     }
   }
@@ -275,7 +348,7 @@ export class VmRuntime {
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) return false;
       }
-      await rm(directory, { recursive: true, force: true });
+      await removeInstanceDirectory(directory, receipt);
       return true;
     } catch {
       return false;

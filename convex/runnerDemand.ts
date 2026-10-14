@@ -4,7 +4,8 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel.js";
 import { decodeCommand } from "../packages/protocol/src/index.js";
 import { matchesRunnerLabels } from "../packages/github/src/runner-labels.js";
-import { presence } from "./presence.js";
+import { jobAccess } from "../packages/github/src/access-policy.js";
+import { onlineWindow, presence } from "./presence.js";
 
 export const forRepository = internalMutation({
   args: { installationId: v.number(), repositoryId: v.number() },
@@ -43,6 +44,58 @@ export function automaticBindings(ctx: MutationCtx, machineId: Id<"machines">) {
 }
 
 const failureRetryDelay = 60000;
+// Unclaimed runner requests get two minutes for delivery, with a ten-minute cap for online hosts.
+const claimTimeoutMs = 120000;
+const claimDeadlineMs = 600000;
+
+export const expireUnclaimed = internalMutation({
+  args: { operationId: v.id("operations") },
+  handler: async (ctx, { operationId }) => {
+    const operation = await ctx.db.get("operations", operationId);
+    if (!operation || operation.phase !== "accepted") return;
+    const now = Date.now();
+    const current = await presence(ctx, operation.machineId);
+    const online = current !== null && now - current.lastSeenAt < onlineWindow;
+    const remaining = operation.createdAt + claimDeadlineMs - now;
+    if (online && remaining > 0) {
+      await ctx.scheduler.runAfter(
+        Math.min(claimTimeoutMs, remaining),
+        internal.runnerDemand.expireUnclaimed,
+        {
+          operationId,
+        },
+      );
+      return;
+    }
+    await ctx.db.patch("operations", operationId, {
+      phase: "cancelled",
+      updatedAt: now,
+      resultJson: JSON.stringify({
+        status: "cancelled",
+        code: online ? "claim_timeout" : "machine_offline",
+        message: online
+          ? "The machine did not claim this runner request within ten minutes."
+          : "The machine went offline before it claimed this runner request.",
+        resultAvailableLocally: false,
+      }),
+    });
+  },
+});
+
+function expiredBeforeClaim(operation: Doc<"operations">) {
+  if (!operation.resultJson || operation.cancelRequested) return false;
+  try {
+    const result: unknown = JSON.parse(operation.resultJson);
+    return (
+      result !== null &&
+      typeof result === "object" &&
+      "code" in result &&
+      (result.code === "machine_offline" || result.code === "claim_timeout")
+    );
+  } catch {
+    return false;
+  }
+}
 
 // Runs on every heartbeat, so the reads an idle machine needs come first. Every return before the
 // scheduling loop is free of side effects, so this order schedules exactly what any other would.
@@ -75,7 +128,11 @@ export async function scheduleRunnerDemand(
             .eq("status", "queued"),
         )
         .take(50)
-    ).filter((job) => matchesRunnerLabels(job.labels, environment.os, environment.id));
+    ).filter(
+      (job) =>
+        jobAccess(binding.access, job) === undefined &&
+        matchesRunnerLabels(job.labels, environment.os, environment.id),
+    );
     if (!jobs.length) continue;
     const account = await ctx.db.get("githubAccounts", binding.accountId);
     if (account?.owner !== target.owner) continue;
@@ -129,16 +186,18 @@ export async function scheduleRunnerDemand(
           // A runner that succeeded served another job with the same labels; one that failed never
           // took this job, because the job is still queued. Both leave the job needing a runner.
           // A failure waits a minute, so a passing condition does not use up every attempt at once.
-          // A cancelled runner is retried only if the job changed after that attempt was scheduled,
-          // as when a job that waited for approval is queued again; a person's cancellation of an
-          // unchanged job stays final.
+          // Expiry before claim can retry unchanged jobs on another machine. A person's cancellation
+          // stays final unless the job changed after the attempt, as when approval queues it again.
           const previous = await ctx.db.get("operations", demand.operationId);
           if (
             previous?.phase !== "succeeded" &&
             !(
               previous?.phase === "failed" && previous.updatedAt <= Date.now() - failureRetryDelay
             ) &&
-            !(previous?.phase === "cancelled" && job.updatedAt > previous.createdAt)
+            !(
+              previous?.phase === "cancelled" &&
+              (expiredBeforeClaim(previous) || job.updatedAt > previous.createdAt)
+            )
           )
             continue;
         }
@@ -170,6 +229,9 @@ export async function scheduleRunnerDemand(
         };
         if (demand) await ctx.db.patch("runnerDemands", demand._id, record);
         else await ctx.db.insert("runnerDemands", record);
+        await ctx.scheduler.runAfter(claimTimeoutMs, internal.runnerDemand.expireUnclaimed, {
+          operationId,
+        });
         free--;
         scheduled = true;
         break;

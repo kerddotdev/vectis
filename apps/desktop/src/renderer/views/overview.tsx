@@ -5,7 +5,7 @@ import { ActivityRow } from "@/components/activity-row";
 import { EmptyState, List, Notice, Page, Row, Section, StatCard } from "@/components/layout";
 import { Reason } from "@/components/hint";
 import { OsTile } from "@/components/os-icon";
-import { InstanceStatus } from "@/components/status";
+import { InstanceStatus, StatusText } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,6 +17,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
 import { useStateApi } from "@/state";
+import { ApproveJobButton, useAwaitingApprovals } from "./repository-jobs";
 
 const cloudLabels = {
   connected: "Cloud connected",
@@ -36,6 +37,7 @@ export function Overview() {
   const recentActivity = activities
     .filter((activity) => activity.status !== "action_required")
     .slice(0, 8);
+  const approvals = useAwaitingApprovals(snapshot?.repositories ?? []);
   const instances = snapshot?.instances ?? [];
   const running = instances.filter((instance) => ["starting", "running"].includes(instance.status));
   const interrupted = instances.filter((instance) => instance.status === "interrupted");
@@ -161,9 +163,25 @@ export function Overview() {
           want.
         </Notice>
       )}
-      {attention.length > 0 && (
+      {(attention.length > 0 || approvals.length > 0) && (
         <Section title="Needs you" description="These are paused until you finish a step.">
           <List>
+            {approvals.map(({ bindingId, job }) => (
+              <Row
+                key={`${bindingId}:${job.jobId}`}
+                title={job.name}
+                detail={
+                  <span className="inline-flex items-center gap-1.5">
+                    <StatusText tone="attention" label="Awaiting your approval" />
+                    <span>
+                      · {repositoryName(snapshot?.repositories, bindingId)} ·{" "}
+                      {formatRelative(job.updatedAt)}
+                    </span>
+                  </span>
+                }
+                trailing={<ApproveJobButton bindingId={bindingId} job={job} />}
+              />
+            ))}
             {attention.map((activity) => (
               <ActivityRow key={activity.id} activity={activity} defaultOpen />
             ))}
@@ -265,4 +283,11 @@ function InstanceRow({ instance }: { instance: Instance }) {
       }
     />
   );
+}
+
+function repositoryName(
+  repositories: NonNullable<ReturnType<typeof useStateApi>["snapshot"]>["repositories"],
+  bindingId: string,
+) {
+  return repositories?.find((binding) => binding.id === bindingId)?.repositoryName ?? "Repository";
 }

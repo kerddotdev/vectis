@@ -5,7 +5,11 @@ import { internal } from "./_generated/api.js";
 import { receive } from "./githubWebhook.js";
 import { receive as receiveClerk } from "./clerkWebhook.js";
 import { setup, manifestCallback } from "./githubHttp.js";
-import { callback as githubOAuthCallback } from "./githubOAuth.js";
+import {
+  begin as githubOAuthBegin,
+  callback as githubOAuthCallback,
+  confirm as githubOAuthConfirm,
+} from "./githubOAuth.js";
 import { smallJson } from "./httpBody.js";
 
 import { pairing as controllerPairing, execute as controllerExecute } from "./controllerHttp.js";
@@ -14,6 +18,8 @@ const router = httpRouter();
 router.route({ path: "/controller/pairing", method: "POST", handler: controllerPairing });
 router.route({ path: "/controller/request", method: "POST", handler: controllerExecute });
 router.route({ path: "/github/oauth/callback", method: "GET", handler: githubOAuthCallback });
+router.route({ path: "/github/oauth/begin", method: "POST", handler: githubOAuthBegin });
+router.route({ path: "/github/oauth/confirm", method: "POST", handler: githubOAuthConfirm });
 router.route({ path: "/github/webhook", method: "POST", handler: receive });
 router.route({ path: "/clerk/webhook", method: "POST", handler: receiveClerk });
 router.route({ path: "/github/app/setup", method: "GET", handler: setup });

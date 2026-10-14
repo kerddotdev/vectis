@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { startService } from "./http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
-import { Snapshot } from "../../../packages/protocol/src/index.js";
+import { Snapshot, VectisError } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -208,7 +208,10 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     );
     expect((await client.wait(start.id)).status).toBe("succeeded");
     const snapshot = await client.status();
-    expect(snapshot.environments[0]).toEqual(environment);
+    expect(snapshot.environments[0]).toEqual({
+      ...environment,
+      network: { egress: "open", enforcement: "not_enforced" },
+    });
     expect(snapshot.instances[0]).toMatchObject({
       id: start.id,
       macAddress: "02:00:00:00:00:01",
@@ -301,4 +304,190 @@ test("machine runner limits reject invalid values and survive a service restart"
   const state = await new VectisClient(restarted.connection).status();
   expect(state.machine.maxRunners).toBe(3);
   expect(state.runnerCapacity?.max).toBe(3);
+});
+
+test("task failures are redacted in storage and the logs query before any display", async () => {
+  const { home, server, client } = await fixture();
+  const canary = "ghp_TaskFailureCanary123456789";
+  const error = new VectisError(
+    "runtime_missing",
+    `failed ${canary} exit 23`,
+    `token=${canary} inspect /tmp/runner`,
+  );
+  const validation = vi.spyOn(server.service.runtime, "validate").mockRejectedValue(error);
+  server.store.put("environment", "test", {
+    id: "test",
+    name: "Runner",
+    os: "linux",
+    state: "ready",
+    cpu: 1,
+    memoryMiB: 512,
+    basePath: join(home, "base.img"),
+  });
+  try {
+    const operation = await client.submit({ type: "environment.start", id: "test" }, "canary-task");
+    await server.service.drain();
+    await vi.waitFor(() =>
+      expect(server.store.get("operation", operation.id)).toMatchObject({
+        status: "action_required",
+        message: "failed [redacted] exit 23",
+        result: { nextStep: "token=[redacted] inspect /tmp/runner" },
+      }),
+    );
+    expect(validation).toHaveBeenCalledOnce();
+    const row = server.store.db
+      .prepare("SELECT body FROM records WHERE kind='operation' AND id=?")
+      .get(operation.id);
+    expect(row?.body).not.toContain(canary);
+    expect(JSON.stringify(await client.operation(operation.id))).not.toContain(canary);
+    await writeFile(join(home, "service.log"), `${error.message}\n${error.nextStep}\n`);
+    expect(await client.logs()).toEqual({
+      lines: ["failed [redacted] exit 23", "token=[redacted] inspect /tmp/runner"],
+      truncated: false,
+    });
+  } finally {
+    validation.mockRestore();
+  }
+});
+
+test("request errors redact credentials even when no operation was accepted", async () => {
+  const { server, client } = await fixture();
+  const canary = "RequestErrorCanary123456789";
+  const submit = vi.spyOn(server.service, "submit").mockImplementation(() => {
+    throw new VectisError(
+      "request_failed",
+      `secret=${canary}`,
+      `token=${canary} inspect /tmp/runner`,
+    );
+  });
+  try {
+    await expect(
+      client.submit({ type: "machine.pause", paused: true }, "rejected"),
+    ).rejects.toMatchObject({
+      code: "request_failed",
+      message: "secret=[redacted]",
+      nextStep: "token=[redacted] inspect /tmp/runner",
+    });
+    expect(server.store.snapshot().operations).toEqual([]);
+  } finally {
+    submit.mockRestore();
+  }
+});
+
+test("Linux Rosetta configuration persists, survives resource updates and off removes it", async () => {
+  const { home, server, client } = await fixture();
+  const basePath = join(home, "base.img");
+  await writeFile(basePath, "synthetic Linux image");
+  await client.submit(
+    {
+      type: "environment.register",
+      environment: {
+        id: "linux",
+        name: "Linux",
+        os: "linux",
+        basePath,
+        cpu: 1,
+        memoryMiB: 512,
+        state: "ready",
+      },
+    },
+    "register",
+  );
+  await server.service.drain();
+  for (const [key, configuration] of [
+    ["enable", { x64: "rosetta" }],
+    ["resources", { memoryMiB: 1024 }],
+    ["disable", { x64: "off" }],
+  ] as const) {
+    const operation = await client.submit(
+      { type: "environment.configure", id: "linux", ...configuration },
+      key,
+    );
+    await server.service.drain();
+    expect((await client.wait(operation.id)).status).toBe("succeeded");
+    const environment = (await client.status()).environments[0];
+    if (key === "disable") expect(environment).not.toHaveProperty("x64");
+    else expect(environment?.x64).toBe("rosetta");
+  }
+});
+
+test.each(["macos", "windows"] as const)("%s rejects Rosetta with a coded error", async (os) => {
+  const { home, server, client } = await fixture();
+  const basePath = join(home, "base");
+  if (os === "macos") await mkdir(basePath);
+  else await writeFile(basePath, "synthetic Windows image");
+  server.store.put("environment", os, {
+    id: os,
+    name: os,
+    os,
+    basePath,
+    cpu: 1,
+    memoryMiB: 512,
+    state: "ready",
+  });
+  const operation = await client.submit(
+    { type: "environment.configure", id: os, x64: "rosetta" },
+    "enable",
+  );
+  await server.service.drain();
+  expect(await client.wait(operation.id)).toMatchObject({
+    status: "failed",
+    result: { code: "unsupported" },
+    message: expect.stringContaining("only for Linux"),
+  });
+  expect((await client.status()).environments[0]).not.toHaveProperty("x64");
+  const off = await client.submit({ type: "environment.configure", id: os, x64: "off" }, "off");
+  await server.service.drain();
+  expect((await client.wait(off.id)).status).toBe("succeeded");
+});
+
+test("Rosetta host and guest startup failures remain action required on the service", async () => {
+  const { home, server, client } = await fixture();
+  const { VectisError } = await import("../../../packages/protocol/src/index.js");
+  const basePath = join(home, "base.img");
+  await writeFile(basePath, "synthetic Linux image");
+  server.store.put("environment", "linux", {
+    id: "linux",
+    name: "Linux",
+    os: "linux",
+    basePath,
+    cpu: 1,
+    memoryMiB: 512,
+    state: "ready",
+    x64: "rosetta",
+  });
+  const start = vi.spyOn(server.service.runtime, "start");
+  try {
+    for (const code of [
+      "rosetta_not_installed",
+      "rosetta_unsupported",
+      "rosetta_guest_unprepared",
+    ]) {
+      start.mockRejectedValueOnce(
+        new VectisError(code, "Rosetta needs attention.", "Resolve Rosetta setup."),
+      );
+      const operation = await client.submit({ type: "environment.start", id: "linux" }, code);
+      await server.service.drain();
+      expect(await client.wait(operation.id)).toMatchObject({
+        status: "action_required",
+        result: { code, nextStep: "Resolve Rosetta setup." },
+      });
+    }
+  } finally {
+    start.mockRestore();
+  }
+});
+
+test("invalid x64 values are rejected at the protocol boundary before mutation", async () => {
+  const { server } = await fixture();
+  const response = await fetch(`${server.connection.url}/v1/commands`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${server.connection.token}` },
+    body: JSON.stringify({
+      key: "invalid-x64",
+      command: { type: "environment.configure", id: "linux", x64: "qemu" },
+    }),
+  });
+  expect(response.status).toBe(400);
+  expect(server.service.snapshot().operations).toEqual([]);
 });
