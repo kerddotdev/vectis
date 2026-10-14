@@ -6,7 +6,7 @@ Vectis runs repository-scoped GitHub Actions runners in disposable local virtual
 
 ### 1. The host stays in charge
 
-Vectis runs untrusted CI code on someone's own machine. Guests never receive host directories, host Docker sockets, or broad host credentials by default. The GitHub App private key stays in the cloud. Repository IDs and installation access establish authority; labels, names, and display strings never do. Forks never inherit upstream runner capacity, and approving external pull requests stays a GitHub maintainer decision, never an automatic Vectis action.
+Vectis runs untrusted CI code on someone's own machine. Guests never receive host directories, host Docker sockets, or broad host credentials by default. The sole host-directory exception is Apple's read-only Rosetta runtime, shared only when the user enables it for a Linux environment. The GitHub App private key stays in the cloud. Repository IDs and installation access establish authority; labels, names, and display strings never do. Forks never inherit upstream runner capacity, and approving external pull requests stays a GitHub maintainer decision, never an automatic Vectis action.
 
 ### 2. Honest state
 
@@ -56,7 +56,7 @@ Before calling a change done, walk this list and say which entries applied:
 - **Desktop.** `apps/desktop/src/renderer/lib/operations.ts` (labels, cancellable and preparation commands) and the relevant view in `apps/desktop/src/renderer/views`.
 - **MCP.** `vectis_command` derives its schema from `Command` and usually needs no change. New tools belong in `apps/mcp/src/server.ts`.
 - **Remote control.** Remote commands replay locally through `packages/client/src/remote-operation.ts`. Check that the command behaves correctly when submitted remotely.
-- **Guest OS.** Linux, macOS, and Windows guests differ. Guest-shaped features need a decision per OS, even if it is "not supported".
+- **Guest OS.** Linux, macOS, and Windows guests differ. Guest-shaped features need a decision per OS, even if it is "not supported". Report effective egress honestly: Windows defaults to enforced internet-only access; Linux and macOS NAT cannot enforce filtering.
 - **Reverse states.** A way in needs a way out: connect needs disconnect, start needs cancel, prepare needs resume or discard.
 - **Docs.** Update `apps/docs/docs/guides` and `skills/vectis/SKILL.md` when behavior they describe changes.
 

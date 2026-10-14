@@ -23,7 +23,14 @@ export async function readyGuest(
 ): Promise<GuestConnection> {
   if (instance.environmentId !== environment.id || instance.status !== "running")
     throw new VectisError("guest_not_running", "The owned guest is not running.");
-  if (!environment.sshUser || !environment.sshKeyPath || !environment.knownHostsPath)
+  const knownHostsPath =
+    environment.os === "linux" ? instance.knownHostsPath : environment.knownHostsPath;
+  if (
+    !environment.sshUser ||
+    !environment.sshKeyPath ||
+    !knownHostsPath ||
+    (environment.os === "linux" && environment.sshHostKeyMode !== "instance")
+  )
     throw new VectisError(
       "setup_required",
       "The environment needs a guest user, SSH identity and pinned host key.",
@@ -48,20 +55,31 @@ export async function readyGuest(
     port,
     user: environment.sshUser,
     identityFile: environment.sshKeyPath,
-    knownHostsFile: environment.knownHostsPath,
-    hostKeyAlias: environment.id,
+    knownHostsFile: knownHostsPath,
+    hostKeyAlias: environment.os === "linux" ? instance.id : environment.id,
   };
   guestArguments(connection);
   const script =
     environment.os === "windows"
       ? "[Console]::WriteLine([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString() + ' ' + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
       : 'set -eu\nprintf \'%s %s\\n\' "$(uname -m)" "$(date -u +%s)"';
+  const readinessScript =
+    environment.x64 === "rosetta"
+      ? script +
+        "\nif ! test -e /proc/sys/fs/binfmt_misc/rosetta || ! grep -qx enabled /proc/sys/fs/binfmt_misc/status || ! grep -qx enabled /proc/sys/fs/binfmt_misc/rosetta; then exit 78; fi"
+      : script;
   while (!bounded.aborted) {
     try {
-      const result = await executeGuest(connection, script, {
+      const result = await executeGuest(connection, readinessScript, {
         signal: bounded,
         shell: environment.os === "windows" ? "powershell" : "bash",
       });
+      if (environment.x64 === "rosetta" && result.exitCode === 78)
+        throw new VectisError(
+          "rosetta_guest_unprepared",
+          "The Linux guest has no enabled Rosetta binary handler.",
+          "Prepare the Linux environment again",
+        );
       if (result.exitCode !== 0)
         throw new VectisError("guest_readiness_failed", "The guest readiness check failed.");
       verifyGuestReadiness(result.stdout);

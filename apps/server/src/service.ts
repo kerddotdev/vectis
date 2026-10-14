@@ -1,3 +1,6 @@
+import { environmentNetwork } from "../../../packages/runner/src/environment-network.js";
+import { inspect } from "node:util";
+import { redact } from "../../../packages/client/src/redact.js";
 import { startMacGuestAccess, completedMacEnvironment } from "./macos-access-task.js";
 import { discardMacInstallation } from "./macos-discard.js";
 import {
@@ -48,6 +51,9 @@ import { retainActivities } from "./activity-retention.js";
 import { observeRunnerJobs, watchRunnerJobs } from "./runner-job-observations.js";
 import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
 
+import type { RepositoryAccess } from "../../../packages/protocol/src/repository-access.js";
+import { jobAccess, restrictiveAccess } from "../../../packages/github/src/access-policy.js";
+
 export class Service {
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
@@ -65,6 +71,7 @@ export class Service {
       connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
       disconnectRepository(bindingId: string): Promise<void>;
       setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+      setAccess(bindingId: string, access: RepositoryAccess): Promise<void>;
       scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
       refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
     } = () => {
@@ -85,6 +92,10 @@ export class Service {
     const snapshot = this.store.snapshot();
     return {
       ...snapshot,
+      environments: snapshot.environments.map((environment) => ({
+        ...environment,
+        network: environmentNetwork(environment),
+      })),
       runnerCapacity: runnerCapacity(snapshot, { cpus: cpus().length, memoryBytes: totalmem() }),
       ...(repositories === undefined ? {} : { repositories }),
     };
@@ -92,6 +103,15 @@ export class Service {
   async initialize() {
     await recoverWindowsInstallations(this.store);
     await recoverMacInstallations(this.store);
+    for (const environment of this.store.snapshot().environments) {
+      if (
+        environment.os === "linux" &&
+        environment.sshUser &&
+        environment.sshHostKeyMode !== "instance" &&
+        environment.state === "ready"
+      )
+        this.store.put("environment", environment.id, { ...environment, state: "action_required" });
+    }
     for (const value of this.store.list("preparation")) {
       const preparation = Schema.decodeUnknownSync(Preparation)(value);
       if (
@@ -115,7 +135,7 @@ export class Service {
           try {
             sweep();
           } catch (error) {
-            console.error("Activity retention failed:", error);
+            console.error("Activity retention failed:", redact(inspect(error)));
           }
         },
         60 * 60 * 1000,
@@ -387,6 +407,18 @@ export class Service {
           result = { bindingId: command.bindingId, connected: false };
           break;
         }
+        case "repository.access": {
+          const access = {
+            actors:
+              command.actors === "any"
+                ? ("any" as const)
+                : { ids: [...new Set(command.actors.ids)] },
+            approval: command.approval,
+          };
+          await this.runnerConnection().setAccess(command.bindingId, access);
+          result = { bindingId: command.bindingId, access };
+          break;
+        }
         case "repository.automatic": {
           await this.runnerConnection().setAutomatic(command.bindingId, command.enabled);
           result = { bindingId: command.bindingId, automatic: command.enabled };
@@ -455,16 +487,25 @@ export class Service {
           const abort = new AbortController();
           let startId: string | undefined;
           const demandJobId = command.jobId;
+          if (demandJobId === undefined && restrictiveAccess(binding.access))
+            throw new VectisError(
+              "job_required",
+              "Start a specific job under this repository access policy.",
+            );
           const done = runRunnerTask(
             command.bindingId,
             operation.id,
             environment,
             {
               broker,
+              request: {
+                ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
+                ...(command.automatic ? { automatic: true } : {}),
+              },
               ...(demandJobId === undefined
                 ? {}
                 : {
-                    needed: async () => {
+                    needed: async (signal) => {
                       if (
                         command.automatic &&
                         !(await broker.repositories()).some(
@@ -472,11 +513,7 @@ export class Service {
                         )
                       )
                         return false;
-                      const job = await broker.refreshJob(
-                        command.bindingId,
-                        demandJobId,
-                        abort.signal,
-                      );
+                      const job = await broker.refreshJob(command.bindingId, demandJobId, signal);
                       this.store.updateActivity(operation.id, (base) => ({
                         ...base,
                         subject: {
@@ -485,11 +522,25 @@ export class Service {
                           requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
                         },
                       }));
-                      if (job.status !== "queued") return false;
+                      if (job.status !== "queued" || job.runnerId !== null) return false;
                       if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
                         throw new VectisError(
                           "runner_labels_mismatch",
                           "The GitHub job requires different runner capabilities.",
+                        );
+                      const current = (await broker.repositories()).find(
+                        (item) => item.id === command.bindingId,
+                      );
+                      if (!current)
+                        throw new VectisError(
+                          "repository_missing",
+                          "This repository binding is unavailable.",
+                        );
+                      const access = jobAccess(current.access, job);
+                      if (access && (access !== "approval_required" || command.automatic))
+                        throw new VectisError(
+                          access,
+                          "This job is refused by the repository access policy.",
                         );
                       return true;
                     },
@@ -558,10 +609,16 @@ export class Service {
                   ...("code" in completed
                     ? {
                         code: completed.code,
-                        nextStep:
-                          completed.status === "action_required"
-                            ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
-                            : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                        ...(completed.status === "cancelled"
+                          ? {}
+                          : {
+                              nextStep:
+                                "nextStep" in completed
+                                  ? completed.nextStep
+                                  : completed.status === "action_required"
+                                    ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
+                                    : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                            }),
                       }
                     : {}),
                 },
@@ -603,13 +660,14 @@ export class Service {
               "Stop or reconcile the owned instance, then retry runner reconciliation.",
             );
           const broker = this.runnerConnection();
-          const lease = await broker.findRunner(progress.leaseKey, AbortSignal.timeout(10000));
-          if (!lease)
-            throw new VectisError(
-              "reconciliation_required",
-              "The registration request has no confirmed cloud lease.",
-              "Inspect the cloud connection and retry reconciliation; do not start a duplicate runner.",
-            );
+          const lease = await broker.reconcileRunner(
+            {
+              bindingId: progress.bindingId,
+              environmentId: progress.environmentId,
+              key: progress.leaseKey,
+            },
+            AbortSignal.timeout(10000),
+          );
           if (
             lease.bindingId !== progress.bindingId ||
             lease.environmentId !== progress.environmentId ||
@@ -619,7 +677,8 @@ export class Service {
               "runner_identity_mismatch",
               "The cloud lease does not match this operation.",
             );
-          await broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
+          if (lease.phase !== "released")
+            await broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
           this.store.update(interrupted, {
             status: "cancelled",
             message: "Interrupted runner cleaned up. Check GitHub for the job result.",
@@ -676,6 +735,16 @@ export class Service {
         case "environment.register":
           await this.runtime.validate(command.environment);
           if (
+            command.environment.os === "linux" &&
+            command.environment.sshUser &&
+            command.environment.sshHostKeyMode !== "instance"
+          )
+            throw new VectisError(
+              "setup_required",
+              "This Linux image does not install an instance-specific SSH host key.",
+              "Prepare a new Linux environment with this version of Vectis.",
+            );
+          if (
             snapshot.instances.some(
               (instance) =>
                 instance.environmentId === command.environment.id && instance.status !== "stopped",
@@ -694,9 +763,19 @@ export class Service {
           if (
             command.cpu === undefined &&
             command.memoryMiB === undefined &&
-            command.storagePath === undefined
+            command.storagePath === undefined &&
+            command.x64 === undefined &&
+            command.egress === undefined
           )
-            throw new VectisError("invalid_request", "Provide CPU, memory or a storage path.");
+            throw new VectisError(
+              "invalid_request",
+              "Provide CPU, memory, a storage path, x64 or egress.",
+            );
+          if (command.x64 === "rosetta" && current.os !== "linux")
+            throw new VectisError(
+              "unsupported",
+              "Rosetta x86_64 support is available only for Linux environments.",
+            );
           if (
             snapshot.instances.some(
               (item) =>
@@ -709,8 +788,12 @@ export class Service {
               "environment_busy",
               "Stop legacy instances before changing their resource configuration.",
             );
+          const { x64, ...configuration } = current;
+          const enabledX64 = command.x64 === "off" ? undefined : (command.x64 ?? x64);
           const environment = {
-            ...current,
+            ...configuration,
+            ...(enabledX64 ? { x64: enabledX64 } : {}),
+            ...(command.egress !== undefined ? { egress: command.egress } : {}),
             ...(command.cpu !== undefined ? { cpu: command.cpu } : {}),
             ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
@@ -799,6 +882,7 @@ export class Service {
                 ...(instance.macAddress ? { macAddress: instance.macAddress } : {}),
                 ...(instance.sshHost ? { sshHost: instance.sshHost } : {}),
                 ...(instance.sshPort ? { sshPort: instance.sshPort } : {}),
+                ...(instance.knownHostsPath ? { knownHostsPath: instance.knownHostsPath } : {}),
               });
               this.store.update(operation, {
                 status: "succeeded",
@@ -878,6 +962,9 @@ export class Service {
     this.store.update(operation, {
       status: [
         "setup_required",
+        "rosetta_not_installed",
+        "rosetta_unsupported",
+        "rosetta_guest_unprepared",
         "runtime_missing",
         "runtime_incompatible",
         "storage_unavailable",
@@ -897,8 +984,26 @@ export class Service {
       if (!operation)
         throw new VectisError("operation_missing", "Runner control operation is missing.");
       if (operation.status === "succeeded") return;
-      if (operation.status !== "accepted" && operation.status !== "running")
+      if (operation.status !== "accepted" && operation.status !== "running") {
+        const result = operation.result;
+        if (
+          typeof result === "object" &&
+          result !== null &&
+          "code" in result &&
+          typeof result.code === "string" &&
+          ["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprepared"].includes(
+            result.code,
+          )
+        )
+          throw new VectisError(
+            result.code,
+            operation.message,
+            "nextStep" in result && typeof result.nextStep === "string"
+              ? result.nextStep
+              : undefined,
+          );
         throw new VectisError("runner_control_failed", operation.message);
+      }
       await delay(100);
     }
     throw new VectisError("runner_control_timeout", "Runner VM control did not finish in time.");

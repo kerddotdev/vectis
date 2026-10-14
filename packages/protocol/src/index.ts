@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { RepositoryAccess } from "./repository-access.js";
 import { Identifier } from "./identifier.js";
 import { MachineRepositories, RepositoryConnection } from "./repositories.js";
 
@@ -9,6 +10,13 @@ export const protocolVersion = 1;
 export const ShutdownOptions = Schema.Struct({ ifIdle: Schema.optional(Schema.Boolean) });
 export type ShutdownOptions = typeof ShutdownOptions.Type;
 export const GuestOS = Schema.Literals(["linux", "macos", "windows"]);
+export const Egress = Schema.Literals(["internet_only", "open"]);
+export type Egress = typeof Egress.Type;
+export const EnvironmentNetwork = Schema.Struct({
+  egress: Egress,
+  enforcement: Schema.Literals(["enforced", "not_enforced"]),
+});
+export type EnvironmentNetwork = typeof EnvironmentNetwork.Type;
 export const LinuxPreparation = Schema.Struct({
   id: Identifier,
   name: Schema.NonEmptyString,
@@ -62,7 +70,10 @@ export const Environment = Schema.Struct({
   sshUser: Schema.optional(Schema.String),
   sshKeyPath: Schema.optional(Schema.String),
   knownHostsPath: Schema.optional(Schema.String),
+  sshHostKeyMode: Schema.optional(Schema.Literal("instance")),
   seedPath: Schema.optional(Schema.String),
+  x64: Schema.optional(Schema.Literal("rosetta")),
+  egress: Schema.optional(Egress),
   firmwarePath: Schema.optional(Schema.String),
   firmwareVarsPath: Schema.optional(Schema.String),
   tpmStatePath: Schema.optional(Schema.String),
@@ -147,6 +158,7 @@ export const Instance = Schema.Struct({
   sshHost: Schema.optional(Schema.String),
   sshPort: Schema.optional(Schema.Int),
   createdAt: Schema.String,
+  knownHostsPath: Schema.optional(Schema.String),
 });
 export type Instance = typeof Instance.Type;
 export const CloudStatus = Schema.Struct({
@@ -163,7 +175,12 @@ export const Snapshot = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   version: Schema.optional(Schema.String),
   machine: Machine,
-  environments: Schema.Array(Environment),
+  environments: Schema.Array(
+    Schema.Struct({
+      ...Environment.fields,
+      network: Schema.optional(EnvironmentNetwork),
+    }),
+  ),
   instances: Schema.Array(Instance),
   operations: Schema.Array(Operation),
   activities: Schema.optional(Schema.Array(Activity)),
@@ -204,6 +221,11 @@ export const Command = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("repository.connect"), ...RepositoryConnection.fields }),
   Schema.Struct({
+    type: Schema.Literal("repository.access"),
+    bindingId: Identifier,
+    ...RepositoryAccess.fields,
+  }),
+  Schema.Struct({
     type: Schema.Literal("repository.automatic"),
     bindingId: Identifier,
     enabled: Schema.Boolean,
@@ -229,6 +251,8 @@ export const Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("environment.configure"),
     id: Identifier,
+    x64: Schema.optional(Schema.Literals(["rosetta", "off"])),
+    egress: Schema.optional(Egress),
     cpu: Schema.optional(Schema.Int),
     memoryMiB: Schema.optional(Schema.Int),
     storagePath: Schema.optional(Schema.NonEmptyString),
@@ -374,6 +398,13 @@ export const capabilities = [
       "Connect a prepared environment to a repository after verifying current GitHub App access.",
   },
   {
+    name: "repository.access",
+    kind: "command",
+    activity: "setting",
+    description:
+      "Set which numeric GitHub actor IDs may use this binding and whether manual host approval is required.",
+  },
+  {
     name: "repository.automatic",
     kind: "command",
     activity: "setting",
@@ -472,7 +503,8 @@ export const capabilities = [
     name: "environment.configure",
     kind: "command",
     activity: "setting",
-    description: "Set CPU, memory or an absolute VM storage directory for future instances.",
+    description:
+      "Set CPU, memory, an absolute VM storage directory, egress or opt-in Rosetta x86_64 support for future instances. Internet-only egress is supported only on Windows; open allows host and local network access. Rosetta is Linux-only and does not change ARM64 runner labels.",
   },
   {
     name: "environment.start",

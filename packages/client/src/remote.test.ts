@@ -150,3 +150,135 @@ test("remote capability discovery uses a fresh inspection and completed operatio
     result: { verified: true },
   });
 });
+
+test("a remotely replayed idle drain preserves its cancelled outcome and local result code", async () => {
+  const { request, client } = fixture();
+  const message = "The idle runner's VM was released.";
+  request
+    .mockResolvedValueOnce({
+      ...record,
+      commandJson: JSON.stringify({ type: "runner.run", bindingId: "binding", jobId: 1 }),
+      phase: "cancelled",
+      resultJson: JSON.stringify({ message, operationId: "local1", resultAvailableLocally: true }),
+    })
+    .mockResolvedValueOnce({ queryId: "query1" })
+    .mockResolvedValueOnce({
+      pending: false,
+      responseJson: JSON.stringify({
+        ok: true,
+        result: {
+          id: "local1",
+          key: "remote:remote1",
+          command: "runner.run",
+          status: "cancelled",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:01:00Z",
+          message,
+          result: { code: "runner_idle", stage: "finished", leaseId: "lease" },
+        },
+      }),
+    });
+  expect(await client.operation("remote1")).toMatchObject({
+    status: "cancelled",
+    message,
+    result: { code: "runner_idle", leaseId: "lease" },
+  });
+  expect(request.mock.calls[1]?.[0]).toMatchObject({
+    type: "query.submit",
+    query: { name: "operation", id: "local1" },
+  });
+});
+
+test.each(["machine_offline", "claim_timeout"])(
+  "a request expired before claim exposes %s without querying the host",
+  async (code) => {
+    const { request, client } = fixture();
+    const message =
+      code === "machine_offline"
+        ? "The machine went offline before it claimed this runner request."
+        : "The machine did not claim this runner request within ten minutes.";
+    request.mockResolvedValueOnce({
+      ...record,
+      commandJson: JSON.stringify({
+        type: "runner.run",
+        bindingId: "binding",
+        jobId: 4,
+        automatic: true,
+      }),
+      phase: "cancelled",
+      resultJson: JSON.stringify({
+        status: "cancelled",
+        code,
+        message,
+        resultAvailableLocally: false,
+      }),
+    });
+    expect(await client.operation("remote1")).toMatchObject({
+      status: "cancelled",
+      message,
+      result: { remotePhase: "cancelled", code, resultAvailableLocally: false },
+    });
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      { type: "operation.get", id: "remote1" },
+      undefined,
+    );
+  },
+);
+
+test.each(["rosetta", "off"] as const)(
+  "remote environment configuration retains x64=%s",
+  async (x64) => {
+    const { request, client } = fixture();
+    const command = { type: "environment.configure", id: "linux", x64 } as const;
+    request
+      .mockResolvedValueOnce({ operationId: "remote1" })
+      .mockResolvedValueOnce({ ...record, commandJson: JSON.stringify(command) });
+    expect(await client.submit(command, "x64")).toMatchObject({
+      status: "accepted",
+      command: "environment.configure",
+    });
+    expect(request.mock.calls[0]?.[0]).toEqual({
+      type: "operation.submit",
+      machineId: "machine1",
+      key: "x64",
+      command,
+    });
+  },
+);
+
+test("remote status preserves effective environment egress", async () => {
+  const { request, client } = fixture();
+  request.mockResolvedValueOnce({ queryId: "egress-status" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({
+      ok: true,
+      result: {
+        protocolVersion: 1,
+        machine: { id: "machine1", name: "Host", paused: false },
+        environments: [
+          {
+            id: "windows",
+            name: "Windows",
+            os: "windows",
+            state: "ready",
+            basePath: "/synthetic/base.img",
+            cpu: 1,
+            memoryMiB: 512,
+            network: { egress: "internet_only", enforcement: "enforced" },
+          },
+        ],
+        instances: [],
+        operations: [],
+      },
+    }),
+  });
+  expect((await client.status()).environments[0]?.network).toEqual({
+    egress: "internet_only",
+    enforcement: "enforced",
+  });
+  expect(request.mock.calls[0]?.[0]).toMatchObject({
+    type: "query.submit",
+    machineId: "machine1",
+    query: { name: "status" },
+  });
+});

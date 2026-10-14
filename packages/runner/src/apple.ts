@@ -13,15 +13,13 @@ export function waitForAppleVm(
       child.off("exit", exit);
       child.off("error", error);
     };
-    const fail = (message: string) => {
+    const fail = (
+      message: string,
+      code = "vm_start_failed",
+      nextStep = "Inspect the prepared image and Apple helper configuration.",
+    ) => {
       cleanup();
-      reject(
-        new VectisError(
-          "vm_start_failed",
-          message,
-          "Inspect the prepared image and Apple helper configuration.",
-        ),
-      );
+      reject(new VectisError(code, message, nextStep));
     };
     const data = (chunk: Buffer) => {
       buffer += chunk.toString("utf8");
@@ -52,6 +50,20 @@ export function waitForAppleVm(
               : {},
           );
           return;
+        }
+        if (event.event === "vm.error" && "code" in event) {
+          if (event.code === "rosetta_not_installed")
+            return fail(
+              "Rosetta for Linux is not installed on this Mac.",
+              event.code,
+              "Install Rosetta on the Mac with softwareupdate --install-rosetta, then retry.",
+            );
+          if (event.code === "rosetta_unsupported")
+            return fail(
+              "Rosetta for Linux is not supported on this Mac or guest OS.",
+              event.code,
+              "Use a supported Apple Silicon Mac and Linux guest, or configure x64 off.",
+            );
         }
         if (event.event === "vm.error" || event.event === "vm.stopped")
           return fail("The virtual machine stopped before startup completed.");
