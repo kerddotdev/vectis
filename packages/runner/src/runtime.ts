@@ -1,3 +1,4 @@
+import { validateEnvironmentEgress } from "./environment-network.js";
 import { windowsVmArguments } from "./windows-arguments.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
@@ -40,6 +41,7 @@ export class VmRuntime {
     return join(environment.storagePath ?? join(this.options.home, "instances"), id);
   }
   validateResources(environment: Environment) {
+    validateEnvironmentEgress(environment);
     if (environment.x64 === "rosetta" && environment.os !== "linux")
       throw new VectisError(
         "unsupported",
@@ -179,6 +181,7 @@ export class VmRuntime {
         );
         args = windowsVmArguments({
           firmwarePath: environment.firmwarePath,
+          ...(environment.egress !== undefined ? { egress: environment.egress } : {}),
           cpu: environment.cpu,
           memoryMiB: environment.memoryMiB,
         });

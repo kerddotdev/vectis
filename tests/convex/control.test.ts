@@ -300,7 +300,16 @@ test.each([false, true])(
   },
 );
 
-test("repository access commands replay locally with the same idempotency key", async () => {
+test.each([
+  {
+    type: "repository.access",
+    bindingId: "binding",
+    actors: { ids: [7, 8] },
+    approval: "required",
+  },
+  { type: "environment.configure", id: "windows", egress: "internet_only" },
+  { type: "environment.configure", id: "windows", egress: "open" },
+] as const)("$type commands replay locally with the same idempotency key", async (command) => {
   const t = convexTest(schema, modules);
   const owner = t.withIdentity(identity("access-owner"));
   const machineId = await owner.mutation(api.machines.enroll, {
@@ -312,12 +321,6 @@ test("repository access commands replay locally with the same idempotency key", 
     subject: machineId,
     credentialVersion: 0,
   });
-  const command = {
-    type: "repository.access" as const,
-    bindingId: "binding",
-    actors: { ids: [7, 8] },
-    approval: "required" as const,
-  };
   const id = await owner.mutation(api.operations.submit, {
     machineId,
     key: "access",
@@ -328,7 +331,7 @@ test("repository access commands replay locally with the same idempotency key", 
     id: "local-access",
     key: `remote:${id}`,
     status: "succeeded" as const,
-    command: "repository.access" as const,
+    command: command.type,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     message: "Updated",

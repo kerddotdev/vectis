@@ -52,6 +52,7 @@ async function main() {
       timeout: { type: "string" },
       cpu: { type: "string" },
       x64: { type: "string" },
+      egress: { type: "string" },
       "max-runners": { type: "string" },
       "job-id": { type: "string" },
       actors: { type: "string" },
@@ -170,7 +171,8 @@ Environments
   environment install-windows <id>  Experimental: install Windows 11 from your ISO, drivers and firmware
   environment resume-windows <setup-id>  Continue an interrupted Windows installation
   environment register --file <path>  Register an existing prepared environment JSON file
-  environment configure <id>    Set --cpu, --memory-mib, --storage-path or --x64 rosetta|off for future VMs
+  environment list              List environments and effective network egress
+  environment configure <id>    Set --cpu, --memory-mib, --storage-path, --x64 rosetta|off or --egress internet_only|open for future VMs
   environment start <id>        Start a clean VM, optionally overriding --cpu, --memory-mib, --storage-path
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>            Stop a VM owned by this service
@@ -235,6 +237,11 @@ Documentation: https://vectis.kerd.dev/docs
 `);
     return;
   }
+  if (values.egress !== undefined && !(command === "environment" && subcommand === "configure"))
+    throw new VectisError(
+      "invalid_arguments",
+      "--egress is supported only by environment configure.",
+    );
   if (values.machine && ["service", "cloud", "login", "logout", "machine"].includes(command))
     throw new VectisError("invalid_target", "This command does not accept --machine.");
   if (
@@ -470,6 +477,10 @@ Documentation: https://vectis.kerd.dev/docs
     output(await api.status());
     return;
   }
+  if (command === "environment" && subcommand === "list") {
+    output((await api.status()).environments);
+    return;
+  }
   if (command === "activity" && subcommand === "list") {
     const limit = values.limit === undefined ? 50 : Number(values.limit);
     if (!Number.isSafeInteger(limit) || limit <= 0)
@@ -663,6 +674,7 @@ Documentation: https://vectis.kerd.dev/docs
       type: "environment.configure",
       id,
       ...(values.x64 !== undefined ? { x64: values.x64 } : {}),
+      ...(values.egress !== undefined ? { egress: values.egress } : {}),
       ...(values.cpu !== undefined ? { cpu: Number(values.cpu) } : {}),
       ...(values["memory-mib"] !== undefined ? { memoryMiB: Number(values["memory-mib"]) } : {}),
       ...(values["storage-path"] !== undefined ? { storagePath: values["storage-path"] } : {}),
