@@ -13,6 +13,10 @@ const sections = [
   ["runners", "Disposable runners"],
   ["guests", "Guest images"],
   ["automatic", "Automatic runners"],
+  ["logs", "Job logs"],
+  ["readiness", "Readiness"],
+  ["access", "Access control"],
+  ["control", "Run control"],
   ["agents", "Agents and automation"],
   ["migration", "Workflow migration"],
   ["remote", "Remote control"],
@@ -29,9 +33,13 @@ const mcpTools = [
   "vectis_command",
   "vectis_wait",
   "vectis_operation",
+  "vectis_activities",
+  "vectis_activity",
   "vectis_logs",
+  "vectis_job_logs",
   "vectis_jobs",
   "vectis_repositories",
+  "vectis_readiness",
   "vectis_storage",
   "vectis_doctor",
   "vectis_github_accounts",
@@ -40,6 +48,17 @@ const mcpTools = [
   "vectis_cloud",
   "vectis_machines",
 ];
+const jobLogs = `<span class="p">$</span> vectis job logs 9482105 <span class="k">--binding</span> bind_app <span class="k">--follow</span>
+<span class="dim">2026-10-14T09:12:03Z Run pnpm test</span>
+<span class="dim">2026-10-14T09:12:09Z Tests  128 passed (128)</span>`;
+const readiness = `<span class="p">$</span> vectis repository readiness acme/app <span class="k">--json</span>
+<span class="dim">{"ready":</span> false<span class="dim">, "checks": [</span>
+<span class="dim">  {"id":</span> <span class="k">"admin_rights"</span><span class="dim">, "status":</span> <span class="k">"ok"</span><span class="dim">, ...},</span>
+<span class="dim">  {"id":</span> <span class="k">"fork_approval"</span><span class="dim">, "status":</span> <span class="k">"blocked"</span><span class="dim">, "code": ..., "nextStep": ...}]}</span>`;
+const control = `<span class="p">$</span> vectis run rerun-failed bind_app 77123 <span class="k">--wait --json</span>
+<span class="p">$</span> vectis run cancel bind_app 77123 <span class="k">--wait --json</span>
+<span class="p">$</span> vectis workflow dispatch bind_app test.yml <span class="k">--ref</span> main <span class="k">--wait --json</span>`;
+const access = `<span class="p">$</span> vectis repository access bind_app <span class="k">--actors</span> 1024,2048 <span class="k">--approval</span> required <span class="k">--wait --json</span>`;
 const remote = `<span class="p">$</span> vectis login
 <span class="p">$</span> vectis machine list <span class="k">--json</span>
 <span class="p">$</span> vectis status <span class="k">--machine</span> studio <span class="k">--json</span>
@@ -88,7 +107,8 @@ const migration = `<span class="p">$</span> vectis migration preview .github/wor
         <p>
           Every job runs in its own virtual machine, cloned from the environment you prepared. The
           official GitHub Actions runner registers just in time with a single-use configuration and
-          takes exactly one job.
+          takes exactly one job. A runner whose job no longer needs capacity is stopped after 10 idle
+          minutes.
         </p>
         <p>
           Afterwards Vectis stops and deletes the VM and removes the runner registration. It only
@@ -109,6 +129,10 @@ const migration = `<span class="p">$</span> vectis migration preview .github/wor
           against a pinned SHA-256 before using it. Windows 11 support is experimental: it installs
           from your own ISO, drivers, firmware and license, with a software TPM, and needs QEMU
           installed separately.
+        </p>
+        <p>
+          Linux environments can optionally run x86_64 tools through Rosetta, including x86_64
+          binaries and linux/amd64 containers. The runner itself stays ARM64.
         </p>
         <p>
           You decide the CPU, memory and disk for each environment, and where images and VM disks
@@ -133,6 +157,56 @@ const migration = `<span class="p">$</span> vectis migration preview .github/wor
           dark={repositoriesDark}
           alt="The Repositories view with automatic runners enabled for one repository."
         />
+      </Feature>
+
+      <Feature id="logs" title="Read a job's log from anywhere.">
+        <p>
+          Read the log of a GitHub job from the app, with <code>vectis job logs</code>, or through
+          the MCP tool <code>vectis_job_logs</code>. Follow a running job from the terminal, or let
+          an agent page through the log with a cursor.
+        </p>
+        <p>
+          Vectis keeps the last 4 MiB of each log and preserves GitHub's secret masking.
+        </p>
+        <pre slot="artifact" class="code" data-reveal><code set:html={codeLines(jobLogs)} /></pre>
+      </Feature>
+
+      <Feature id="readiness" title="Know what is missing before you connect.">
+        <p>
+          A readiness check lists each prerequisite for a repository: your cloud connection, GitHub
+          account, App installation, admin rights, fork approval policy and environment. Every
+          check has a status, a code and the next step.
+        </p>
+        <p>
+          It is available in the connect dialog, as <code>vectis repository readiness</code> and as
+          <code>vectis_readiness</code>. <code>vectis doctor</code> reports the runtime components
+          of your Mac the same way.
+        </p>
+        <pre slot="artifact" class="code" data-reveal><code set:html={codeLines(readiness)} /></pre>
+      </Feature>
+
+      <Feature id="access" title="Decide who can use this Mac.">
+        <p>
+          For each repository connection, limit which GitHub users, by numeric ID, can start
+          runners, and optionally require your approval of each job before it runs.
+        </p>
+        <p>
+          Once GitHub assigns a job, a job-started hook inside the VM checks it again and stops the
+          runner if it does not match.
+        </p>
+        <pre slot="artifact" class="code" data-reveal><code set:html={codeLines(access)} /></pre>
+      </Feature>
+
+      <Feature id="control" title="Rerun, cancel and dispatch.">
+        <p>
+          Rerun failed jobs, cancel a run, or dispatch a workflow from the app, the CLI or MCP. If
+          GitHub's answer is ambiguous, Vectis reports that the run needs attention instead of
+          retrying it.
+        </p>
+        <p>
+          This needs you to approve the GitHub App's updated Actions permission.
+        </p>
+        <pre slot="artifact" class="code" data-reveal><code set:html={codeLines(control)} /></pre>
       </Feature>
 
       <Feature id="agents" title="Built for agents, not bolted on.">
@@ -183,7 +257,7 @@ const migration = `<span class="p">$</span> vectis migration preview .github/wor
         <p>
           The Vectis app shows what the local service actually reports: running, waiting for you,
           unsupported on this Mac, or done. Close the window and the service keeps running your jobs
-          in the background.
+          in the background. It sends a native notification when Vectis needs you or work fails.
         </p>
         <p>
           Prefer the terminal? Everything in the app is also in the CLI, with the same names and
