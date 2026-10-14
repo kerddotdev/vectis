@@ -448,3 +448,27 @@ test("a witnessed policy rejection stays failed if cancellation arrives during c
   const result = await runRunnerTask("binding", "key", environment, controls, abort.signal);
   expect(result).toMatchObject({ status: "failed", code: "runner_assignment_rejected" });
 });
+
+test.each(["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprepared"])(
+  "runner startup preserves actionable %s without allocating credentials",
+  async (code) => {
+    const { controls, broker } = fixture();
+    controls.start.mockRejectedValue(
+      new VectisError(code, "Rosetta needs setup.", "Fix Rosetta setup."),
+    );
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      { ...environment, x64: "rosetta" },
+      controls,
+      AbortSignal.timeout(1000),
+    );
+    expect(result).toMatchObject({
+      status: "action_required",
+      code,
+      nextStep: "Fix Rosetta setup.",
+    });
+    expect(broker.prepareRunner).not.toHaveBeenCalled();
+    expect(controls.stop).toHaveBeenCalledOnce();
+  },
+);

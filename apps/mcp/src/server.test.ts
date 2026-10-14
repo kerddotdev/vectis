@@ -1,6 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
@@ -40,6 +40,35 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
     expect(configured.isError).not.toBe(true);
     await service.service.drain();
     expect((await api.status()).machine.maxRunners).toBe(3);
+    const commandTool = discovered.find((tool) => tool.name === "vectis_command");
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"x64"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"rosetta"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"off"');
+    const basePath = join(home, "base.img");
+    await writeFile(basePath, "synthetic Linux image");
+    service.store.put("environment", "linux", {
+      id: "linux",
+      name: "Linux",
+      os: "linux",
+      state: "ready",
+      basePath,
+      cpu: 1,
+      memoryMiB: 512,
+    });
+    for (const x64 of ["rosetta", "off"]) {
+      const configured = await client.callTool({
+        name: "vectis_command",
+        arguments: {
+          key: `mcp-x64-${x64}`,
+          command: { type: "environment.configure", id: "linux", x64 },
+        },
+      });
+      expect(configured.isError).not.toBe(true);
+      await service.service.drain();
+      expect((await api.status()).environments[0]?.x64).toBe(
+        x64 === "rosetta" ? "rosetta" : undefined,
+      );
+    }
     expect(await client.callTool({ name: "vectis_doctor", arguments: {} })).toMatchObject({
       structuredContent: { result: { source: "service" } },
     });

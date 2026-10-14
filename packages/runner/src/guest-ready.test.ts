@@ -62,6 +62,7 @@ test("uses the owned MAC address and pinned instance identity instead of configu
     truncated: false,
   });
   const connection = await readyGuest(environment, instance, AbortSignal.timeout(1000));
+  expect(vi.mocked(executeGuest).mock.calls[0]?.[1]).not.toContain("binfmt_misc");
   expect(connection).toMatchObject({
     host: "192.168.64.8",
     port: 22,
@@ -86,4 +87,30 @@ test("rejects foreign instances and Windows forwarding that is not loopback", as
     ),
   ).rejects.toMatchObject({ code: "guest_address_unavailable" });
   expect(executeGuest).not.toHaveBeenCalled();
+});
+
+test.each([0, 78, 1])("Rosetta readiness handles guest exit %s honestly", async (exitCode) => {
+  vi.mocked(waitForGuestAddress).mockResolvedValue("192.168.64.8");
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode,
+    stdout: `aarch64 ${Math.floor(Date.now() / 1000)}`,
+    stderr: "",
+    truncated: false,
+  });
+  const result = readyGuest(
+    { ...environment, x64: "rosetta" },
+    instance,
+    AbortSignal.timeout(1000),
+  );
+  if (exitCode === 0) await expect(result).resolves.toMatchObject({ hostKeyAlias: instance.id });
+  else
+    await expect(result).rejects.toMatchObject({
+      code: exitCode === 78 ? "rosetta_guest_unprepared" : "guest_readiness_failed",
+      ...(exitCode === 78 ? { nextStep: "Prepare the Linux environment again" } : {}),
+    });
+  expect(executeGuest).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.stringContaining("test -e /proc/sys/fs/binfmt_misc/rosetta"),
+    expect.anything(),
+  );
 });

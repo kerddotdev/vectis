@@ -72,6 +72,8 @@ printf '${ubuntuImage.revision}\\n' > /etc/vectis/image-revision
 # The downloaded archives go, the package lists stay: a job that runs apt-get install should not
 # have to run apt-get update first.
 apt-get clean
+install -m 0644 /opt/vectis/vectis-rosetta.service /etc/systemd/system/vectis-rosetta.service
+systemctl enable vectis-rosetta.service
 install -m 0644 /opt/vectis/vectis-instance-identity.service /etc/systemd/system/vectis-instance-identity.service
 for unit in ssh.service ssh.socket; do
   mkdir -p "/etc/systemd/system/$unit.d"
@@ -141,6 +143,38 @@ RemainAfterExit=yes
             permissions: "0644",
             content:
               "[Unit]\nRequires=vectis-instance-identity.service\nAfter=vectis-instance-identity.service\n",
+          },
+          {
+            path: "/usr/local/sbin/vectis-rosetta",
+            permissions: "0700",
+            content: `#!/bin/bash
+set -euo pipefail
+test -x /run/rosetta/rosetta
+if test -e /proc/sys/fs/binfmt_misc/rosetta; then
+  printf '%s\\n' -1 > /proc/sys/fs/binfmt_misc/rosetta
+fi
+printf '%s\\n' ':rosetta:M::\\x7fELF\\x02\\x01\\x01\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x02\\x00\\x3e\\x00:\\xff\\xff\\xff\\xff\\xff\\xfe\\xfe\\x00\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xff\\xfe\\xff\\xff\\xff:/run/rosetta/rosetta:CF' > /proc/sys/fs/binfmt_misc/register
+`,
+          },
+          {
+            path: "/opt/vectis/vectis-rosetta.service",
+            permissions: "0644",
+            content: `[Unit]
+Description=Enable Rosetta for x86_64 Linux binaries
+DefaultDependencies=no
+Requires=proc-sys-fs-binfmt_misc.mount
+Wants=systemd-binfmt.service
+After=local-fs.target systemd-udev-trigger.service proc-sys-fs-binfmt_misc.mount systemd-binfmt.service
+Before=ssh.service ssh.socket docker.service shutdown.target
+Conflicts=shutdown.target
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'mkdir -p /run/rosetta && mount -t virtiofs -o ro,nosuid,nodev rosetta /run/rosetta'
+ExecStart=/usr/local/sbin/vectis-rosetta
+RemainAfterExit=yes
+[Install]
+WantedBy=multi-user.target
+`,
           },
           { path: "/etc/netplan/50-cloud-init.yaml", permissions: "0600", content: network },
           {

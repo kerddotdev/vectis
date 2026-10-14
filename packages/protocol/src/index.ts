@@ -65,6 +65,7 @@ export const Environment = Schema.Struct({
   knownHostsPath: Schema.optional(Schema.String),
   sshHostKeyMode: Schema.optional(Schema.Literal("instance")),
   seedPath: Schema.optional(Schema.String),
+  x64: Schema.optional(Schema.Literal("rosetta")),
   firmwarePath: Schema.optional(Schema.String),
   firmwareVarsPath: Schema.optional(Schema.String),
   tpmStatePath: Schema.optional(Schema.String),
@@ -237,6 +238,7 @@ export const Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("environment.configure"),
     id: Identifier,
+    x64: Schema.optional(Schema.Literals(["rosetta", "off"])),
     cpu: Schema.optional(Schema.Int),
     memoryMiB: Schema.optional(Schema.Int),
     storagePath: Schema.optional(Schema.NonEmptyString),
@@ -487,7 +489,8 @@ export const capabilities = [
     name: "environment.configure",
     kind: "command",
     activity: "setting",
-    description: "Set CPU, memory or an absolute VM storage directory for future instances.",
+    description:
+      "Set CPU, memory, an absolute VM storage directory or opt-in Rosetta x86_64 support for future Linux instances. Rosetta does not change ARM64 runner labels.",
   },
   {
     name: "environment.start",

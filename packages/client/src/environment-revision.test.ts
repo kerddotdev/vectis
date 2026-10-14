@@ -26,6 +26,7 @@ test("image replacement and guest configuration changes invalidate previous evid
     const second = await environmentRevision(environment);
     expect(second).not.toBe(first);
     expect(await environmentRevision({ ...environment, sshUser: "different" })).not.toBe(second);
+    expect(await environmentRevision({ ...environment, x64: "rosetta" })).not.toBe(second);
     expect(
       await environmentRevision({ ...environment, basePath: join(directory, "missing") }),
     ).toBeUndefined();

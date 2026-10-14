@@ -51,6 +51,7 @@ async function main() {
       "non-interactive": { type: "boolean" },
       timeout: { type: "string" },
       cpu: { type: "string" },
+      x64: { type: "string" },
       "max-runners": { type: "string" },
       "job-id": { type: "string" },
       actors: { type: "string" },
@@ -169,7 +170,7 @@ Environments
   environment install-windows <id>  Experimental: install Windows 11 from your ISO, drivers and firmware
   environment resume-windows <setup-id>  Continue an interrupted Windows installation
   environment register --file <path>  Register an existing prepared environment JSON file
-  environment configure <id>    Set default --cpu, --memory-mib or --storage-path for future VMs
+  environment configure <id>    Set --cpu, --memory-mib, --storage-path or --x64 rosetta|off for future VMs
   environment start <id>        Start a clean VM, optionally overriding --cpu, --memory-mib, --storage-path
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>            Stop a VM owned by this service
@@ -661,6 +662,7 @@ Documentation: https://vectis.kerd.dev/docs
     request = decodeCommand({
       type: "environment.configure",
       id,
+      ...(values.x64 !== undefined ? { x64: values.x64 } : {}),
       ...(values.cpu !== undefined ? { cpu: Number(values.cpu) } : {}),
       ...(values["memory-mib"] !== undefined ? { memoryMiB: Number(values["memory-mib"]) } : {}),
       ...(values["storage-path"] !== undefined ? { storagePath: values["storage-path"] } : {}),

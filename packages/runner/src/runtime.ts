@@ -11,6 +11,7 @@ import { availableHostMemory } from "./memory.js";
 import { runProcess } from "./process.js";
 import { probeStorage } from "./storage-probe.js";
 import { waitForAppleVm } from "./apple.js";
+import { readyGuest } from "./guest-ready.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
 import { instanceIdentity } from "./instance-identity.js";
 import { verifyQemuIsolation } from "./qemu-isolation.js";
@@ -39,6 +40,11 @@ export class VmRuntime {
     return join(environment.storagePath ?? join(this.options.home, "instances"), id);
   }
   validateResources(environment: Environment) {
+    if (environment.x64 === "rosetta" && environment.os !== "linux")
+      throw new VectisError(
+        "unsupported",
+        "Rosetta x86_64 support is available only for Linux environments.",
+      );
     if (
       !isAbsolute(environment.basePath) ||
       (environment.storagePath && !isAbsolute(environment.storagePath))
@@ -193,6 +199,7 @@ export class VmRuntime {
           String(environment.memoryMiB),
           join(directory, "efi.bin"),
           ...(seedPath ? [resolve(seedPath)] : []),
+          ...(environment.x64 === "rosetta" ? ["--rosetta"] : []),
         ];
       }
       await writeFile(
@@ -256,6 +263,20 @@ export class VmRuntime {
         if (environment.os === "windows")
           network = { sshHost: "127.0.0.1", sshPort: await waitForQemu(child) };
         else network = await waitForAppleVm(child);
+        if (environment.x64 === "rosetta")
+          await readyGuest(
+            environment,
+            {
+              id,
+              environmentId: environment.id,
+              status: "running",
+              pid: child.pid ?? 0,
+              createdAt: new Date().toISOString(),
+              ...network,
+              ...(knownHostsPath ? { knownHostsPath } : {}),
+            },
+            signal ?? new AbortController().signal,
+          );
         signal?.throwIfAborted();
         if (child.exitCode !== null || child.signalCode !== null)
           throw new VectisError("vm_start_failed", "The VM stopped during startup.");

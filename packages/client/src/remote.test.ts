@@ -150,3 +150,24 @@ test("remote capability discovery uses a fresh inspection and completed operatio
     result: { verified: true },
   });
 });
+
+test.each(["rosetta", "off"] as const)(
+  "remote environment configuration retains x64=%s",
+  async (x64) => {
+    const { request, client } = fixture();
+    const command = { type: "environment.configure", id: "linux", x64 } as const;
+    request
+      .mockResolvedValueOnce({ operationId: "remote1" })
+      .mockResolvedValueOnce({ ...record, commandJson: JSON.stringify(command) });
+    expect(await client.submit(command, "x64")).toMatchObject({
+      status: "accepted",
+      command: "environment.configure",
+    });
+    expect(request.mock.calls[0]?.[0]).toEqual({
+      type: "operation.submit",
+      machineId: "machine1",
+      key: "x64",
+      command,
+    });
+  },
+);
