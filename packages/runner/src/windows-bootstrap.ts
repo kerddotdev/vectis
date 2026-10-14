@@ -1,3 +1,4 @@
+import { redact } from "../../client/src/redact.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Schema } from "effect";
@@ -37,7 +38,7 @@ export async function windowsBootstrapFailure(
       const diagnostic = Schema.decodeUnknownSync(Diagnostic)(JSON.parse(result.stdout));
       await writeFile(
         join(directory, "bootstrap-diagnostic.json"),
-        JSON.stringify({ ...diagnostic, message: diagnostic.message.slice(0, 4096) }),
+        JSON.stringify({ ...diagnostic, message: redact(diagnostic.message).slice(0, 4096) }),
         { mode: 0o600 },
       );
       stage = diagnostic.stage;

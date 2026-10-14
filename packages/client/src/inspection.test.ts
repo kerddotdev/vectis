@@ -1,9 +1,10 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { startService } from "../../../apps/server/src/http.js";
 import { VectisClient } from "./index.js";
+import { VectisError } from "../../protocol/src/index.js";
 import { answerInspection } from "./inspection.js";
 
 test("inspection uses the authenticated local contract and reports unavailable cloud prerequisites", async () => {
@@ -27,5 +28,35 @@ test("inspection uses the authenticated local contract and reports unavailable c
   } finally {
     await server.close();
     await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("inspection failures redact error messages and recovery advice sent to the cloud", async () => {
+  const canary = "InspectionFailureCanary123456789";
+  const client = new VectisClient({ url: "http://127.0.0.1:1", token: "unused" });
+  const status = vi
+    .spyOn(client, "status")
+    .mockRejectedValue(
+      new VectisError(
+        "inspection_failed",
+        `token=${canary}`,
+        `password=${canary} inspect /tmp/runner`,
+      ),
+    );
+  try {
+    const response = await answerInspection(
+      '{"name":"status"}',
+      client,
+      new AbortController().signal,
+    );
+    expect(response).not.toContain(canary);
+    expect(JSON.parse(response)).toEqual({
+      ok: false,
+      code: "inspection_failed",
+      message: "token=[redacted]",
+      nextStep: "password=[redacted] inspect /tmp/runner",
+    });
+  } finally {
+    status.mockRestore();
   }
 });

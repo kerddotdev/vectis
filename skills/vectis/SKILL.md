@@ -36,6 +36,7 @@ Every change is an operation: `accepted`, `running`, `action_required`, `succeed
 - Completed activity history expires after 30 days, or beyond the newest 300 completions once older than 24 hours. Recent, unfinished and actively owned work stays; unlinked terminal maintenance expires after 24 hours. A pruned request key returns `operation_expired` and must not be replayed as new work. An older service may omit `activities` (treat as empty) and `revision` (change state is unknown).
 - The same command closes an `action_required` operation that nothing is working on any more, after you reported it to the user. An interrupted runner and an image preparation refuse it: they have their own recovery commands.
 - Output is always JSON. Exit codes: 0 success, 1 failed or cancelled, 3 action required or still pending. Errors look like `{"error":{"code","message","nextStep"}}`; follow `nextStep`.
+- Displayed logs, stored operation details and retained runner and preparation diagnostics redact recognized credentials.
 - When something fails or hangs, read `vectis logs --lines 200 --json` or MCP `vectis_logs` before retrying.
 
 ## Service

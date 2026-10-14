@@ -1,3 +1,4 @@
+import { redact } from "../../client/src/redact.js";
 import { spawn } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -73,8 +74,10 @@ export async function runPreparationProcess(
     failed = true;
   });
   let serial = "";
+  let serialTruncated = false;
   let prepared = false;
   let events = "";
+  let eventsTruncated = false;
   let pendingEvents = "";
   const runningEvent = Schema.Struct({
     event: Schema.Literal("vm.running"),
@@ -82,6 +85,7 @@ export async function runPreparationProcess(
   });
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk: string) => {
+    eventsTruncated ||= events.length + chunk.length > 16384;
     events = (events + chunk).slice(-16384);
     if (input.markerStream === "stdout" && events.includes(input.marker)) prepared = true;
     if (input.onRunning) {
@@ -107,6 +111,7 @@ export async function runPreparationProcess(
   });
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
+    serialTruncated ||= serial.length + chunk.length > 65536;
     serial = (serial + chunk).slice(-65536);
     if (input.markerStream === "stderr" && serial.includes(input.marker)) prepared = true;
   });
@@ -127,7 +132,17 @@ export async function runPreparationProcess(
     signal.removeEventListener("abort", stop);
     clearTimeout(force);
     child.stdin.destroy();
-    await writeFile(join(directory, "preparation.log"), events + "\n" + serial, { mode: 0o600 });
+    const completeLines = (text: string, truncated: boolean) =>
+      truncated ? (text.includes("\n") ? text.slice(text.indexOf("\n") + 1) : "") : text;
+    await writeFile(
+      join(directory, "preparation.log"),
+      redact(completeLines(events, eventsTruncated)) +
+        "\n" +
+        redact(completeLines(serial, serialTruncated)),
+      {
+        mode: 0o600,
+      },
+    );
     if (child.pid)
       await writeFile(receipt, JSON.stringify({ instanceId: id, pid: child.pid }), { mode: 0o600 });
   }

@@ -88,3 +88,36 @@ test("missing, malformed or truncated diagnostics preserve the original failure"
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("persisted Windows diagnostics redact credentials before the message length limit", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "vectis-bootstrap-redaction-"));
+  const canary = "WindowsBootstrapCanary123456789";
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 0,
+    stderr: "",
+    truncated: false,
+    stdout: JSON.stringify({
+      stage: "git-download",
+      line: 23,
+      message:
+        `https://example.test/git?token=${canary} exit 23\n` +
+        "x".repeat(4020) +
+        `\npassword=${canary}`,
+    }),
+  });
+  try {
+    const error = await windowsBootstrapFailure(connection, directory, AbortSignal.timeout(1000));
+    const text = await readFile(join(directory, "bootstrap-diagnostic.json"), "utf8");
+    expect(text).not.toContain(canary);
+    expect(text).not.toContain(canary.slice(0, 10));
+    expect(JSON.parse(text)).toMatchObject({
+      stage: "git-download",
+      line: 23,
+      message: expect.stringContaining("https://example.test/git?token=[redacted] exit 23"),
+    });
+    expect(error.message).toContain("during git-download");
+    expect(error.message).not.toContain(canary);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

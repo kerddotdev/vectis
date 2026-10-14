@@ -216,3 +216,37 @@ test("snapshot groups decoded history with bounded queries and preserves inserti
     store.close();
   }
 });
+
+test("result text is redacted recursively without changing identity or typed diagnostic facts", async () => {
+  const { store } = await fixture();
+  try {
+    const canary = "ghs_StoredDiagnosticCanary123456789";
+    const original = store.accept("key", "fingerprint", "runner.run").operation;
+    const updated = store.update(original, {
+      message: `runner-name failed ${canary}`,
+      result: {
+        progress: { diagnostics: `exit 23 ${canary}`, runnerId: 42 },
+        nextStep: `Inspect /tmp/runner token=${canary}`,
+        notes: [canary, null, false],
+      },
+    });
+    expect(updated).toMatchObject({
+      id: original.id,
+      key: "key",
+      command: "runner.run",
+      message: "runner-name failed [redacted]",
+      result: {
+        progress: { diagnostics: "exit 23 [redacted]", runnerId: 42 },
+        nextStep: "Inspect /tmp/runner token=[redacted]",
+        notes: ["[redacted]", null, false],
+      },
+    });
+    expect(store.get("operation", updated.id)).toEqual(updated);
+    expect(store.accept("key", "fingerprint", "runner.run").operation).toEqual(updated);
+    expect(JSON.stringify(store.snapshot())).not.toContain(canary);
+    store.put("operation", updated.id, { ...updated, message: canary });
+    expect(store.get("operation", updated.id)).toMatchObject({ message: "[redacted]" });
+  } finally {
+    store.close();
+  }
+});
