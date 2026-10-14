@@ -2,7 +2,9 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
+import type { JobRefresh } from "../../../packages/protocol/src/jobs.js";
 import { Service } from "./service.js";
+import { runnerCapacity } from "./runner-capacity.js";
 import { Store } from "./store.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
@@ -15,6 +17,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
   ["listening", "operation.cancel"],
   ["starting", "activity.cancel"],
   ["listening", "activity.cancel"],
+  ["listening", "idle drain"],
 ] as const)(
   "a %s runner does not block pause, %s or ordered VM cleanup",
   async (phase, cancelType) => {
@@ -40,7 +43,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         throw new Error("unused");
       }),
       scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
-      refreshJob: vi.fn(async () => ({
+      refreshJob: vi.fn(async (): Promise<JobRefresh> => ({
         jobId: 1,
         runId: 2,
         name: "Build",
@@ -53,7 +56,9 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         status: "queued" as const,
         conclusion: null,
       })),
-      findRunner: vi.fn(async () => null),
+      reconcileRunner: vi.fn(async () => {
+        throw new Error("unused");
+      }),
       repositories: async () => [
         { id: "binding", environmentId: "test", repositoryId: 1, repositoryName: "test/repo" },
       ],
@@ -66,6 +71,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         encodedConfig: "c2VjcmV0",
         access: { repositoryId: 2, actors: "any" as const, approval: "automatic" as const },
       })),
+      runnerStatus: async () => ({ busy: false, status: "online" as const }),
       releaseRunner: vi.fn(async () => {
         expect(store.snapshot().instances.every((instance) => instance.status === "stopped")).toBe(
           true,
@@ -117,6 +123,8 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         phase === "starting"
           ? vi.spyOn(runtime, "validate").mockImplementationOnce(() => pending)
           : undefined;
+      if (cancelType === "idle drain")
+        vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
       const run = service.submit("run", { type: "runner.run", bindingId: "binding", jobId: 1 });
       if (validation) await vi.waitFor(() => expect(validation).toHaveBeenCalledOnce());
       else await vi.waitFor(() => expect(broker.prepareRunner).toHaveBeenCalledOnce());
@@ -128,7 +136,23 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
       expect(store.snapshot().instances[0]?.status).toBe(
         phase === "starting" ? "starting" : "running",
       );
-      service.submit("cancel", { type: cancelType, id: run.id });
+      if (cancelType === "idle drain") {
+        broker.refreshJob.mockImplementation(async () => ({
+          jobId: 1,
+          runId: 2,
+          name: "Build",
+          workflowName: "CI",
+          htmlUrl: "https://github.com/test/repo/actions/runs/2/job/1",
+          runnerId: 99,
+          runnerName: "another-runner",
+          updatedAt: 2,
+          labels: ["vectis-test"],
+          status: "queued",
+          conclusion: null,
+        }));
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+        vi.useRealTimers();
+      } else service.submit("cancel", { type: cancelType, id: run.id });
       if (phase === "starting") {
         await vi.waitFor(() =>
           expect(
@@ -172,6 +196,16 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
           },
         },
       });
+      if (cancelType === "idle drain") {
+        expect(runnerCapacity(snapshot, { cpus: 8, memoryBytes: 16 * 1024 ** 3 }).active).toBe(0);
+        expect(snapshot.operations.find((item) => item.id === run.id)).toMatchObject({
+          status: "cancelled",
+          result: { code: "runner_idle" },
+        });
+        expect(snapshot.operations.find((item) => item.id === run.id)?.result).not.toHaveProperty(
+          "nextStep",
+        );
+      }
       expect(snapshot.operations.find((item) => item.key === `${run.id}:start`)?.activityId).toBe(
         run.id,
       );
@@ -188,6 +222,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
       await service.close();
       store.close();
       await rm(home, { recursive: true, force: true });
+      vi.useRealTimers();
       vi.resetAllMocks();
     }
   },

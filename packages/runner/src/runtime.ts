@@ -32,6 +32,23 @@ export interface OwnedInstance {
   readonly sshPort?: number;
   readonly knownHostsPath?: string;
 }
+
+async function removeInstanceDirectory(
+  directory: string,
+  receipt?: { instanceId: string; pid: number },
+) {
+  try {
+    await rm(directory, { recursive: true, force: true, maxRetries: 3 });
+  } catch (error) {
+    // Recursive removal may delete the helper's receipt before failing on Finder metadata.
+    if (receipt)
+      await writeFile(join(directory, "exit-receipt.json"), JSON.stringify(receipt), {
+        mode: 0o600,
+      }).catch(() => {});
+    throw error;
+  }
+}
+
 export class VmRuntime {
   private readonly owned = new Map<string, OwnedInstance>();
   constructor(readonly options: RuntimeOptions) {}
@@ -137,6 +154,7 @@ export class VmRuntime {
     );
     const directory = this.directoryFor(id, environment);
     await mkdir(directory, { mode: 0o700 });
+    let launched = false;
     try {
       signal?.throwIfAborted();
       let args: string[];
@@ -225,12 +243,16 @@ export class VmRuntime {
           },
         },
       );
+      launched = true;
       child.stdin?.on("error", () => {});
       const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
       const settled = closed.then(async () => {
         let cleaned = false;
         try {
-          await rm(directory, { recursive: true, force: true });
+          await removeInstanceDirectory(
+            directory,
+            child.pid ? { instanceId: id, pid: child.pid } : undefined,
+          );
           cleaned = true;
         } finally {
           this.owned.delete(id);
@@ -272,7 +294,7 @@ export class VmRuntime {
       this.owned.set(id, ready);
       return ready;
     } catch (error) {
-      await rm(directory, { recursive: true, force: true });
+      if (!launched) await removeInstanceDirectory(directory);
       throw error;
     }
   }
@@ -302,7 +324,7 @@ export class VmRuntime {
       } catch (error) {
         if (!(error instanceof Error && "code" in error && error.code === "ESRCH")) return false;
       }
-      await rm(directory, { recursive: true, force: true });
+      await removeInstanceDirectory(directory, receipt);
       return true;
     } catch {
       return false;
