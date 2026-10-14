@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { Schema } from "effect";
 import { EllipsisIcon } from "lucide-react";
-import { Jobs } from "../../../../../packages/protocol/src/jobs.js";
+import type { MachineRepositories } from "../../../../../packages/protocol/src/repositories.js";
+import { Jobs, type Job } from "../../../../../packages/protocol/src/jobs.js";
 import { Notice } from "@/components/layout";
-import { JobStatus } from "@/components/status";
+import { Reason } from "@/components/hint";
+import { JobStatus, StatusBadge } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,7 +24,70 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
+import { awaitingApproval, jobAccessPresentation } from "@/lib/repository-access";
 import { useStateApi } from "@/state";
+
+const maxApprovalRepositories = 5;
+
+export function useAwaitingApprovals(bindings: MachineRepositories) {
+  const { perform, snapshot } = useStateApi();
+  const [waiting, setWaiting] = useState<ReadonlyArray<{ bindingId: string; job: Job }>>([]);
+  const revision = snapshot?.revision ?? `${snapshot?.operations.length ?? 0}`;
+  const key = bindings
+    .filter((binding) => binding.access?.approval === "required")
+    .slice(0, maxApprovalRepositories)
+    .map((binding) => binding.id)
+    .join();
+  useEffect(() => {
+    if (!key) return setWaiting([]);
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void (async () => {
+        const found: Array<{ bindingId: string; job: Job }> = [];
+        for (const bindingId of key.split(",")) {
+          try {
+            const value = await perform("jobs", bindingId);
+            if (value === undefined) continue;
+            for (const job of Schema.decodeUnknownSync(Jobs)(value))
+              if (awaitingApproval(job)) found.push({ bindingId, job });
+          } catch {
+            continue;
+          }
+        }
+        if (!cancelled) setWaiting(found);
+      })();
+    }, 300);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [key, revision]);
+  return waiting;
+}
+
+export function ApproveJobButton({ bindingId, jobId }: { bindingId: string; jobId: number }) {
+  const { submit, snapshot } = useStateApi();
+  const [requesting, setRequesting] = useState(false);
+  return (
+    <Reason
+      reason={
+        (!snapshot && "The service is not reachable.") ||
+        (snapshot?.machine.paused && "New VMs are paused. Resume them in Overview.")
+      }
+    >
+      <Button
+        size="sm"
+        disabled={requesting || !snapshot || snapshot.machine.paused}
+        onClick={() => {
+          setRequesting(true);
+          void submit({ type: "runner.run", bindingId, jobId }).finally(() => setRequesting(false));
+        }}
+      >
+        {requesting ? "Requesting" : "Approve and start"}
+      </Button>
+    </Reason>
+  );
+}
 
 export function RepositoryJobs({ bindingId }: { bindingId: string }) {
   const { perform, submit, snapshot } = useStateApi();
@@ -101,6 +166,10 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                 {formatRelative(job.updatedAt)}
               </span>
+              {job.access && job.status !== "completed" && <JobAccessStatus access={job.access} />}
+              {awaitingApproval(job) && (
+                <ApproveJobButton bindingId={bindingId} jobId={job.jobId} />
+              )}
               <JobStatus status={job.status} conclusion={job.conclusion} />
             </div>
           ))}
@@ -146,5 +215,21 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function JobAccessStatus({ access }: { access: NonNullable<Job["access"]> }) {
+  const { tone, label, hint } = jobAccessPresentation[access];
+  if (!hint) return <StatusBadge tone={tone} label={label} />;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<span tabIndex={0} />}
+        className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <StatusBadge tone={tone} label={label} />
+      </TooltipTrigger>
+      <TooltipContent className="max-w-60">{hint}</TooltipContent>
+    </Tooltip>
   );
 }

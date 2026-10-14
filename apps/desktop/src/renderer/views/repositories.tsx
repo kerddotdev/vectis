@@ -24,6 +24,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { useStateApi } from "@/state";
 import { ConnectRepository } from "./connect-repository";
+import { RepositoryAccessEditor } from "./repository-access";
 import { RepositoryJobs } from "./repository-jobs";
 
 type Binding = MachineRepositories[number];
@@ -213,6 +214,19 @@ export function Repositories() {
                         );
                       })}
                     </div>
+                  </Section>
+                  <Section title="Access">
+                    {bindings.map((binding) => (
+                      <RepositoryAccessEditor
+                        key={`${binding.id}:${JSON.stringify(binding.access)}`}
+                        binding={binding}
+                        repositoryName={first.repositoryName}
+                        label={
+                          snapshot?.environments.find((item) => item.id === binding.environmentId)
+                            ?.name ?? binding.environmentId
+                        }
+                      />
+                    ))}
                   </Section>
                   <RepositoryJobs bindingId={first.id} />
                 </ExpandableRow>
