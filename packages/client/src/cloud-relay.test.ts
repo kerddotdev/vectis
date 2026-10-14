@@ -37,9 +37,9 @@ const transport = vi.hoisted(() => {
       vi.fn<
         (query: FunctionReference<"query">, args: Record<string, unknown>) => Promise<unknown>
       >(),
-    mutation: vi.fn(
-      async (_mutation: FunctionReference<"mutation">, _args: Record<string, unknown>) => null,
-    ),
+    mutation: vi.fn<
+      (mutation: FunctionReference<"mutation">, args: Record<string, unknown>) => Promise<unknown>
+    >(async () => null),
     connectionState: vi.fn(() => ({ isWebSocketConnected: true })),
     disconnect: vi.fn(),
     close: vi.fn(async () => {}),
@@ -383,6 +383,24 @@ test("a mismatched identity sends no heartbeat", async () => {
   transport.auth.changed?.(true);
   await vi.advanceTimersByTimeAsync(4000);
   expect(transport.mutation).not.toHaveBeenCalled();
+});
+
+test("runner recovery uses an authenticated atomic mutation and validates its lease", async () => {
+  vi.useFakeTimers();
+  const { relay } = await fixture();
+  const request = { bindingId: "binding", environmentId: "linux", key: "interrupted" };
+  const signal = new AbortController().signal;
+  await expect(relay.reconcileRunner(request, signal)).rejects.toThrow();
+  expect(transport.mutation).not.toHaveBeenCalled();
+  transport.auth.changed?.(true);
+  const lease = { id: "fence", bindingId: "binding", environmentId: "linux", phase: "released" };
+  transport.mutation.mockResolvedValueOnce(lease);
+  expect(await relay.reconcileRunner(request, signal)).toEqual(lease);
+  const call = transport.mutation.mock.calls[0];
+  expect(call && getFunctionName(call[0])).toBe("runnerLeases:reconcile");
+  expect(call?.[1]).toEqual(request);
+  transport.mutation.mockResolvedValueOnce(null);
+  await expect(relay.reconcileRunner(request, signal)).rejects.toThrow();
 });
 
 test("remote acknowledgements redact older hosts' task errors before truncating or sending", async () => {

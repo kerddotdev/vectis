@@ -40,7 +40,9 @@ async function fixture() {
       status: "completed" as const,
       conclusion: "success",
     })),
-    findRunner: vi.fn(async () => null),
+    reconcileRunner: vi.fn(async () => {
+      throw new Error("unused");
+    }),
     prepareRunner: vi.fn(),
     releaseRunner: vi.fn(async () => {}),
     repositories: async () => [],

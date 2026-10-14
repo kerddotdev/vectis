@@ -24,7 +24,9 @@ const environment = {
 function fixture() {
   const events: string[] = [];
   const broker = {
-    findRunner: vi.fn(async () => null),
+    reconcileRunner: vi.fn(async () => {
+      throw new Error("unused");
+    }),
     prepareRunner: vi.fn(async () => ({
       state: "ready" as const,
       id: "lease",

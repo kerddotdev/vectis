@@ -70,6 +70,7 @@ async function fixture() {
   let name = "";
   let loseResponse = false;
   let onRegistration: (() => Promise<unknown>) | undefined;
+  let onRepositoryRead: (() => Promise<unknown>) | undefined;
   const fetch = vi.fn(async (url: string, init?: RequestInit): Promise<Response> => {
     if (url.endsWith("/installation"))
       return Response.json({
@@ -99,8 +100,10 @@ async function fixture() {
           { id: 501, name },
         ],
       });
-    if (url === "https://api.github.com/repos/owner/sandbox")
+    if (url === "https://api.github.com/repos/owner/sandbox") {
+      await onRepositoryRead?.();
       return Response.json({ id: 600, private: true, owner: { id: 71 } });
+    }
     throw new Error("Unexpected test request");
   });
   vi.stubGlobal("fetch", fetch);
@@ -116,6 +119,9 @@ async function fixture() {
     },
     onRegistration: (callback: () => Promise<unknown>) => {
       onRegistration = callback;
+    },
+    onRepositoryRead: (callback: () => Promise<unknown>) => {
+      onRepositoryRead = callback;
     },
   };
 }
@@ -183,4 +189,59 @@ test("a binding disabled during registration cannot receive credentials and can 
   expect(await device.action(api.githubRunners.release, { id: grant.id })).toMatchObject({
     state: "released",
   });
+});
+
+test("missing-lease reconciliation fences a registration already waiting for repository access", async () => {
+  const { device, bindingId, fetch, onRepositoryRead } = await fixture();
+  const request = { bindingId, environmentId: "mac", key: "interrupted-before-claim" };
+  onRepositoryRead(() => device.mutation(api.runnerLeases.reconcile, request));
+  const grant = await device.action(api.githubRunners.prepare, {
+    bindingId,
+    key: request.key,
+  });
+  expect(grant).toMatchObject({ state: "released" });
+  const expected = {
+    id: grant.id,
+    bindingId,
+    environmentId: "mac",
+    phase: "released",
+  };
+  expect(await device.query(api.runnerLeases.find, { key: request.key })).toEqual(expected);
+  expect(await device.mutation(api.runnerLeases.reconcile, request)).toEqual(expected);
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/generate-jitconfig"))).toBe(false);
+  expect(await device.query(api.runnerLeases.list, {})).toEqual([]);
+});
+
+test("reconciliation preserves an existing registration for verified runner cleanup", async () => {
+  const { device, bindingId, fetch } = await fixture();
+  const args = { bindingId, key: "existing-registration" };
+  const grant = await device.action(api.githubRunners.prepare, args);
+  const lease = await device.mutation(api.runnerLeases.reconcile, {
+    ...args,
+    environmentId: "mac",
+  });
+  expect(lease).toEqual({ id: grant.id, bindingId, environmentId: "mac", phase: "ready" });
+  expect(await device.query(api.runnerLeases.list, {})).toHaveLength(1);
+  expect(fetch.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  await device.action(api.githubRunners.release, { id: lease.id });
+  expect(await device.query(api.runnerLeases.list, {})).toEqual([]);
+});
+
+test("foreign machines and mismatched environments cannot fence runner requests", async () => {
+  const { t, owner, device, bindingId } = await fixture();
+  const foreignId = await owner.mutation(api.machines.enroll, {
+    localId: "foreign",
+    name: "Other",
+  });
+  const foreign = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: foreignId,
+    credentialVersion: 0,
+  });
+  const request = { bindingId, environmentId: "mac", key: "protected" };
+  await expect(foreign.mutation(api.runnerLeases.reconcile, request)).rejects.toThrow();
+  await expect(
+    device.mutation(api.runnerLeases.reconcile, { ...request, environmentId: "other" }),
+  ).rejects.toThrow();
+  expect(await device.query(api.runnerLeases.find, { key: request.key })).toBeNull();
 });

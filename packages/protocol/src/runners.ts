@@ -17,7 +17,10 @@ export const RunnerGrant = Schema.Union([
 ]);
 export type RunnerGrant = typeof RunnerGrant.Type;
 export interface RunnerBroker {
-  findRunner(key: string, signal: AbortSignal): Promise<RunnerLease | null>;
+  reconcileRunner(
+    request: { bindingId: string; environmentId: string; key: string },
+    signal: AbortSignal,
+  ): Promise<RunnerLease>;
   prepareRunner(bindingId: string, key: string, signal: AbortSignal): Promise<RunnerGrant>;
   releaseRunner(id: string, signal: AbortSignal): Promise<void>;
 }

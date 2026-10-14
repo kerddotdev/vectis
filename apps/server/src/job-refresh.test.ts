@@ -25,7 +25,9 @@ test("job refresh does not block machine control and retries reuse its durable o
     disconnectRepository: async () => {},
     setAutomatic: async () => {},
     repositories: async () => [],
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
     releaseRunner: async () => {},
   }));
@@ -87,7 +89,9 @@ test("disabling automatic admission cancels a queued demand before guest startup
         automatic: false,
       },
     ],
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
     releaseRunner: async () => {},
   }));
@@ -148,7 +152,9 @@ test("incomplete repository scans require attention instead of claiming full rec
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},
     setAutomatic: async () => {},
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
     releaseRunner: async () => {},
   }));

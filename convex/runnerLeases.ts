@@ -1,6 +1,6 @@
 import { scheduleRunnerDemand } from "./runnerDemand.js";
 import { ConvexError, v } from "convex/values";
-import { internalMutation, internalQuery, query } from "./_generated/server.js";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server.js";
 import type { QueryCtx } from "./_generated/server.js";
 import { machine } from "./auth.js";
 import { internal } from "./_generated/api.js";
@@ -219,6 +219,54 @@ export const find = query({
       bindingId: lease.bindingId,
       environmentId: lease.environmentId,
       phase: lease.phase,
+    };
+  },
+});
+
+export const reconcile = mutation({
+  args: { bindingId: v.string(), environmentId: v.string(), key: v.string() },
+  handler: async (ctx, args) => {
+    const { target, binding, environment } = await bindingAuthority(ctx, args.bindingId, false);
+    if (!args.key.trim() || args.key.length > 200 || binding.environmentId !== args.environmentId)
+      throw new ConvexError({ code: "invalid_runner_request" });
+    const lease = await ctx.db
+      .query("runnerLeases")
+      .withIndex("by_machine_key", (q) => q.eq("machineId", target._id).eq("key", args.key))
+      .unique();
+    if (lease) {
+      if (
+        lease.owner !== target.owner ||
+        lease.bindingId !== binding._id ||
+        lease.environmentId !== args.environmentId
+      )
+        throw new ConvexError({ code: "runner_identity_mismatch" });
+      return {
+        id: lease._id,
+        bindingId: lease.bindingId,
+        environmentId: lease.environmentId,
+        phase: lease.phase,
+      };
+    }
+    if (!environment) throw new ConvexError({ code: "environment_unavailable" });
+    const now = Date.now();
+    // A released lease fences a prepare action that has not reached its durable claim yet.
+    const id = await ctx.db.insert("runnerLeases", {
+      owner: target.owner,
+      machineId: target._id,
+      bindingId: binding._id,
+      environmentId: environment.id,
+      os: environment.os,
+      ...(environment.revision ? { environmentRevision: environment.revision } : {}),
+      key: args.key,
+      phase: "released",
+      createdAt: now,
+      updatedAt: now,
+    });
+    return {
+      id,
+      bindingId: binding._id,
+      environmentId: environment.id,
+      phase: "released" as const,
     };
   },
 });
