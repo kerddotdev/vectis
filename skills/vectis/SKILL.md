@@ -117,6 +117,8 @@ A job that stays queued usually has one of these causes. Check them in order:
 6. The binding access policy requires manual capacity approval, rejects an actor, or has unknown actor IDs (`job list` exposes `access`).
 7. The GitHub App is not installed on the repository's owner.
 
+An automatic runner request a Mac never claims expires as `machine_offline` (offline, after 2 minutes) or `claim_timeout` (online, after 10 minutes), and the job is requested again so another connected Mac can take it.
+
 ## Workflow migration
 
 - `vectis migration preview <workflow-file> --map <from>=<vectis-label>` rewrites `runs-on` locally without writing files.

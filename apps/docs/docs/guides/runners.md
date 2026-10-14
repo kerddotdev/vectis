@@ -33,6 +33,8 @@ vectis runner run <binding-id> --job-id <github-job-id> --json   # only if that 
 
 A manual runner without a job ID waits up to six hours for a job.
 
+An automatic runner request that the Mac does not pick up expires so another Mac connected to the same repository can take the job: after 2 minutes with result code `machine_offline` if the Mac went offline, or after 10 minutes with `claim_timeout` if it stayed online. The job is requested again on the next heartbeat.
+
 A runner requested for a specific job is drained after 10 minutes of inactivity if that job no longer needs queued capacity. Vectis stops the VM and releases the runner lease, reporting the operation as `cancelled` with result code `runner_idle`; busy runners and runners whose jobs still need queued capacity keep listening.
 
 ## Read job results
