@@ -1,25 +1,33 @@
 "use node";
+import { runnerRequest } from "./runnerLeases.js";
 import { repositoryAccess } from "./githubAccess.js";
 import { runnerLabels } from "../packages/github/src/runner-labels.js";
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
-import type { RunnerGrant } from "../packages/protocol/src/runners.js";
+import type { RunnerGrant, RunnerStatus } from "../packages/protocol/src/runners.js";
 import { action } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { GitHubApiError, GitHubAppClient } from "../packages/github/src/app-client.js";
 
 const Runner = Schema.Struct({ id: Schema.Int, name: Schema.String });
+const RunnerState = Schema.Struct({
+  ...Runner.fields,
+  busy: Schema.Boolean,
+  status: Schema.Literals(["online", "offline"]),
+});
 const Registration = Schema.Struct({ runner: Runner, encoded_jit_config: Schema.NonEmptyString });
 const Pool = Schema.Struct({ total_count: Schema.Int, runners: Schema.Array(Runner) });
 
 export const prepare = action({
-  args: { bindingId: v.string(), key: v.string() },
+  args: { bindingId: v.string(), key: v.string(), ...runnerRequest },
   handler: async (ctx, args): Promise<RunnerGrant> => {
     if (!args.key.trim() || args.key.length > 200)
       throw new ConvexError({ code: "invalid_runner_request" });
     const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
       bindingId: args.bindingId,
       preparing: true,
+      ...(args.jobId === undefined ? {} : { jobId: args.jobId }),
+      ...(args.automatic === undefined ? {} : { automatic: args.automatic }),
     });
     const client = new GitHubAppClient(authority.app);
     const access = await repositoryAccess(client, {
@@ -49,6 +57,7 @@ export const prepare = action({
           encodedConfig: lease.encodedConfig,
           environmentId: lease.environmentId,
           os: lease.os,
+          ...(lease.access ? { access: lease.access } : {}),
         };
       if (lease.phase === "released") return { state: "released", id: lease._id };
       if (lease.phase === "preparing" && Date.now() - lease.updatedAt < 60000)
@@ -81,6 +90,7 @@ export const prepare = action({
         encodedConfig: registration.encoded_jit_config,
         environmentId: lease.environmentId,
         os: lease.os,
+        ...(lease.access ? { access: lease.access } : {}),
       };
     } catch {
       await ctx.runMutation(internal.runnerLeases.attention, {
@@ -157,5 +167,39 @@ export const release = action({
     }
     await ctx.runMutation(internal.runnerLeases.released, { id: lease._id });
     return { state: "released", id: lease._id };
+  },
+});
+
+export const status = action({
+  args: { id: v.string() },
+  handler: async (ctx, args): Promise<RunnerStatus> => {
+    const lease = await ctx.runQuery(internal.runnerLeases.owned, args);
+    const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
+      bindingId: lease.bindingId,
+      preparing: false,
+    });
+    if (lease.phase === "released") return { missing: true };
+    if (lease.runnerId === undefined)
+      throw new ConvexError({ code: "runner_registration_incomplete" });
+    const client = new GitHubAppClient(authority.app);
+    const access = await repositoryAccess(client, {
+      owner: authority.binding.repositoryOwner ?? authority.account.login,
+      repo: authority.binding.repositoryName,
+      repositoryId: authority.binding.repositoryId,
+      githubUserId: authority.account.githubId,
+      githubLogin: authority.account.login,
+      purpose: "cleanup",
+    });
+    try {
+      const runner = Schema.decodeUnknownSync(RunnerState)(
+        await client.request(access.token, `${access.path}/actions/runners/${lease.runnerId}`),
+      );
+      if (runner.id !== lease.runnerId || runner.name !== `vectis-${lease._id}`)
+        throw new ConvexError({ code: "runner_identity_conflict" });
+      return { busy: runner.busy, status: runner.status };
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 404) return { missing: true };
+      throw error;
+    }
   },
 });

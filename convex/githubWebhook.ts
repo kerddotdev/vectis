@@ -39,16 +39,21 @@ export const receive = httpAction(async (ctx, request) => {
   } catch {
     return new Response("Invalid payload", { status: 400 });
   }
+  const webhookJob = payload.workflow_job ? { ...payload.workflow_job } : undefined;
+  if (webhookJob) {
+    delete webhookJob.actor_id;
+    delete webhookJob.triggering_actor_id;
+  }
   const result = await ctx.runMutation(internal.githubDeliveries.accept, {
     deliveryId,
     event,
     ...(payload.action === undefined ? {} : { action: payload.action }),
     ...(payload.repository ? { repositoryId: payload.repository.id } : {}),
     ...(payload.installation ? { installationId: payload.installation.id } : {}),
-    ...(payload.workflow_job
+    ...(webhookJob
       ? {
-          jobId: payload.workflow_job.id,
-          job: { ...payload.workflow_job, labels: [...payload.workflow_job.labels] },
+          jobId: webhookJob.id,
+          job: { ...webhookJob, labels: [...webhookJob.labels] },
         }
       : {}),
   });

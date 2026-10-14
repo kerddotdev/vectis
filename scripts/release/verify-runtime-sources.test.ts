@@ -53,6 +53,11 @@ async function fixture() {
     join(runtime, "licenses/qemu/0001-align-arm-tpm-ppi-to-host-page.patch"),
     "fixture patch",
   );
+  await writeFile(join(sources, "vectis-qemu-isolation.patch"), "fixture isolation patch");
+  await writeFile(
+    join(runtime, "licenses/qemu/0002-isolate-vectis-user-network.patch"),
+    "fixture isolation patch",
+  );
   return { root, runtime, sources, manifest, component };
 }
 test("verifies bundled version coverage, pinned sources and custom patches", async () => {

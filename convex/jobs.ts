@@ -1,3 +1,4 @@
+import { restrictiveAccess } from "../packages/github/src/access-policy.js";
 import { ConvexError, v } from "convex/values";
 import { githubJob } from "./githubValidators.js";
 import { publicJob, storeJob } from "./jobStore.js";
@@ -17,7 +18,7 @@ export const list = query({
       )
       .order("desc")
       .take(100);
-    return jobs.map(publicJob);
+    return jobs.map((job) => publicJob(job, binding.access));
   },
 });
 
@@ -47,7 +48,7 @@ export const latest = query({
       )
       .order("desc")
       .take(20);
-    return jobs.map(publicJob);
+    return jobs.map((job) => publicJob(job, binding.access));
   },
 });
 
@@ -120,7 +121,7 @@ export const save = internalMutation({
     const id = await storeJob(ctx, args.job, binding.installationId, binding.repositoryId);
     const job = await ctx.db.get("githubJobs", id);
     if (!job) throw new Error("GitHub job persistence failed.");
-    return publicJob(job);
+    return publicJob(job, binding.access);
   },
 });
 
@@ -164,5 +165,41 @@ export const savePage = internalMutation({
       throw new ConvexError({ code: "repository_access_changed" });
     for (const job of args.jobs)
       await storeJob(ctx, job, binding.installationId, binding.repositoryId);
+  },
+});
+
+export const restrictiveAuthority = internalQuery({
+  args: { installationId: v.number(), repositoryId: v.number() },
+  handler: async (ctx, args) => {
+    const bindings = await ctx.db
+      .query("repositoryBindings")
+      .withIndex("by_repository", (q) =>
+        q
+          .eq("installationId", args.installationId)
+          .eq("repositoryId", args.repositoryId)
+          .eq("enabled", true),
+      )
+      .take(100);
+    for (const binding of bindings) {
+      if (!restrictiveAccess(binding.access)) continue;
+      const account = await ctx.db.get("githubAccounts", binding.accountId);
+      const target = await ctx.db.get("machines", binding.machineId);
+      if (account?.owner !== binding.owner || target?.owner !== binding.owner) continue;
+      const app = await ctx.db.query("githubApps").first();
+      if (!app) return null;
+      return {
+        binding,
+        account,
+        app: { appId: app.appId, clientId: app.clientId, privateKey: app.privateKey },
+      };
+    }
+    return null;
+  },
+});
+
+export const saveWebhookActors = internalMutation({
+  args: { installationId: v.number(), repositoryId: v.number(), job: githubJob },
+  handler: async (ctx, args) => {
+    await storeJob(ctx, args.job, args.installationId, args.repositoryId);
   },
 });

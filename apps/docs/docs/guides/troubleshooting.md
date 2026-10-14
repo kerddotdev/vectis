@@ -5,7 +5,7 @@ description: What to check when a job keeps waiting, a VM does not start, or an 
 
 ## A job stays queued
 
-Check these in order. The first one that fails is usually the answer.
+Start with `vectis repository readiness --binding <binding-id> --json` (MCP `vectis_readiness`). Follow each blocked check's `code` and `nextStep`; an `unknown` check could not be verified. Disabled automatic runners appear as attention. Readiness checks prerequisites, so also check capacity and workflow labels below.
 
 1. **Is the Mac available?** `vectis status --json` shows `machine.paused` and `cloud.state`. A paused Mac, a Mac whose cloud connection is not `connected`, or a Mac that is asleep takes no new jobs. Resume it with `vectis resume`.
 2. **Is the Mac busy?** A Mac runs up to its **Concurrent VMs** setting at once (5 by default; change it with `vectis machine configure --max-runners <N>`), as long as all VMs together fit within the host's CPU cores and 75% of its memory. It starts none while an environment is being prepared or an interrupted instance is unresolved. The job starts when a slot and resources are free. See [Limits and boundaries](/docs/guides/limits).
@@ -24,6 +24,8 @@ Every operation ends with a status, a message and, when you need to act, a `next
 vectis operation get <operation-id> --json
 vectis logs --lines 200 --json
 ```
+
+Displayed logs, stored operation details and retained runner and preparation diagnostics redact recognized credentials.
 
 The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means Vectis stopped safely and is waiting for the step it describes.
 
@@ -64,7 +66,7 @@ Repository connections are not restored automatically; connect the repositories 
 
 ## A VM does not start
 
-- **Diagnostics** or `vectis doctor --json` lists the runtime components the service found. The app configures its own; from a source checkout, set them as described in [Build from source](/docs/self-hosting/build-from-source).
+- **Diagnostics** shows runtime configuration. `vectis doctor --json` adds typed `checks` for host support, executable runtime components and a writable service home, alongside the existing fields. Missing Windows-only components need attention when no Windows environment exists; otherwise they block. The app configures its own; from a source checkout, set them as described in [Build from source](/docs/self-hosting/build-from-source).
 - The CPU and memory of all running VMs must fit the Mac. A VM may use at most 75% of its memory.
 - VMs on an external drive need the drive connected and macOS permission for Vectis to access it.
 - An interrupted VM blocks new ones until it is reconciled; see [Recover after a crash](/docs/guides/runners#recover-after-a-crash).

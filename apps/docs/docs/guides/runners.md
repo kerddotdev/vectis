@@ -31,7 +31,9 @@ vectis runner run <binding-id> --key <any-unique-key> --json
 vectis runner run <binding-id> --job-id <github-job-id> --json   # only if that job is still queued
 ```
 
-A manual runner waits up to six hours for a job.
+A manual runner without a job ID waits up to six hours for a job.
+
+A runner requested for a specific job is drained after 10 minutes of inactivity if that job no longer needs queued capacity. Vectis stops the VM and releases the runner lease, reporting the operation as `cancelled` with result code `runner_idle`; busy runners and runners whose jobs still need queued capacity keep listening.
 
 ## Read job results
 
@@ -46,6 +48,46 @@ Job states arrive through GitHub webhooks. If one seems missing or stale:
 vectis job scan <binding-id> --wait             # find queued and running jobs Vectis missed
 vectis job refresh <binding-id> <job-id> --wait # reread one job from GitHub
 ```
+
+## Rerun, cancel and dispatch
+
+Control a connected repository's GitHub Actions runs from the CLI or MCP `vectis_command`:
+
+```sh
+vectis run rerun-failed <binding-id> <run-id> --wait
+vectis run cancel <binding-id> <run-id> --wait
+vectis workflow dispatch <binding-id> ci.yml --ref main --input target=staging --wait
+```
+
+`workflow` accepts a file name or numeric ID, `ref` is a branch or tag, and `--input key=value` can be repeated for up to 25 string inputs. Vectis limits the complete command JSON to 65,535 bytes, including keys and metadata. The workflow must enable `workflow_dispatch`. Like other intents, these commands return an operation immediately unless `--wait` is supplied. The same typed commands work through local and remote clients; the desktop recognizes their operations but has no run control buttons yet.
+
+The GitHub App needs **Actions: write**. Existing installations must approve the updated permissions in GitHub **Settings -> Applications**. A missing approval returns `github_app_permission_required` with instructions. After correcting a rejected request, submit a new operation key; replaying the old key returns its stored rejection. Public repositories require approval for every external contributor before rerun or dispatch; cancellation does not require that policy.
+
+Rerun requires a completed run with failed jobs. After GitHub accepts a rerun or cancellation, Vectis rereads the run with backoff for up to 5 seconds for rerun or 20 seconds for cancellation. Both requests finish as `succeeded` with `result.state: "accepted"`:
+
+- `result.cancellation: "observed"` means Vectis observed the run stopped (`completed` or `cancelled`). `"requested"` means GitHub accepted cancellation, but Vectis has not observed it stop. The message is "GitHub accepted the cancellation; the run is still stopping."
+- `result.rerun: "observed"` means Vectis observed a newer attempt. `"requested"` means GitHub accepted the rerun, but the newer attempt is not yet visible.
+
+A failed reread does not undo GitHub's acceptance. Request success does not mean the jobs passed. Dispatch reports the run ID when GitHub returns it. An empty 204 response means accepted with an unknown run ID.
+
+GitHub has no idempotency keys for these requests. Vectis saves a cloud receipt before submission and never repeats a POST for the same machine and operation key while that receipt is retained, including remote replay. The daily retention sweep removes receipts older than 30 days since their last update. Do not replay old keys after that window: their duplicate protection has expired.
+
+Only an ambiguous POST response (such as a network error, 5xx response or missing status) leaves rerun or cancellation `action_required` with `run_command_unconfirmed`. Check the run on GitHub before submitting a new key; never blindly retry. Cancelling the Vectis operation stops waiting and can leave the GitHub outcome unconfirmed.
+
+## Read a job's log
+
+Read a failed job directly through Vectis, using its GitHub job ID and repository binding:
+
+```sh
+vectis job logs <job-id> --binding <binding-id>
+vectis job logs <job-id> --binding <binding-id> --follow
+```
+
+The first command prints the retained log. `--follow` starts polling every 2 seconds, doubles the interval after empty chunks up to 30 seconds, and resets it to 2 seconds when text arrives. It stops when the job has completed and its available log has been read. Stop following with Ctrl-C. GitHub may only publish logs after the job finishes. Add `--machine <machine-id>` for a remote host; `--json` prints one response per chunk.
+
+Agents can use MCP `vectis_job_logs` with `{bindingId, jobId, after?}`. Pass the returned `next` as `after` to read the next chunk. Both cursors are absolute, nonnegative integer byte offsets in GitHub's UTF-8 log. The response includes `text`, `next`, the observed job `status`, `complete` and `truncated`. `complete` is true only when the job is completed and the cursor reaches the end. `truncated` means earlier unread bytes fell outside the retained window and were skipped.
+
+Logs are fetched from GitHub on demand without storing log archives. Remote reads use temporary inspection responses that expire after 60 seconds. Vectis reads within the last 4 MiB, uses UTF-8 safe chunks of at most 32 KiB, and preserves GitHub's masking. Downloads request one chunk at a time with bounded HTTP Range requests when supported; otherwise they stream the file with a 64 MiB download limit and retain only its tail. GitHub access, expired logs or the download limit can prevent a read.
 
 ## Cancel
 
@@ -72,9 +114,13 @@ An unreachable guest is reported as such, with SSH's reason (timeout, no route, 
 
 If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Vectis never guesses: it cleans up only after it has evidence that the VM process exited.
 
+If deleting an owned VM's files fails after its process exits, Vectis retains an exit receipt so reconciliation can retry the file cleanup.
+
 ```sh
 vectis instance reconcile <instance-id> --wait
 vectis runner reconcile <operation-id> --wait
 ```
 
 The app offers the same actions as **Reconcile** in **Overview**. Until an interrupted VM is reconciled, the Mac starts no new VMs and offers no runner slots. Do not start new runners to work around an unresolved one.
+
+Runner reconciliation also works when registration stopped before creating a cloud lease. After confirming VM cleanup, Vectis records the request as released in the cloud so a delayed registration cannot create a duplicate runner. If the cloud cannot confirm this, the operation stays unresolved.
