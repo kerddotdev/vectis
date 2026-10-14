@@ -6,10 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 
-export const archivePin = {
-  bytes: 2270724,
-  sha256: "3e621ae2f3b04e5697d647d35ce0ccc1d7facb85e70799441b1a21229d03e4ab",
-};
+// Fontshare repackages the archive without changing its fonts, so only extracted files are pinned.
+export const archiveLimit = { bytes: 4 * 1024 * 1024 };
 export const fontPins = [
   {
     name: "GeneralSans-Variable.woff2",
@@ -86,9 +84,9 @@ export async function downloadFonts(target, request = fetch) {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.length;
-        if (size > archivePin.bytes) {
+        if (size > archiveLimit.bytes) {
           await reader.cancel();
-          throw new Error("Font archive exceeds its pinned size.");
+          throw new Error("Font archive exceeds its size limit.");
         }
         chunks.push(value);
       }
@@ -96,7 +94,6 @@ export async function downloadFonts(target, request = fetch) {
       reader.releaseLock();
     }
     const bytes = Buffer.concat(chunks);
-    verifyBytes(bytes, archivePin);
     const archive = join(scratch, "general-sans.zip");
     await writeFile(archive, bytes, { flag: "wx", mode: 0o600 });
     const verified = [];

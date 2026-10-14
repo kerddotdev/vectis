@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, expect, test, vi } from "vitest";
-import { archivePin, cachedFonts, downloadFonts } from "./font-artifact.mjs";
+import { archiveLimit, cachedFonts, downloadFonts } from "./font-artifact.mjs";
 const roots: string[] = [];
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
@@ -45,19 +45,19 @@ test("download redirects, oversized streams and same-sized tampered archives fai
   let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
-      controller.enqueue(new Uint8Array(archivePin.bytes + 1));
+      controller.enqueue(new Uint8Array(archiveLimit.bytes + 1));
     },
     cancel() {
       cancelled = true;
     },
   });
   await expect(downloadFonts(target, async () => new Response(body))).rejects.toThrow(
-    "exceeds its pinned size",
+    "exceeds its size limit",
   );
   expect(cancelled).toBe(true);
   await expect(
-    downloadFonts(target, async () => new Response(new Uint8Array(archivePin.bytes))),
-  ).rejects.toThrow("SHA-256");
+    downloadFonts(target, async () => new Response(new Uint8Array(2270724))),
+  ).rejects.toThrow();
 });
 test("existing font and directory links are rejected before reading their targets", async () => {
   const { root, target } = await fixture();
