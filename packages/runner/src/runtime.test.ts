@@ -6,10 +6,29 @@ import { VmRuntime } from "./runtime.js";
 
 vi.mock("./memory.js", () => ({ availableHostMemory: async () => 8 * 1024 ** 3 }));
 
+const failedRemovals = vi.hoisted(() => new Set<string>());
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...fs,
+    rm: async (...args: Parameters<typeof fs.rm>) => {
+      const [path] = args;
+      if (typeof path === "string" && failedRemovals.delete(path)) {
+        await fs.rm(path, { recursive: true, force: true });
+        await fs.mkdir(path);
+        await fs.writeFile(join(path, ".DS_Store"), "Finder metadata");
+        throw Object.assign(new Error("Directory not empty"), { code: "ENOTEMPTY" });
+      }
+      return fs.rm(...args);
+    },
+  };
+});
+
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const cleanup of cleanups.reverse()) await cleanup();
   cleanups.length = 0;
+  failedRemovals.clear();
 });
 const hostTest = test.skipIf(process.platform !== "darwin" || process.arch !== "arm64");
 async function fixture(script: string) {
@@ -62,6 +81,52 @@ hostTest("explicit stop waits for process exit and cleanup", async () => {
   await runtime.stop(instance.id);
   expect(instance.process.signalCode).toBe("SIGTERM");
   expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+});
+
+hostTest(
+  "partial cleanup preserves exit evidence so Finder residue can be reconciled",
+  async () => {
+    const { runtime, environment } = await fixture(
+      'process.stdout.write(\'{"event":"vm.running"}\\n\'); setInterval(() => {}, 1000);',
+    );
+    const onExit = vi.fn();
+    const instance = await runtime.start("residual", environment, onExit);
+    failedRemovals.add(instance.directory);
+    await expect(runtime.stop(instance.id)).rejects.toMatchObject({ code: "ENOTEMPTY" });
+    expect(onExit).toHaveBeenCalledWith(false);
+    expect(
+      JSON.parse(await readFile(join(instance.directory, "exit-receipt.json"), "utf8")),
+    ).toEqual({
+      instanceId: instance.id,
+      pid: instance.process.pid,
+    });
+    expect(await readFile(join(instance.directory, ".DS_Store"), "utf8")).toBe("Finder metadata");
+    failedRemovals.add(instance.directory);
+    expect(await runtime.reconcile(instance.id, instance.directory)).toBe(false);
+    expect(
+      JSON.parse(await readFile(join(instance.directory, "exit-receipt.json"), "utf8")),
+    ).toEqual({
+      instanceId: instance.id,
+      pid: instance.process.pid,
+    });
+    expect(await runtime.reconcile(instance.id, instance.directory)).toBe(true);
+    expect(await runtime.hasWorkDirectory(instance.id, instance.directory)).toBe(false);
+    expect(await readFile(environment.basePath, "utf8")).toBe("untouched-base");
+  },
+);
+
+hostTest("failed startup does not discard exit evidence after partial cleanup", async () => {
+  const { runtime, environment } = await fixture(
+    'process.stdout.write(\'{"event":"vm.error"}\\n\'); setInterval(() => {}, 1000);',
+  );
+  const directory = runtime.directoryFor("startup-residual", environment);
+  failedRemovals.add(directory);
+  await expect(runtime.start("startup-residual", environment, () => {})).rejects.toMatchObject({
+    code: "ENOTEMPTY",
+  });
+  expect(await readFile(join(directory, ".DS_Store"), "utf8")).toBe("Finder metadata");
+  expect(await runtime.reconcile("startup-residual", directory)).toBe(true);
+  expect(await runtime.hasWorkDirectory("startup-residual", directory)).toBe(false);
 });
 
 hostTest("startup cancellation terminates an owned helper before readiness", async () => {
