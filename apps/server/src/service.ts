@@ -586,7 +586,8 @@ export class Service {
                           requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
                         },
                       }));
-                      if (job.status !== "queued" || job.runnerId !== null) return false;
+                      // GitHub reports runner ID 0 for a queued job that no runner has taken.
+                      if (job.status !== "queued" || job.runnerId) return false;
                       if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
                         throw new VectisError(
                           "runner_labels_mismatch",
