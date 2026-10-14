@@ -222,7 +222,7 @@ export function createMcpServer(
     {
       capabilities: { tools: {} },
       instructions:
-        "Start with vectis_capabilities and vectis_status. Submit only capabilities of kind command through vectis_command; the rest have their own read tools. Reuse an idempotency key only for the same command. Read what the machine was asked to do with vectis_activities, and one intent with its steps through vectis_activity. Inspect failed and action_required outcomes with vectis_operation and vectis_logs; never report an accepted operation as completed. Documentation for agents: https://vectis.kerd.dev/llms.txt",
+        "Start with vectis_capabilities and vectis_status. Submit only capabilities of kind command through vectis_command; the rest have their own read tools. Reuse an idempotency key only for the same command. Read what the machine was asked to do with vectis_activities, and one intent with its steps through vectis_activity. Inspect failed and action_required outcomes with vectis_operation and vectis_logs; never report an accepted operation as completed. Run control commands (run.rerun-failed, run.cancel, workflow.dispatch) never repeat a GitHub POST for the same key. For run_command_unconfirmed, inspect GitHub before retrying with a new key. Documentation for agents: https://vectis.kerd.dev/llms.txt",
     },
   );
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: availableTools }));

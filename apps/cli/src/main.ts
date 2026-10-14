@@ -53,6 +53,8 @@ async function main() {
       cpu: { type: "string" },
       "max-runners": { type: "string" },
       "job-id": { type: "string" },
+      ref: { type: "string" },
+      input: { type: "string", multiple: true },
       account: { type: "string" },
       owner: { type: "string" },
       name: { type: "string" },
@@ -147,6 +149,11 @@ Repositories and jobs
   job scan <binding-id>         Discover missing jobs through the GitHub API
   job refresh <binding-id> <job-id>  Recover one job state directly from GitHub
 
+Workflow run control
+  run rerun-failed <binding-id> <run-id>  Rerun failed jobs of a completed GitHub run
+  run cancel <binding-id> <run-id>  Request cancellation of an active GitHub run
+  workflow dispatch <binding-id> <workflow> --ref <ref>  Dispatch a workflow file or numeric ID
+
 Workflow migration
   migration preview <workflow-file> --map <from>=<to>  Rewrite runs-on labels locally without writing files
   migration analyze <binding-id>  Prepare a reviewable migration preview for a repository
@@ -207,6 +214,8 @@ Options
   --owner <organization>        Repository owner when it differs from the account
   --environment <id>            Environment ID
   --job-id <number>             Require a matching queued GitHub job before starting a runner
+  --ref <branch-or-tag>         Git ref for workflow dispatch
+  --input <key>=<value>         Workflow input; repeat for up to 25 inputs
   --map <from>=<to>             Label mapping for migration preview; repeat for more labels
   --file <path>                 JSON input file
   --if-idle                     Refuse to stop while VMs or operations are active
@@ -532,7 +541,35 @@ Documentation: https://vectis.kerd.dev/docs
     });
   else if (command === "migration" && subcommand === "publish" && id)
     request = decodeCommand({ type: "migration.publish", previewId: id });
-  else if (command === "job" && subcommand === "scan" && id)
+  else if (
+    command === "run" &&
+    (subcommand === "rerun-failed" || subcommand === "cancel") &&
+    id &&
+    positionals[3]
+  )
+    request = decodeCommand({
+      type: subcommand === "cancel" ? "run.cancel" : "run.rerun-failed",
+      bindingId: id,
+      runId: Number(positionals[3]),
+    });
+  else if (command === "workflow" && subcommand === "dispatch" && id && positionals[3]) {
+    const inputs = new Map<string, string>();
+    for (const input of values.input ?? []) {
+      const separator = input.indexOf("=");
+      const key = input.slice(0, separator);
+      if (separator < 1 || inputs.has(key))
+        throw new VectisError("invalid_arguments", "Use distinct --input <key>=<value> arguments.");
+      inputs.set(key, input.slice(separator + 1));
+    }
+    const workflow = positionals[3];
+    request = decodeCommand({
+      type: "workflow.dispatch",
+      bindingId: id,
+      workflow: /^\d+$/.test(workflow) ? Number(workflow) : workflow,
+      ref: values.ref,
+      ...(values.input === undefined ? {} : { inputs: Object.fromEntries(inputs) }),
+    });
+  } else if (command === "job" && subcommand === "scan" && id)
     request = decodeCommand({ type: "job.scan", bindingId: id });
   else if (command === "job" && subcommand === "refresh" && id && positionals[3])
     request = decodeCommand({ type: "job.refresh", bindingId: id, jobId: Number(positionals[3]) });

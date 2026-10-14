@@ -20,6 +20,15 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     expect((await client.listTools()).tools.map((tool) => tool.name)).toContain("vectis_command");
+    const tools = (await client.listTools()).tools;
+    const schema = JSON.stringify(
+      tools.find((tool) => tool.name === "vectis_command")?.inputSchema,
+    );
+    const discovery = await client.callTool({ name: "vectis_capabilities", arguments: {} });
+    for (const name of ["run.rerun-failed", "run.cancel", "workflow.dispatch"]) {
+      expect(schema).toContain(name);
+      expect(JSON.stringify(discovery.structuredContent)).toContain(name);
+    }
     const args = { key: "mcp-pause", command: { type: "machine.pause", paused: true } };
     const accepted = await client.callTool({ name: "vectis_command", arguments: args });
     expect(accepted.isError).not.toBe(true);

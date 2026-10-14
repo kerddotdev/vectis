@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { runControlOutcome } from "./runCommands.js";
 import { installation, verifiedUser } from "./githubValidators.js";
 
 export const environmentSummary = v.object({
@@ -21,6 +22,22 @@ export const phase = v.union(
   v.literal("cancelled"),
 );
 export default defineSchema({
+  // Receipts are retained: expiring them would allow an old key to POST again.
+  runCommandReceipts: defineTable({
+    machineId: v.id("machines"),
+    bindingId: v.id("repositoryBindings"),
+    key: v.string(),
+    requestHash: v.string(),
+    state: v.union(
+      v.literal("submitted"),
+      v.literal("accepted"),
+      v.literal("uncertain"),
+      v.literal("rejected"),
+    ),
+    outcome: v.optional(runControlOutcome),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_machine_key", ["machineId", "key"]),
   inspections: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),

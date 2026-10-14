@@ -1,3 +1,4 @@
+import { RunControlOutcome, type RunControlCommand } from "../../protocol/src/runs.js";
 import { ConvexError } from "convex/values";
 import type { FunctionReturnType } from "convex/server";
 import { isDeepStrictEqual } from "node:util";
@@ -26,18 +27,20 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
           error instanceof ConvexError &&
           Schema.is(
             Schema.Struct({
-              code: Schema.Literals([
-                "public_runner_approval_required",
-                "repository_admin_required",
-                "github_app_not_installed",
-                "machine_revoked",
-              ]),
-              message: Schema.String,
-              nextStep: Schema.String,
+              code: Schema.String,
+              message: Schema.optionalKey(Schema.String),
+              nextStep: Schema.optionalKey(Schema.String),
             }),
           )(error.data)
         )
-          reject(new VectisError(error.data.code, error.data.message, error.data.nextStep));
+          reject(
+            new VectisError(
+              error.data.code,
+              error.data.message ?? `Cloud request rejected (${error.data.code}).`,
+              error.data.nextStep ??
+                "Check repository access and inspect the operation before retrying.",
+            ),
+          );
         else reject(error);
       })
       .finally(() => signal.removeEventListener("abort", abort));
@@ -372,6 +375,15 @@ export function startCloudRelay(
         cloud.mutation(api.repositoryBindings.setAutomatic, { bindingId, enabled }),
         AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
       );
+    },
+    async controlRun(command: RunControlCommand, key: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const result = await interruptible(
+        cloud.action(api.githubRuns.control, { command, key }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+      );
+      return Schema.decodeUnknownSync(RunControlOutcome)(result);
     },
     async scanJobs(bindingId: string, signal: AbortSignal) {
       signal.throwIfAborted();

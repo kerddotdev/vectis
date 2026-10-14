@@ -18,6 +18,9 @@ test("uncertain publication remains actionable and does not block or duplicate m
       throw new Error("unused");
     },
     scanJobs: async () => ({ runs: 0, jobs: 0, complete: true }),
+    controlRun: async () => {
+      throw new Error("unused");
+    },
     refreshJob: async () => ({
       jobId: 1,
       runId: 2,

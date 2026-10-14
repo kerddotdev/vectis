@@ -1,3 +1,5 @@
+import type { RunControlBroker } from "../../../packages/protocol/src/runs.js";
+import { unconfirmedRunCommand } from "../../../packages/github/src/run-control.js";
 import { startMacGuestAccess, completedMacEnvironment } from "./macos-access-task.js";
 import { discardMacInstallation } from "./macos-discard.js";
 import {
@@ -58,16 +60,17 @@ export class Service {
   constructor(
     readonly store: Store,
     readonly runtime: VmRuntime,
-    readonly runnerConnection: () => RunnerBroker & {
-      analyzeMigration(bindingId: string, signal: AbortSignal): Promise<MigrationAnalysis>;
-      publishMigration(previewId: string, signal: AbortSignal): Promise<MigrationPublication>;
-      repositories(): Promise<MachineRepositories>;
-      connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
-      disconnectRepository(bindingId: string): Promise<void>;
-      setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
-      scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
-      refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
-    } = () => {
+    readonly runnerConnection: () => RunnerBroker &
+      RunControlBroker & {
+        analyzeMigration(bindingId: string, signal: AbortSignal): Promise<MigrationAnalysis>;
+        publishMigration(previewId: string, signal: AbortSignal): Promise<MigrationPublication>;
+        repositories(): Promise<MachineRepositories>;
+        connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
+        disconnectRepository(bindingId: string): Promise<void>;
+        setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+        scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
+        refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
+      } = () => {
       throw new VectisError("cloud_unconfigured", "Connect this machine before starting runners.");
     },
     readonly setupCredentials?: SetupCredentials,
@@ -391,6 +394,42 @@ export class Service {
           await this.runnerConnection().setAutomatic(command.bindingId, command.enabled);
           result = { bindingId: command.bindingId, automatic: command.enabled };
           break;
+        }
+        case "run.rerun-failed":
+        case "run.cancel":
+        case "workflow.dispatch": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          const broker = this.runnerConnection();
+          const abort = new AbortController();
+          const done = broker
+            .controlRun(command, operation.key, abort.signal)
+            .catch((error: unknown) =>
+              error instanceof VectisError && error.code !== "run_command_unconfirmed"
+                ? {
+                    state: "rejected" as const,
+                    code: error.code,
+                    message: error.message,
+                    nextStep: error.nextStep,
+                  }
+                : unconfirmedRunCommand(command),
+            )
+            .then((outcome) => {
+              this.store.update(operation, {
+                status:
+                  outcome.state === "accepted"
+                    ? "succeeded"
+                    : outcome.state === "uncertain" ||
+                        (outcome.state === "rejected" &&
+                          outcome.code === "github_app_permission_required")
+                      ? "action_required"
+                      : "failed",
+                message: outcome.message,
+                result: outcome,
+              });
+            })
+            .finally(() => this.tasks.delete(operation.id));
+          this.tasks.set(operation.id, { abort, done });
+          return;
         }
         case "job.scan":
         case "job.refresh": {

@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { RerunFailed, CancelRun, DispatchWorkflow } from "./runs.js";
 import { Identifier } from "./identifier.js";
 import { MachineRepositories, RepositoryConnection } from "./repositories.js";
 
@@ -172,6 +173,9 @@ export const Snapshot = Schema.Struct({
 });
 export type Snapshot = typeof Snapshot.Type;
 export const Command = Schema.Union([
+  RerunFailed,
+  CancelRun,
+  DispatchWorkflow,
   Schema.Struct({
     type: Schema.Literal("environment.install-windows"),
     ...WindowsInstallation.fields,
@@ -264,6 +268,27 @@ export const Connection = Schema.Struct({
 });
 export type Connection = typeof Connection.Type;
 export const capabilities = [
+  {
+    name: "run.rerun-failed",
+    kind: "command",
+    activity: "intent",
+    description:
+      "Rerun failed jobs of a completed GitHub run. Unconfirmed outcomes require checking GitHub before retrying.",
+  },
+  {
+    name: "run.cancel",
+    kind: "command",
+    activity: "intent",
+    description:
+      "Request cancellation of an active GitHub run and observe its state. Acceptance does not mean its jobs have stopped.",
+  },
+  {
+    name: "workflow.dispatch",
+    kind: "command",
+    activity: "intent",
+    description:
+      "Dispatch a workflow file or numeric ID at a branch or tag, with up to 25 string inputs. Report the run ID only when GitHub returns it.",
+  },
   {
     name: "environment.install-windows",
     kind: "command",
