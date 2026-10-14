@@ -15,4 +15,5 @@ export type WindowEvent =
   | "fullscreen-enter"
   | "fullscreen-leave"
   | "toggle-sidebar"
-  | `navigate:${Route}`;
+  | `navigate:${Route}`
+  | `navigate:/activities?id=${string}`;

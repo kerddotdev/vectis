@@ -1,12 +1,15 @@
+import { useState } from "react";
 import { ExternalLinkIcon } from "lucide-react";
 import type { Activity, Operation } from "../../../../../packages/protocol/src/index.js";
 import { GitHubIcon } from "@/components/github-icon";
+import { JobLog } from "@/components/job-log";
 import { Details, ExpandableRow, Mono } from "@/components/layout";
 import { OsTile } from "@/components/os-icon";
-import { JobStatus, OperationStatus, StatusText } from "@/components/status";
+import { JobStatus, OperationStatus, RunnerStage, StatusText } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { activityJob, activitySummary, activityTitle } from "@/lib/activities";
 import { formatDateTime, formatRelative } from "@/lib/format";
+import { isGeneratedStageMessage, activeRunnerStage } from "@/lib/runner-stage";
 import { cancellableCommands, commandLabels } from "@/lib/operations";
 import { MigrationResult } from "@/views/migration-result";
 import { PreparationResult } from "@/views/preparation-result";
@@ -38,6 +41,7 @@ export function ActivityRow({
       ? steps.at(-1)
       : steps.find((step) => step.id === activity.rootOperationId);
   const job = activityJob(activity);
+  const [logOpen, setLogOpen] = useState(false);
   // A runner that did its part is not news once GitHub reports the job; the job outcome is.
   const runnerQuiet = activity.status === "succeeded" && job?.status !== undefined;
   const running = activity.status === "accepted" || activity.status === "running";
@@ -49,6 +53,7 @@ export function ActivityRow({
   const reconcilable = activity.subject.type === "runner" && activity.status === "action_required";
   const preparation = activity.subject.type === "preparation";
   const closable = activity.status === "action_required" && !preparation && !reconcilable;
+  const stage = activeRunnerStage(activity, deciding, job?.status);
   const result: unknown = deciding?.result;
   const nextStep =
     typeof result === "object" &&
@@ -56,6 +61,14 @@ export function ActivityRow({
     "nextStep" in result &&
     typeof result.nextStep === "string"
       ? result.nextStep
+      : undefined;
+  const runUrl =
+    deciding?.command.startsWith("run.") &&
+    typeof result === "object" &&
+    result &&
+    "htmlUrl" in result &&
+    typeof result.htmlUrl === "string"
+      ? result.htmlUrl
       : undefined;
   const diagnostics =
     typeof result === "object" &&
@@ -86,13 +99,19 @@ export function ActivityRow({
             {formatRelative(activity.updatedAt)}
           </span>
           {job?.status && <JobStatus status={job.status} conclusion={job.conclusion ?? null} />}
-          {!runnerQuiet && <OperationStatus status={activity.status} />}
+          {stage ? (
+            <RunnerStage stage={stage} />
+          ) : (
+            !runnerQuiet && <OperationStatus status={activity.status} />
+          )}
         </>
       }
     >
-      <p className="max-w-[72ch] text-foreground/85" data-selectable>
-        {activity.message}
-      </p>
+      {!(activity.subject.type === "runner" && isGeneratedStageMessage(activity.message)) && (
+        <p className="max-w-[72ch] text-foreground/85" data-selectable>
+          {activity.message}
+        </p>
+      )}
       {nextStep && (
         <p className="max-w-[72ch] text-muted-foreground" data-selectable>
           {nextStep}
@@ -109,6 +128,23 @@ export function ActivityRow({
           </pre>
         </div>
       )}
+      {job && activity.bindingId && (
+        <div className="flex flex-col gap-3">
+          <div>
+            <Button
+              variant="secondary"
+              size="sm"
+              aria-expanded={logOpen}
+              onClick={() => setLogOpen((value) => !value)}
+            >
+              {logOpen ? "Hide job log" : "View job log"}
+            </Button>
+          </div>
+          {logOpen && (
+            <JobLog bindingId={activity.bindingId} jobId={job.jobId} htmlUrl={job.htmlUrl} />
+          )}
+        </div>
+      )}
       {job?.htmlUrl && (
         <div>
           <Button
@@ -118,6 +154,15 @@ export function ActivityRow({
           >
             <GitHubIcon className="size-3.5" />
             Open job on GitHub
+            <ExternalLinkIcon />
+          </Button>
+        </div>
+      )}
+      {runUrl && (
+        <div>
+          <Button variant="secondary" size="sm" onClick={() => void perform("open.url", runUrl)}>
+            <GitHubIcon className="size-3.5" />
+            Open run on GitHub
             <ExternalLinkIcon />
           </Button>
         </div>
@@ -215,9 +260,11 @@ function Step({ step }: { step: Operation }) {
         label={commandLabels[step.command] ?? step.command}
       />
       <span className="text-muted-foreground tabular-nums">{formatRelative(step.updatedAt)}</span>
-      <span className="min-w-0 basis-full text-muted-foreground" data-selectable>
-        {step.message}
-      </span>
+      {!(step.command === "runner.run" && isGeneratedStageMessage(step.message)) && (
+        <span className="min-w-0 basis-full text-muted-foreground" data-selectable>
+          {step.message}
+        </span>
+      )}
     </li>
   );
 }

@@ -57,6 +57,7 @@ export const analyze = action({
           after: preview.source,
           changed: preview.changed,
           findings: [...preview.findings],
+          ...(preview.jobs ? { jobs: [...preview.jobs] } : {}),
         };
       }),
     };

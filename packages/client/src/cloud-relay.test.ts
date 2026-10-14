@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { getFunctionName, type FunctionReference } from "convex/server";
+import { ConvexError } from "convex/values";
 import { afterEach, expect, test, vi } from "vitest";
+import { api } from "../../../convex/_generated/api.js";
 import { Store } from "../../../apps/server/src/store.js";
 import { VectisClient } from "./index.js";
 import { startCloudRelay } from "./cloud-relay.js";
@@ -37,9 +39,13 @@ const transport = vi.hoisted(() => {
       vi.fn<
         (query: FunctionReference<"query">, args: Record<string, unknown>) => Promise<unknown>
       >(),
-    mutation: vi.fn(
-      async (_mutation: FunctionReference<"mutation">, _args: Record<string, unknown>) => null,
-    ),
+    mutation: vi.fn<
+      (mutation: FunctionReference<"mutation">, args: Record<string, unknown>) => Promise<unknown>
+    >(async () => null),
+    action:
+      vi.fn<
+        (action: FunctionReference<"action">, args: Record<string, unknown>) => Promise<unknown>
+      >(),
     connectionState: vi.fn(() => ({ isWebSocketConnected: true })),
     disconnect: vi.fn(),
     close: vi.fn(async () => {}),
@@ -50,6 +56,7 @@ vi.mock("convex/browser", () => ({
     onUpdate = transport.onUpdate;
     query = transport.query;
     mutation = transport.mutation;
+    action = transport.action;
     close = transport.close;
     client = {
       connectionState: transport.connectionState,
@@ -82,6 +89,7 @@ async function fixture() {
     if (getFunctionName(query) === "machines:self") return new Promise(() => {});
     return [];
   });
+  transport.action.mockResolvedValue("binding");
   const onJobObservations = vi.fn();
   const local = new VectisClient({ url: "http://127.0.0.1:1", token: "unused" });
   const relay = startCloudRelay(
@@ -383,4 +391,321 @@ test("a mismatched identity sends no heartbeat", async () => {
   transport.auth.changed?.(true);
   await vi.advanceTimersByTimeAsync(4000);
   expect(transport.mutation).not.toHaveBeenCalled();
+});
+
+test("access settings use the authenticated binding mutation and policy changes invalidate old job lists", async () => {
+  const { relay, repositories, subscription } = await fixture();
+  transport.auth.changed?.(true);
+  repositories.deliver([binding("binding1")]);
+  subscription("jobs:latest", "binding1").deliver([job]);
+  listJobs([job]);
+  expect(await relay.jobs("binding1")).toEqual([job]);
+  await relay.setAccess("binding1", { actors: { ids: [7] }, approval: "required" });
+  expect(
+    transport.mutation.mock.calls.some(
+      ([mutation, args]) =>
+        getFunctionName(mutation) === "repositoryBindings:setAccess" &&
+        isDeepStrictEqual(args, {
+          bindingId: "binding1",
+          actors: { ids: [7] },
+          approval: "required",
+        }),
+    ),
+  ).toBe(true);
+  repositories.deliver([
+    { ...binding("binding1"), access: { actors: { ids: [7] }, approval: "required" } },
+  ]);
+  listJobs([{ ...job, access: "actor_unknown" }]);
+  expect(await relay.jobs("binding1")).toMatchObject([{ access: "actor_unknown" }]);
+});
+
+test("a list fetched under an old access policy is not cached after the policy changes", async () => {
+  const { relay, repositories, subscription } = await fixture();
+  transport.auth.changed?.(true);
+  repositories.deliver([binding("binding1")]);
+  subscription("jobs:latest", "binding1").deliver([job]);
+  let finish: (value: unknown) => void = () => {};
+  listJobs(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = relay.jobs("binding1");
+  repositories.deliver([
+    { ...binding("binding1"), access: { actors: "any", approval: "required" } },
+  ]);
+  finish([job]);
+  await pending;
+  const lists = listJobs([{ ...job, access: "approval_required" }]);
+  expect(await relay.jobs("binding1")).toMatchObject([{ access: "approval_required" }]);
+  expect(lists()).toHaveLength(2);
+});
+
+test("runner recovery uses an authenticated atomic mutation and validates its lease", async () => {
+  vi.useFakeTimers();
+  const { relay } = await fixture();
+  const request = { bindingId: "binding", environmentId: "linux", key: "interrupted" };
+  const signal = new AbortController().signal;
+  await expect(relay.reconcileRunner(request, signal)).rejects.toThrow();
+  expect(transport.mutation).not.toHaveBeenCalled();
+  transport.auth.changed?.(true);
+  const lease = { id: "fence", bindingId: "binding", environmentId: "linux", phase: "released" };
+  transport.mutation.mockResolvedValueOnce(lease);
+  expect(await relay.reconcileRunner(request, signal)).toEqual(lease);
+  const call = transport.mutation.mock.calls[0];
+  expect(call && getFunctionName(call[0])).toBe("runnerLeases:reconcile");
+  expect(call?.[1]).toEqual(request);
+  transport.mutation.mockResolvedValueOnce(null);
+  await expect(relay.reconcileRunner(request, signal)).rejects.toThrow();
+});
+
+test.each([
+  { busy: true, status: "online" },
+  { busy: false, status: "offline" },
+  { missing: true },
+])("runner status uses the lease action and decodes %j", async (status) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockResolvedValue(status);
+  expect(await relay.runnerStatus("lease1", new AbortController().signal)).toEqual(status);
+  expect(
+    transport.action.mock.calls.map(([action, args]) => [getFunctionName(action), args]),
+  ).toEqual([["githubRunners:status", { id: "lease1" }]]);
+});
+
+test("runner status rejects malformed responses and unavailable or aborted requests", async () => {
+  const { relay } = await fixture();
+  await expect(relay.runnerStatus("lease1", new AbortController().signal)).rejects.toMatchObject({
+    code: "cloud_unavailable",
+  });
+  transport.auth.changed?.(true);
+  transport.action.mockResolvedValue({ busy: "false", status: "online" });
+  await expect(relay.runnerStatus("lease1", new AbortController().signal)).rejects.toThrow();
+  const abort = new AbortController();
+  transport.action.mockImplementation(async () => new Promise(() => {}));
+  const pending = relay.runnerStatus("lease1", abort.signal);
+  const reason = new Error("Status read cancelled");
+  const rejected = expect(pending).rejects.toBe(reason);
+  abort.abort(reason);
+  await rejected;
+});
+
+test("relay shutdown interrupts runner status polling", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockImplementation(async () => new Promise(() => {}));
+  const pending = relay.runnerStatus("lease1", new AbortController().signal);
+  const rejected = expect(pending).rejects.toThrow();
+  await relay.close();
+  await rejected;
+});
+
+test("remote acknowledgements redact older hosts' task errors before truncating or sending", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  const canary = "CloudAcknowledgementCanary123456789";
+  const message = "x".repeat(960) + ` Authorization: Bearer ${canary} exit 23`;
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-operation",
+    key: "remote:remote-operation",
+    command: "machine.pause",
+    status: "failed",
+    message,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    result: { diagnostics: "private local details" },
+  });
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [
+        {
+          _id: "remote-operation",
+          phase: "running",
+          commandJson: JSON.stringify({ type: "machine.pause", paused: true }),
+        },
+      ];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const acknowledgement = transport.mutation.mock.calls.find(
+    ([mutation]) => getFunctionName(mutation) === "operations:acknowledge",
+  )?.[1];
+  expect(acknowledgement).toMatchObject({
+    id: "remote-operation",
+    phase: "failed",
+    resultJson: JSON.stringify({
+      operationId: "local-operation",
+      status: "failed",
+      message: "x".repeat(960) + " Authorization: Bearer [redacted] exit 2",
+      resultAvailableLocally: true,
+    }),
+  });
+  expect(JSON.stringify(acknowledgement)).not.toContain(canary);
+  expect(JSON.stringify(acknowledgement)).not.toContain(canary.slice(0, 10));
+  expect(JSON.stringify(acknowledgement)).not.toContain("private local details");
+});
+
+test("job log relay forwards cursors to the action, decodes results and preserves coded failures", async () => {
+  const { relay } = await fixture();
+  const input = { bindingId: "binding1", jobId: 4, after: 10 };
+  await expect(relay.jobLogs(input)).rejects.toMatchObject({ code: "cloud_unavailable" });
+  expect(transport.action).not.toHaveBeenCalled();
+  transport.auth.changed?.(true);
+  const result = {
+    text: "failure",
+    next: 17,
+    status: "completed",
+    complete: true,
+    truncated: false,
+  };
+  transport.action.mockResolvedValueOnce(result);
+  expect(await relay.jobLogs(input)).toEqual(result);
+  expect(getFunctionName(transport.action.mock.calls[0]?.[0] ?? api.githubJobs.logs)).toBe(
+    "githubJobs:logs",
+  );
+  expect(transport.action.mock.calls[0]?.[1]).toEqual(input);
+  transport.action.mockRejectedValueOnce(new ConvexError({ code: "repository_access_denied" }));
+  await expect(relay.jobLogs(input)).rejects.toMatchObject({ code: "repository_access_denied" });
+  transport.action.mockResolvedValueOnce({ ...result, next: "17" });
+  await expect(relay.jobLogs(input)).rejects.toThrow();
+});
+
+test.each([
+  "github_app_not_installed",
+  "repository_admin_required",
+  "public_runner_approval_required",
+  "repository_access_denied",
+  "installation_changed",
+  "github_account_missing",
+  "github_app_unavailable",
+  "machine_revoked",
+  "setup_required",
+  "environment_unavailable",
+  "cloud_unconfigured",
+  "cloud_unavailable",
+])("connection relay preserves the coded %s refusal even without cloud prose", async (code) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(new ConvexError({ code }));
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code, nextStep: expect.any(String) });
+  transport.action.mockRejectedValueOnce(
+    new ConvexError({ code, message: "Refused.", nextStep: "Fix this prerequisite." }),
+  );
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code, message: "Refused.", nextStep: "Fix this prerequisite." });
+});
+
+test.each([
+  new Error("Connection lost after submit"),
+  new ConvexError({ code: "unexpected_failure" }),
+])("an uncertain connection outcome remains unconfirmed", async (error) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(error);
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({
+    code: "repository_connection_unconfirmed",
+    nextStep: expect.stringContaining("List repository connections"),
+  });
+});
+
+test("run control relay sends the caller key and preserves requested, observed and uncertain outcomes", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  const command = { type: "run.rerun-failed", bindingId: "binding1", runId: 5 } as const;
+  const accepted = {
+    state: "accepted",
+    message: "New attempt observed.",
+    rerun: "observed",
+    runId: 5,
+    runAttempt: 2,
+  };
+  transport.action.mockResolvedValueOnce(accepted);
+  expect(
+    await relay.controlRun(command, "remote:operation1", new AbortController().signal),
+  ).toEqual(accepted);
+  const [reference, args] = transport.action.mock.calls[0] ?? [];
+  if (!reference) throw new Error("Missing action reference");
+  expect(getFunctionName(reference)).toBe("githubRuns:control");
+  expect(args).toEqual({ command, key: "remote:operation1" });
+  const requested = {
+    state: "accepted",
+    cancellation: "requested",
+    message: "GitHub accepted the cancellation; the run is still stopping.",
+    runId: 5,
+  };
+  transport.action.mockResolvedValueOnce(requested);
+  expect(
+    await relay.controlRun(
+      { ...command, type: "run.cancel" },
+      "cancel-key",
+      new AbortController().signal,
+    ),
+  ).toEqual(requested);
+  const uncertain = {
+    state: "uncertain",
+    code: "run_command_unconfirmed",
+    message: "Unconfirmed.",
+    nextStep: "Check GitHub before retrying.",
+  };
+  transport.action.mockResolvedValueOnce(uncertain);
+  expect(await relay.controlRun(command, "other-key", new AbortController().signal)).toEqual(
+    uncertain,
+  );
+});
+
+test("run control relay preserves permission errors and releases interrupted waits", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  const command = { type: "run.cancel", bindingId: "binding1", runId: 5 } as const;
+  transport.action.mockRejectedValueOnce(
+    new ConvexError({
+      code: "github_app_permission_required",
+      message: "Approval needed.",
+      nextStep: "Approve updated App permissions.",
+    }),
+  );
+  await expect(
+    relay.controlRun(command, "permission", new AbortController().signal),
+  ).rejects.toMatchObject({
+    code: "github_app_permission_required",
+    nextStep: "Approve updated App permissions.",
+  });
+  transport.action.mockImplementationOnce(async () => new Promise(() => {}));
+  const abort = new AbortController();
+  const pending = relay.controlRun(command, "wait", abort.signal);
+  const rejection = expect(pending).rejects.toThrow("Stopped waiting");
+  abort.abort(new Error("Stopped waiting"));
+  await rejection;
+});
+
+test("run control relay passes through code-only authorization refusals", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(new ConvexError({ code: "repository_access_denied" }));
+  await expect(
+    relay.controlRun(
+      { type: "run.cancel", bindingId: "binding1", runId: 5 },
+      "denied",
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code: "repository_access_denied" });
 });

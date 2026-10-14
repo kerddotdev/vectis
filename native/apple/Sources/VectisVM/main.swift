@@ -2,10 +2,10 @@ import Foundation
 import AppKit
 import Virtualization
 
-struct HelperError: Error { let message: String }
+struct HelperError: Error { let message: String; var code: String? = nil }
 
 @MainActor
-func emit(_ event: String, message: String? = nil, macAddress: String? = nil) {
+func emit(_ event: String, message: String? = nil, macAddress: String? = nil, code: String? = nil) {
     if (event == "vm.stopped" || event == "vm.error" || event == "installation.action_required"),
        let path = ProcessInfo.processInfo.environment["VECTIS_EXIT_RECEIPT"],
        let id = ProcessInfo.processInfo.environment["VECTIS_INSTANCE_ID"],
@@ -14,6 +14,7 @@ func emit(_ event: String, message: String? = nil, macAddress: String? = nil) {
     }
     var body = ["event": event]
     if let message { body["message"] = message }
+    if let code { body["code"] = code }
     if let macAddress { body["macAddress"] = macAddress }
     if let data = try? JSONSerialization.data(withJSONObject: body) {
         FileHandle.standardOutput.write(data)
@@ -29,12 +30,17 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
     var stopping = false
 
     func start(arguments: [String]) async throws {
+        let rosetta = arguments.dropFirst(7).contains("--rosetta")
+        let arguments = Array(arguments.prefix(7)) + arguments.dropFirst(7).filter { $0 != "--rosetta" }
         guard (7...8).contains(arguments.count), arguments[1] == "run",
               let cpu = Int(arguments[4]), let memory = UInt64(arguments[5]),
               cpu > 0, memory >= 512, memory <= UInt64.max / 1048576 else {
-            throw HelperError(message: "Usage: vectis-vm run linux|macos image cpu memoryMiB efiPath [seedPath]")
+            throw HelperError(message: "Usage: vectis-vm run linux|macos image cpu memoryMiB efiPath [seedPath|--console] [--rosetta]")
         }
         let os = arguments[2]
+        if rosetta && os != "linux" {
+            throw HelperError(message: "Rosetta for Linux requires a Linux guest.", code: "rosetta_unsupported")
+        }
         let image = URL(fileURLWithPath: arguments[3])
         let configuration = VZVirtualMachineConfiguration()
         configuration.cpuCount = cpu
@@ -51,6 +57,20 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
             let serial = VZVirtioConsoleDeviceSerialPortConfiguration()
             serial.attachment = VZFileHandleSerialPortAttachment(fileHandleForReading: nil, fileHandleForWriting: .standardError)
             configuration.serialPorts = [serial]
+            if rosetta {
+                switch VZLinuxRosettaDirectoryShare.availability {
+                case .notInstalled:
+                    throw HelperError(message: "Install Rosetta on the Mac with softwareupdate --install-rosetta.", code: "rosetta_not_installed")
+                case .notSupported:
+                    throw HelperError(message: "Rosetta for Linux is not supported on this Mac.", code: "rosetta_unsupported")
+                case .installed:
+                    let device = VZVirtioFileSystemDeviceConfiguration(tag: "rosetta")
+                    device.share = try VZLinuxRosettaDirectoryShare()
+                    configuration.directorySharingDevices = [device]
+                @unknown default:
+                    throw HelperError(message: "Rosetta for Linux availability is unknown on this Mac.", code: "rosetta_unsupported")
+                }
+            }
             disk = image
         } else if os == "macos" {
             let platform = VZMacPlatformConfiguration()
@@ -165,7 +185,7 @@ Task { @MainActor in
         try await controller.start(arguments: CommandLine.arguments)
     }
     catch {
-        emit("vm.error", message: (error as? HelperError)?.message ?? error.localizedDescription)
+        emit("vm.error", message: (error as? HelperError)?.message ?? error.localizedDescription, code: (error as? HelperError)?.code)
         exit(1)
     }
 }

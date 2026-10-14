@@ -150,3 +150,271 @@ test("remote capability discovery uses a fresh inspection and completed operatio
     result: { verified: true },
   });
 });
+
+test("a remotely replayed idle drain preserves its cancelled outcome and local result code", async () => {
+  const { request, client } = fixture();
+  const message = "The idle runner's VM was released.";
+  request
+    .mockResolvedValueOnce({
+      ...record,
+      commandJson: JSON.stringify({ type: "runner.run", bindingId: "binding", jobId: 1 }),
+      phase: "cancelled",
+      resultJson: JSON.stringify({ message, operationId: "local1", resultAvailableLocally: true }),
+    })
+    .mockResolvedValueOnce({ queryId: "query1" })
+    .mockResolvedValueOnce({
+      pending: false,
+      responseJson: JSON.stringify({
+        ok: true,
+        result: {
+          id: "local1",
+          key: "remote:remote1",
+          command: "runner.run",
+          status: "cancelled",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:01:00Z",
+          message,
+          result: { code: "runner_idle", stage: "finished", leaseId: "lease" },
+        },
+      }),
+    });
+  expect(await client.operation("remote1")).toMatchObject({
+    status: "cancelled",
+    message,
+    result: { code: "runner_idle", leaseId: "lease" },
+  });
+  expect(request.mock.calls[1]?.[0]).toMatchObject({
+    type: "query.submit",
+    query: { name: "operation", id: "local1" },
+  });
+});
+
+test.each(["machine_offline", "claim_timeout"])(
+  "a request expired before claim exposes %s without querying the host",
+  async (code) => {
+    const { request, client } = fixture();
+    const message =
+      code === "machine_offline"
+        ? "The machine went offline before it claimed this runner request."
+        : "The machine did not claim this runner request within ten minutes.";
+    request.mockResolvedValueOnce({
+      ...record,
+      commandJson: JSON.stringify({
+        type: "runner.run",
+        bindingId: "binding",
+        jobId: 4,
+        automatic: true,
+      }),
+      phase: "cancelled",
+      resultJson: JSON.stringify({
+        status: "cancelled",
+        code,
+        message,
+        resultAvailableLocally: false,
+      }),
+    });
+    expect(await client.operation("remote1")).toMatchObject({
+      status: "cancelled",
+      message,
+      result: { remotePhase: "cancelled", code, resultAvailableLocally: false },
+    });
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      { type: "operation.get", id: "remote1" },
+      undefined,
+    );
+  },
+);
+
+test.each(["rosetta", "off"] as const)(
+  "remote environment configuration retains x64=%s",
+  async (x64) => {
+    const { request, client } = fixture();
+    const command = { type: "environment.configure", id: "linux", x64 } as const;
+    request
+      .mockResolvedValueOnce({ operationId: "remote1" })
+      .mockResolvedValueOnce({ ...record, commandJson: JSON.stringify(command) });
+    expect(await client.submit(command, "x64")).toMatchObject({
+      status: "accepted",
+      command: "environment.configure",
+    });
+    expect(request.mock.calls[0]?.[0]).toEqual({
+      type: "operation.submit",
+      machineId: "machine1",
+      key: "x64",
+      command,
+    });
+  },
+);
+
+test("remote status preserves effective environment egress", async () => {
+  const { request, client } = fixture();
+  request.mockResolvedValueOnce({ queryId: "egress-status" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({
+      ok: true,
+      result: {
+        protocolVersion: 1,
+        machine: { id: "machine1", name: "Host", paused: false },
+        environments: [
+          {
+            id: "windows",
+            name: "Windows",
+            os: "windows",
+            state: "ready",
+            basePath: "/synthetic/base.img",
+            cpu: 1,
+            memoryMiB: 512,
+            network: { egress: "internet_only", enforcement: "enforced" },
+          },
+        ],
+        instances: [],
+        operations: [],
+      },
+    }),
+  });
+  expect((await client.status()).environments[0]?.network).toEqual({
+    egress: "internet_only",
+    enforcement: "enforced",
+  });
+  expect(request.mock.calls[0]?.[0]).toMatchObject({
+    type: "query.submit",
+    machineId: "machine1",
+    query: { name: "status" },
+  });
+});
+
+test("job logs use a controller LocalQuery and carry the cursor and coded errors", async () => {
+  const { request, client } = fixture();
+  const result = {
+    text: "failure\n",
+    next: 108,
+    status: "completed",
+    complete: true,
+    truncated: false,
+  };
+  request
+    .mockResolvedValueOnce({ queryId: "query1" })
+    .mockResolvedValueOnce({ pending: false, responseJson: JSON.stringify({ ok: true, result }) });
+  expect(await client.jobLogs({ bindingId: "binding1", jobId: 4, after: 100 })).toEqual(result);
+  expect(request.mock.calls[0]?.[0]).toMatchObject({
+    type: "query.submit",
+    machineId: "machine1",
+    query: { name: "job.logs", bindingId: "binding1", jobId: 4, after: 100 },
+  });
+  request.mockResolvedValueOnce({ queryId: "query2" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({
+      ok: false,
+      code: "repository_access_denied",
+      message: "Denied.",
+      nextStep: "Check the binding.",
+    }),
+  });
+  await expect(client.jobLogs({ bindingId: "other", jobId: 4 })).rejects.toMatchObject({
+    code: "repository_access_denied",
+  });
+  request.mockClear();
+  await expect(client.jobLogs({ bindingId: "binding1", jobId: 4, after: -1 })).rejects.toThrow();
+  expect(request).not.toHaveBeenCalled();
+});
+
+test("remote readiness sends a read inspection and validates the returned checks", async () => {
+  const { request, client } = fixture();
+  const report = {
+    ready: false,
+    checks: [
+      {
+        id: "github.app",
+        status: "blocked",
+        code: "github_app_not_installed",
+        message: "Install the App.",
+        nextStep: "Open GitHub.",
+        target: { area: "github" },
+      },
+    ],
+  };
+  request.mockResolvedValueOnce({ queryId: "query1" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({ ok: true, result: report }),
+  });
+  expect(await client.repositoryReadiness({ bindingId: "binding1" })).toEqual(report);
+  expect(request.mock.calls[0]?.[0]).toMatchObject({
+    type: "query.submit",
+    machineId: "machine1",
+    query: { name: "repository.readiness", input: { bindingId: "binding1" } },
+  });
+  request.mockResolvedValueOnce({ queryId: "query2" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({
+      ok: true,
+      result: {
+        ready: true,
+        checks: [{ id: "github.app", status: "invented", message: "Invalid" }],
+      },
+    }),
+  });
+  await expect(
+    client.repositoryReadiness({ repositoryName: "owner/repo", environmentId: "linux" }),
+  ).rejects.toThrow();
+});
+
+test.each([false, true])(
+  "remote readiness checks capabilities after an ambiguous inspection failure (supported: %s)",
+  async (supported) => {
+    const { request, client } = fixture();
+    const failure = {
+      ok: false,
+      code: "inspection_failed",
+      message: "The local inspection could not be completed.",
+      nextStep: "Retry the inspection.",
+    };
+    request
+      .mockResolvedValueOnce({ queryId: "query1" })
+      .mockResolvedValueOnce({ pending: false, responseJson: JSON.stringify(failure) })
+      .mockResolvedValueOnce({ queryId: "query2" })
+      .mockResolvedValueOnce({
+        pending: false,
+        responseJson: JSON.stringify({
+          ok: true,
+          result: {
+            protocolVersion: 1,
+            capabilities: supported
+              ? [{ name: "repository.readiness", kind: "query" }]
+              : [{ name: "doctor", kind: "query" }],
+          },
+        }),
+      });
+    await expect(client.repositoryReadiness({ bindingId: "binding1" })).rejects.toMatchObject(
+      supported
+        ? { code: failure.code, message: failure.message }
+        : {
+            code: "unknown_query",
+            message: "Repository readiness is unavailable on this machine.",
+          },
+    );
+    expect(request.mock.calls[2]?.[0]).toMatchObject({
+      query: { name: "capabilities" },
+      machineId: "machine1",
+    });
+  },
+);
+
+test("remote readiness preserves the original failure when capability discovery fails", async () => {
+  const { request, client } = fixture();
+  request
+    .mockResolvedValueOnce({ queryId: "query1" })
+    .mockResolvedValueOnce({
+      pending: false,
+      responseJson: JSON.stringify({
+        ok: false,
+        code: "inspection_failed",
+        message: "The original inspection failed.",
+        nextStep: "Retry the inspection.",
+      }),
+    })
+    .mockRejectedValueOnce(new Error("Capability discovery failed."));
+  await expect(client.repositoryReadiness({ bindingId: "binding1" })).rejects.toMatchObject({
+    code: "inspection_failed",
+    message: "The original inspection failed.",
+  });
+});

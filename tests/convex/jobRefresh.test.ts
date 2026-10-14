@@ -1,9 +1,13 @@
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, createHmac } from "node:crypto";
 import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api, internal } from "../../convex/_generated/api.js";
 const modules = {
+  "../../convex/http.ts": () => import("../../convex/http.js"),
+  "../../convex/githubWebhook.ts": () => import("../../convex/githubWebhook.js"),
+  "../../convex/githubDeliveries.ts": () => import("../../convex/githubDeliveries.js"),
+  "../../convex/githubAppSetup.ts": () => import("../../convex/githubAppSetup.js"),
   "../../convex/runnerDemand.ts": () => import("../../convex/runnerDemand.js"),
   "../../convex/jobs.ts": () => import("../../convex/jobs.js"),
   "../../convex/githubJobs.ts": () => import("../../convex/githubJobs.js"),
@@ -14,6 +18,7 @@ const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 })
   .privateKey.export({ format: "pem", type: "pkcs8" })
   .toString();
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
 });
@@ -224,3 +229,78 @@ test("refresh returns the merged stored job when an API response trails a comple
     htmlUrl: "https://github.com/owner/sandbox/actions/runs/5/job/4",
   });
 });
+
+test.each(["refresh", "scan", "webhook"])(
+  "%s stores REST run actor IDs only for restrictive repositories",
+  async (surface) => {
+    const { t, device, bindingId, fetch } = await fixture();
+    const original = fetch.getMockImplementation();
+    if (!original) throw new Error("Missing fetch");
+    const job = {
+      id: 4,
+      run_id: 5,
+      run_attempt: 1,
+      name: "Build",
+      status: "queued",
+      conclusion: null,
+      labels: ["vectis-mac"],
+    };
+    fetch.mockImplementation(async (url) => {
+      if (url.endsWith("/actions/jobs/4")) return Response.json(job);
+      if (url.includes("/actions/runs?"))
+        return Response.json({ total_count: 1, workflow_runs: [{ id: 5 }] });
+      if (url.includes("/actions/runs/5/jobs?"))
+        return Response.json({ total_count: 1, jobs: [job] });
+      if (url.endsWith("/actions/runs/5"))
+        return Response.json({
+          id: 5,
+          run_attempt: 1,
+          repository: { id: 2 },
+          actor: { id: 7 },
+          triggering_actor: { id: 8 },
+        });
+      return original(url);
+    });
+    vi.useFakeTimers();
+    const request = async (delivery: string) => {
+      if (surface === "refresh")
+        return device.action(api.githubJobs.refresh, { bindingId, jobId: 4 });
+      if (surface === "scan") return device.action(api.githubJobs.scan, { bindingId });
+      const body = JSON.stringify({
+        installation: { id: 3 },
+        repository: { id: 2 },
+        workflow_job: { ...job, actor_id: 999, triggering_actor_id: 999 },
+      });
+      const response = await t.fetch("/github/webhook", {
+        method: "POST",
+        body,
+        headers: {
+          "x-github-event": "workflow_job",
+          "x-github-delivery": delivery,
+          "x-hub-signature-256": `sha256=${createHmac("sha256", "test").update(body).digest("hex")}`,
+        },
+      });
+      expect(response.status).toBe(202);
+      return response;
+    };
+    await request("unrestricted");
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetch.mock.calls.some(([url]) => url.endsWith("/actions/runs/5"))).toBe(false);
+    expect(await device.query(api.jobs.list, { bindingId })).toMatchObject([{ jobId: 4 }]);
+    await t.run((ctx) =>
+      ctx.db.patch("repositoryBindings", bindingId, {
+        access: { actors: { ids: [7, 8] }, approval: "required" },
+      }),
+    );
+    await request("restrictive");
+    if (surface === "webhook")
+      expect(await device.query(api.jobs.list, { bindingId })).toMatchObject([
+        { access: "actor_unknown" },
+      ]);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(fetch.mock.calls.filter(([url]) => url.endsWith("/actions/runs/5"))).toHaveLength(1);
+    expect(await device.query(api.jobs.list, { bindingId })).toMatchObject([
+      { actorId: 7, triggeringActorId: 8, runAttempt: 1, access: "approval_required" },
+    ]);
+  },
+);

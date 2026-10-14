@@ -17,6 +17,7 @@ curl --fail --location --output qemu-11.1.1.tar.xz https://download.qemu.org/qem
 echo '079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482  qemu-11.1.1.tar.xz' | shasum -a 256 -c -
 tar --exclude='*/EmulatorPkg/Unix/Host/X11IncludeHack' -xf qemu-11.1.1.tar.xz
 patch -d qemu-11.1.1 -p1 < /absolute/path/to/vectis/native/qemu/patches/0001-align-arm-tpm-ppi-to-host-page.patch
+patch -d qemu-11.1.1 -p1 < /absolute/path/to/vectis/native/qemu/patches/0002-isolate-vectis-user-network.patch
 mkdir build
 cd build
 ../qemu-11.1.1/configure --target-list=aarch64-softmmu --enable-hvf --disable-tcg --disable-pvg --disable-docs --disable-werror --disable-tools --disable-guest-agent --disable-sdl --disable-gtk --disable-cocoa --enable-slirp --datadir=/opt/homebrew/share/qemu
@@ -25,7 +26,9 @@ ninja -j6 qemu-system-aarch64
 
 The build needs Xcode command-line tools, Python, Ninja, GLib, pixman and libslirp. The data directory above uses the matching Homebrew QEMU firmware. The excluded archive entry is an absolute symlink for the unused EDK2 X11 emulator. Disabling PVG avoids an unrelated removed graphics API in the macOS 27 SDK; this runtime is headless. QEMU's build applies the local hypervisor entitlement. This is a development build, not a notarized release artifact.
 
-The patched binary passed a two-instance ARM64 UEFI test with HVF, PPI enabled, independent TPM processes, private firmware variables, a custom storage path containing a comma, and isolated shutdown and cleanup. This does not establish Windows guest installation, driver compatibility, or a GitHub Actions job.
+The network patch adds `vectis-isolate=on` to the user backend and requires libslirp 4.7 or newer. Vectis checks `-vectis-isolation-version` before allocating Windows disks or starting a guest. The filter allows IPv4 internet traffic, the virtual DNS resolver, DHCP and replies to the owned SSH forward. It rejects guest connections to host interface addresses, loopback, private and link-local networks. IPv6 and file exports are disabled. Rebuild older runtimes with both patches; existing Windows base images do not need reinstalling.
+
+The TPM-patched binary passed a two-instance ARM64 UEFI test with HVF, PPI enabled, independent TPM processes, private firmware variables, a custom storage path containing a comma, and isolated shutdown and cleanup. The combined TPM and network patches compile on Apple Silicon, and the network filter has native packet tests. The combined runtime has not yet been tested with a Windows guest or a GitHub Actions job.
 
 ## Prepared Windows images
 
@@ -41,7 +44,7 @@ For OpenSSH, enable public-key authentication and install the image's authorized
 
 ## Distribution
 
-No QEMU or firmware binaries are committed here. QEMU is GPL v2 software with component-specific licenses; see the exact source archive's `COPYING` and `LICENSE` files and [upstream licensing documentation](https://www.qemu.org/docs/master/about/license.html). A binary distribution must include corresponding source with this patch and the applicable license materials, including separately supplied firmware and TPM components. The patch is provided under GPL-2.0-or-later, matching the modified source file.
+No QEMU or firmware binaries are committed here. QEMU is GPL v2 software with component-specific licenses; see the exact source archive's `COPYING` and `LICENSE` files and [upstream licensing documentation](https://www.qemu.org/docs/master/about/license.html). A binary distribution must include corresponding source with both patches and the applicable license materials, including separately supplied firmware and TPM components. Modified QEMU files retain their upstream licenses; the new network filter header is MIT licensed.
 
 ## Relocatable development runtime
 
@@ -59,4 +62,4 @@ Collect the exact installed Homebrew source archives, upstream patches and formu
 pnpm package:runtime-sources --runtime /absolute/path/to/staged-runtime --output /absolute/path/to/source-materials
 ```
 
-The collector reads each included formula's installed SPDX metadata, excludes binary bottles, and verifies every archive and patch against its recorded SHA-256. Downloads use HTTPS with bounded size and duration. Repeating collection verifies completed files and retries incomplete downloads. It also includes the Vectis patch and this custom QEMU build recipe. `SOURCES.json` records completion; a completed collection is not an automatic redistribution approval. Review the resulting materials against the actual custom build and all bundled libraries before publishing.
+The collector reads each included formula's installed SPDX metadata, excludes binary bottles, and verifies every archive and patch against its recorded SHA-256. Downloads use HTTPS with bounded size and duration. Repeating collection verifies completed files and retries incomplete downloads. It also includes both Vectis patches and this custom QEMU build recipe. `SOURCES.json` records completion; a completed collection is not an automatic redistribution approval. Review the resulting materials against the actual custom build and all bundled libraries before publishing.

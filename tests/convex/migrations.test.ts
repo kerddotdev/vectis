@@ -1,4 +1,7 @@
 import { convexTest } from "convex-test";
+import { Schema } from "effect";
+import { MigrationAnalysis, RepositoryMigration } from "../../packages/protocol/src/migrations.js";
+import { previewMigration } from "../../packages/migration/src/index.js";
 import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api, internal } from "../../convex/_generated/api.js";
@@ -169,4 +172,60 @@ test("changing the prepared environment invalidates retained previews", async ()
   await expect(device.query(internal.migrationPreviews.owned, { previewId })).rejects.toThrow(
     "migration_environment_changed",
   );
+});
+
+test("job summaries survive preview persistence and decoding alongside legacy previews", async () => {
+  const { device, bindingId } = await fixture();
+  const before =
+    "on: push\njobs:\n  build:\n    runs-on: macos-26\n  hosted:\n    needs: build\n    runs-on: ubuntu-latest\n";
+  const preview = previewMigration(before, [{ from: "macos-26", to: "vectis-mac" }]);
+  const analyzed = {
+    ...report,
+    files: [
+      {
+        ...report.files[0],
+        before,
+        after: preview.source,
+        changed: preview.changed,
+        jobs: preview.jobs,
+      },
+    ],
+  };
+  const previewId = await device.mutation(internal.migrationPreviews.save, {
+    bindingId,
+    reportJson: JSON.stringify(analyzed),
+  });
+  const retained = await device.query(internal.migrationPreviews.owned, { previewId });
+  const decoded = Schema.decodeUnknownSync(RepositoryMigration)(JSON.parse(retained.reportJson));
+  expect(decoded.files[0]?.jobs).toEqual(preview.jobs);
+  expect(decoded.files[0]?.jobs?.[0]?.targets).toEqual(["vectis-mac"]);
+  expect(decoded.files[0]?.after).toBe(before.replace("macos-26", "vectis-mac"));
+  const decodeAnalysis = Schema.decodeUnknownSync(MigrationAnalysis);
+  expect(decodeAnalysis({ previewId, verified: false, ...decoded }).files[0]?.jobs).toEqual(
+    preview.jobs,
+  );
+  expect(decodeAnalysis({ previewId, verified: false, ...report }).files[0]?.jobs).toBeUndefined();
+});
+
+test("retains legacy job summaries without targets", async () => {
+  const { device, bindingId } = await fixture();
+  const legacy = {
+    ...report,
+    files: report.files.map((file) => ({
+      ...file,
+      jobs: [{ job: "build", changed: true, reasons: [], needs: [] }],
+    })),
+  };
+  const previewId = await device.mutation(internal.migrationPreviews.save, {
+    bindingId,
+    reportJson: JSON.stringify(legacy),
+  });
+  const retained = await device.query(internal.migrationPreviews.owned, { previewId });
+  const decoded = Schema.decodeUnknownSync(MigrationAnalysis)({
+    previewId,
+    verified: false,
+    ...JSON.parse(retained.reportJson),
+  });
+  expect(decoded.files[0]?.jobs).toEqual(legacy.files[0]?.jobs);
+  expect(decoded.files[0]?.jobs?.[0]?.targets).toBeUndefined();
 });

@@ -130,3 +130,79 @@ test("the sweep deletes records past their retention window and keeps unfinished
   });
   vi.useRealTimers();
 });
+
+test("the daily sweep expires all receipt states after 30 days in bounded batches", async () => {
+  vi.useFakeTimers();
+  try {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+    const cutoff = now - windows.runReceipts;
+    expect(windows.runReceipts).toBe(30 * day);
+    await t.run(async (ctx) => {
+      const machineId = await ctx.db.insert("machines", {
+        owner: "owner",
+        localId: "local",
+        name: "Mac",
+        createdAt: 1,
+      });
+      const accountId = await ctx.db.insert("githubAccounts", {
+        owner: "owner",
+        githubId: 7,
+        login: "owner",
+        installations: [],
+        verifiedAt: 1,
+      });
+      const bindingId = await ctx.db.insert("repositoryBindings", {
+        owner: "owner",
+        accountId,
+        machineId,
+        repositoryId: 2,
+        repositoryName: "sandbox",
+        installationId: 1,
+        environmentId: "ubuntu",
+        enabled: true,
+        verifiedAt: 1,
+      });
+      const states = ["submitted", "accepted", "uncertain", "rejected"] as const;
+      for (const state of states)
+        for (let index = 0; index < 126; index++)
+          await ctx.db.insert("runCommandReceipts", {
+            machineId,
+            bindingId,
+            key: `old-${state}-${index}`,
+            requestHash: "a".repeat(64),
+            state,
+            createdAt: cutoff - day,
+            updatedAt: cutoff - 1,
+          });
+      for (const [key, updatedAt] of [
+        ["boundary", cutoff],
+        ["recent", now - day],
+        ["fresh", now],
+      ] as const)
+        await ctx.db.insert("runCommandReceipts", {
+          machineId,
+          bindingId,
+          key,
+          requestHash: "b".repeat(64),
+          state: "accepted",
+          createdAt: cutoff - day,
+          updatedAt,
+          outcome: {
+            state: "accepted",
+            cancellation: "requested",
+            message: "GitHub accepted the cancellation; the run is still stopping.",
+            runId: 5,
+          },
+        });
+    });
+    await t.mutation(internal.retention.sweep, {});
+    expect(await t.run((ctx) => ctx.db.query("runCommandReceipts").collect())).toHaveLength(7);
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    const receipts = await t.run((ctx) => ctx.db.query("runCommandReceipts").collect());
+    expect(receipts.map((receipt) => receipt.key).sort()).toEqual(["boundary", "fresh", "recent"]);
+    expect(receipts.every((receipt) => receipt.outcome?.state === "accepted")).toBe(true);
+  } finally {
+    vi.useRealTimers();
+  }
+});
