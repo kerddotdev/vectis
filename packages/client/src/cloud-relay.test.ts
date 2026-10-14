@@ -37,9 +37,13 @@ const transport = vi.hoisted(() => {
       vi.fn<
         (query: FunctionReference<"query">, args: Record<string, unknown>) => Promise<unknown>
       >(),
-    mutation: vi.fn(
-      async (_mutation: FunctionReference<"mutation">, _args: Record<string, unknown>) => null,
-    ),
+    mutation: vi.fn<
+      (mutation: FunctionReference<"mutation">, args: Record<string, unknown>) => Promise<unknown>
+    >(async () => null),
+    action:
+      vi.fn<
+        (action: FunctionReference<"action">, args: Record<string, unknown>) => Promise<unknown>
+      >(),
     connectionState: vi.fn(() => ({ isWebSocketConnected: true })),
     disconnect: vi.fn(),
     close: vi.fn(async () => {}),
@@ -50,6 +54,7 @@ vi.mock("convex/browser", () => ({
     onUpdate = transport.onUpdate;
     query = transport.query;
     mutation = transport.mutation;
+    action = transport.action;
     close = transport.close;
     client = {
       connectionState: transport.connectionState,
@@ -383,4 +388,112 @@ test("a mismatched identity sends no heartbeat", async () => {
   transport.auth.changed?.(true);
   await vi.advanceTimersByTimeAsync(4000);
   expect(transport.mutation).not.toHaveBeenCalled();
+});
+
+test("runner recovery uses an authenticated atomic mutation and validates its lease", async () => {
+  vi.useFakeTimers();
+  const { relay } = await fixture();
+  const request = { bindingId: "binding", environmentId: "linux", key: "interrupted" };
+  const signal = new AbortController().signal;
+  await expect(relay.reconcileRunner(request, signal)).rejects.toThrow();
+  expect(transport.mutation).not.toHaveBeenCalled();
+  transport.auth.changed?.(true);
+  const lease = { id: "fence", bindingId: "binding", environmentId: "linux", phase: "released" };
+  transport.mutation.mockResolvedValueOnce(lease);
+  expect(await relay.reconcileRunner(request, signal)).toEqual(lease);
+  const call = transport.mutation.mock.calls[0];
+  expect(call && getFunctionName(call[0])).toBe("runnerLeases:reconcile");
+  expect(call?.[1]).toEqual(request);
+  transport.mutation.mockResolvedValueOnce(null);
+  await expect(relay.reconcileRunner(request, signal)).rejects.toThrow();
+});
+
+test.each([
+  { busy: true, status: "online" },
+  { busy: false, status: "offline" },
+  { missing: true },
+])("runner status uses the lease action and decodes %j", async (status) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockResolvedValue(status);
+  expect(await relay.runnerStatus("lease1", new AbortController().signal)).toEqual(status);
+  expect(
+    transport.action.mock.calls.map(([action, args]) => [getFunctionName(action), args]),
+  ).toEqual([["githubRunners:status", { id: "lease1" }]]);
+});
+
+test("runner status rejects malformed responses and unavailable or aborted requests", async () => {
+  const { relay } = await fixture();
+  await expect(relay.runnerStatus("lease1", new AbortController().signal)).rejects.toMatchObject({
+    code: "cloud_unavailable",
+  });
+  transport.auth.changed?.(true);
+  transport.action.mockResolvedValue({ busy: "false", status: "online" });
+  await expect(relay.runnerStatus("lease1", new AbortController().signal)).rejects.toThrow();
+  const abort = new AbortController();
+  transport.action.mockImplementation(async () => new Promise(() => {}));
+  const pending = relay.runnerStatus("lease1", abort.signal);
+  const reason = new Error("Status read cancelled");
+  const rejected = expect(pending).rejects.toBe(reason);
+  abort.abort(reason);
+  await rejected;
+});
+
+test("relay shutdown interrupts runner status polling", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockImplementation(async () => new Promise(() => {}));
+  const pending = relay.runnerStatus("lease1", new AbortController().signal);
+  const rejected = expect(pending).rejects.toThrow();
+  await relay.close();
+  await rejected;
+});
+
+test("remote acknowledgements redact older hosts' task errors before truncating or sending", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  const canary = "CloudAcknowledgementCanary123456789";
+  const message = "x".repeat(960) + ` Authorization: Bearer ${canary} exit 23`;
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-operation",
+    key: "remote:remote-operation",
+    command: "machine.pause",
+    status: "failed",
+    message,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    result: { diagnostics: "private local details" },
+  });
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [
+        {
+          _id: "remote-operation",
+          phase: "running",
+          commandJson: JSON.stringify({ type: "machine.pause", paused: true }),
+        },
+      ];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const acknowledgement = transport.mutation.mock.calls.find(
+    ([mutation]) => getFunctionName(mutation) === "operations:acknowledge",
+  )?.[1];
+  expect(acknowledgement).toMatchObject({
+    id: "remote-operation",
+    phase: "failed",
+    resultJson: JSON.stringify({
+      operationId: "local-operation",
+      status: "failed",
+      message: "x".repeat(960) + " Authorization: Bearer [redacted] exit 2",
+      resultAvailableLocally: true,
+    }),
+  });
+  expect(JSON.stringify(acknowledgement)).not.toContain(canary);
+  expect(JSON.stringify(acknowledgement)).not.toContain(canary.slice(0, 10));
+  expect(JSON.stringify(acknowledgement)).not.toContain("private local details");
 });

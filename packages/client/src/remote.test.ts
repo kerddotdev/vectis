@@ -150,3 +150,77 @@ test("remote capability discovery uses a fresh inspection and completed operatio
     result: { verified: true },
   });
 });
+
+test("a remotely replayed idle drain preserves its cancelled outcome and local result code", async () => {
+  const { request, client } = fixture();
+  const message = "The idle runner's VM was released.";
+  request
+    .mockResolvedValueOnce({
+      ...record,
+      commandJson: JSON.stringify({ type: "runner.run", bindingId: "binding", jobId: 1 }),
+      phase: "cancelled",
+      resultJson: JSON.stringify({ message, operationId: "local1", resultAvailableLocally: true }),
+    })
+    .mockResolvedValueOnce({ queryId: "query1" })
+    .mockResolvedValueOnce({
+      pending: false,
+      responseJson: JSON.stringify({
+        ok: true,
+        result: {
+          id: "local1",
+          key: "remote:remote1",
+          command: "runner.run",
+          status: "cancelled",
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:01:00Z",
+          message,
+          result: { code: "runner_idle", stage: "finished", leaseId: "lease" },
+        },
+      }),
+    });
+  expect(await client.operation("remote1")).toMatchObject({
+    status: "cancelled",
+    message,
+    result: { code: "runner_idle", leaseId: "lease" },
+  });
+  expect(request.mock.calls[1]?.[0]).toMatchObject({
+    type: "query.submit",
+    query: { name: "operation", id: "local1" },
+  });
+});
+
+test.each(["machine_offline", "claim_timeout"])(
+  "a request expired before claim exposes %s without querying the host",
+  async (code) => {
+    const { request, client } = fixture();
+    const message =
+      code === "machine_offline"
+        ? "The machine went offline before it claimed this runner request."
+        : "The machine did not claim this runner request within ten minutes.";
+    request.mockResolvedValueOnce({
+      ...record,
+      commandJson: JSON.stringify({
+        type: "runner.run",
+        bindingId: "binding",
+        jobId: 4,
+        automatic: true,
+      }),
+      phase: "cancelled",
+      resultJson: JSON.stringify({
+        status: "cancelled",
+        code,
+        message,
+        resultAvailableLocally: false,
+      }),
+    });
+    expect(await client.operation("remote1")).toMatchObject({
+      status: "cancelled",
+      message,
+      result: { remotePhase: "cancelled", code, resultAvailableLocally: false },
+    });
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      { type: "operation.get", id: "remote1" },
+      undefined,
+    );
+  },
+);
