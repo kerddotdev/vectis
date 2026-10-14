@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { startService } from "./http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
-import { Snapshot } from "../../../packages/protocol/src/index.js";
+import { Snapshot, VectisError } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -301,6 +301,74 @@ test("machine runner limits reject invalid values and survive a service restart"
   const state = await new VectisClient(restarted.connection).status();
   expect(state.machine.maxRunners).toBe(3);
   expect(state.runnerCapacity?.max).toBe(3);
+});
+
+test("task failures are redacted in storage and the logs query before any display", async () => {
+  const { home, server, client } = await fixture();
+  const canary = "ghp_TaskFailureCanary123456789";
+  const error = new VectisError(
+    "runtime_missing",
+    `failed ${canary} exit 23`,
+    `token=${canary} inspect /tmp/runner`,
+  );
+  const validation = vi.spyOn(server.service.runtime, "validate").mockRejectedValue(error);
+  server.store.put("environment", "test", {
+    id: "test",
+    name: "Runner",
+    os: "linux",
+    state: "ready",
+    cpu: 1,
+    memoryMiB: 512,
+    basePath: join(home, "base.img"),
+  });
+  try {
+    const operation = await client.submit({ type: "environment.start", id: "test" }, "canary-task");
+    await server.service.drain();
+    await vi.waitFor(() =>
+      expect(server.store.get("operation", operation.id)).toMatchObject({
+        status: "action_required",
+        message: "failed [redacted] exit 23",
+        result: { nextStep: "token=[redacted] inspect /tmp/runner" },
+      }),
+    );
+    expect(validation).toHaveBeenCalledOnce();
+    const row = server.store.db
+      .prepare("SELECT body FROM records WHERE kind='operation' AND id=?")
+      .get(operation.id);
+    expect(row?.body).not.toContain(canary);
+    expect(JSON.stringify(await client.operation(operation.id))).not.toContain(canary);
+    await writeFile(join(home, "service.log"), `${error.message}\n${error.nextStep}\n`);
+    expect(await client.logs()).toEqual({
+      lines: ["failed [redacted] exit 23", "token=[redacted] inspect /tmp/runner"],
+      truncated: false,
+    });
+  } finally {
+    validation.mockRestore();
+  }
+});
+
+test("request errors redact credentials even when no operation was accepted", async () => {
+  const { server, client } = await fixture();
+  const canary = "RequestErrorCanary123456789";
+  const submit = vi.spyOn(server.service, "submit").mockImplementation(() => {
+    throw new VectisError(
+      "request_failed",
+      `secret=${canary}`,
+      `token=${canary} inspect /tmp/runner`,
+    );
+  });
+  try {
+    await expect(
+      client.submit({ type: "machine.pause", paused: true }, "rejected"),
+    ).rejects.toMatchObject({
+      code: "request_failed",
+      message: "secret=[redacted]",
+      nextStep: "token=[redacted] inspect /tmp/runner",
+    });
+    expect(server.store.snapshot().operations).toEqual([]);
+  } finally {
+    submit.mockRestore();
+  }
 });
 
 test("Linux Rosetta configuration persists, survives resource updates and off removes it", async () => {

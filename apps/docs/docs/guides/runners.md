@@ -31,7 +31,9 @@ vectis runner run <binding-id> --key <any-unique-key> --json
 vectis runner run <binding-id> --job-id <github-job-id> --json   # only if that job is still queued
 ```
 
-A manual runner waits up to six hours for a job.
+A manual runner without a job ID waits up to six hours for a job.
+
+A runner requested for a specific job is drained after 10 minutes of inactivity if that job no longer needs queued capacity. Vectis stops the VM and releases the runner lease, reporting the operation as `cancelled` with result code `runner_idle`; busy runners and runners whose jobs still need queued capacity keep listening.
 
 ## Read job results
 
@@ -72,9 +74,13 @@ An unreachable guest is reported as such, with SSH's reason (timeout, no route, 
 
 If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Vectis never guesses: it cleans up only after it has evidence that the VM process exited.
 
+If deleting an owned VM's files fails after its process exits, Vectis retains an exit receipt so reconciliation can retry the file cleanup.
+
 ```sh
 vectis instance reconcile <instance-id> --wait
 vectis runner reconcile <operation-id> --wait
 ```
 
 The app offers the same actions as **Reconcile** in **Overview**. Until an interrupted VM is reconciled, the Mac starts no new VMs and offers no runner slots. Do not start new runners to work around an unresolved one.
+
+Runner reconciliation also works when registration stopped before creating a cloud lease. After confirming VM cleanup, Vectis records the request as released in the cloud so a delayed registration cannot create a duplicate runner. If the cloud cannot confirm this, the operation stays unresolved.

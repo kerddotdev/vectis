@@ -26,8 +26,11 @@ test("job refresh does not block machine control and retries reuse its durable o
     setAccess: async () => {},
     setAutomatic: async () => {},
     repositories: async () => [],
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: async () => {},
   }));
   try {
@@ -89,8 +92,11 @@ test("disabling automatic admission cancels a queued demand before guest startup
         automatic: false,
       },
     ],
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: async () => {},
   }));
   store.put("environment", "mac", {
@@ -151,8 +157,11 @@ test("incomplete repository scans require attention instead of claiming full rec
     disconnectRepository: async () => {},
     setAccess: async () => {},
     setAutomatic: async () => {},
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: async () => {},
   }));
   try {
@@ -217,11 +226,14 @@ test.each([
           access: { actors: { ids: [7] }, approval: "required" },
         },
       ],
-      findRunner: async () => null,
+      reconcileRunner: async () => {
+        throw new Error("Must not reconcile a runner");
+      },
       prepareRunner: async () => {
         throw new Error("Must not register a runner");
       },
       releaseRunner: async () => {},
+      runnerStatus: async () => ({ busy: false, status: "online" as const }),
     }));
     store.put("environment", "mac", {
       id: "mac",

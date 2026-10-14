@@ -3,9 +3,11 @@ import { convexTest } from "convex-test";
 import { afterEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api, internal } from "../../convex/_generated/api.js";
+import { cancelForOwner } from "../../convex/operations.js";
 import { decodeCommand } from "../../packages/protocol/src/index.js";
 const modules = {
   "../../convex/jobs.ts": () => import("../../convex/jobs.js"),
+  "../../convex/operations.ts": () => import("../../convex/operations.js"),
   "../../convex/runnerDemand.ts": () => import("../../convex/runnerDemand.js"),
   "../../convex/http.ts": () => import("../../convex/http.js"),
   "../../convex/githubWebhook.ts": () => import("../../convex/githubWebhook.js"),
@@ -395,16 +397,16 @@ test("queued webhooks schedule changed jobs without a heartbeat", async () => {
     ).toBe(202);
   };
   await deliver("new");
-  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  await t.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
   expect(await operations()).toHaveLength(1);
   const first = (await operations())[0];
   if (!first) throw new Error("Missing operation");
   await t.run((ctx) => ctx.db.patch("operations", first._id, { phase: "succeeded" }));
   await deliver("unchanged");
-  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  await t.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
   expect(await operations()).toHaveLength(1);
   await deliver("changed", "Renamed");
-  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  await t.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
   expect(await operations()).toHaveLength(2);
   await t.run(async (ctx) => {
     for (const operation of await ctx.db.query("operations").collect())
@@ -412,7 +414,7 @@ test("queued webhooks schedule changed jobs without a heartbeat", async () => {
   });
   await deliver("completed", "Renamed", "completed");
   await deliver("stale", "Build");
-  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  await t.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
   expect(await operations()).toHaveLength(2);
 });
 
@@ -466,7 +468,7 @@ test("a job waiting for approval gets a runner once GitHub queues it, but a canc
       },
     });
     expect(response.status).toBe(202);
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    await t.finishAllScheduledFunctions(() => vi.advanceTimersByTime(0));
   };
   const job = () =>
     t.run(async (ctx) => (await ctx.db.query("githubJobs").collect()).map((item) => item.status));
@@ -690,6 +692,137 @@ test("job scans wait for a configured GitHub App and leave bindings untouched", 
   await heartbeat(0);
   expect(await scanOperations()).toHaveLength(1);
   expect(await bindings()).toEqual(before);
+});
+
+test("an offline unclaimed request expires and another machine reserves the unchanged job", async () => {
+  vi.useFakeTimers();
+  const { t, heartbeat, operations, hosts, jobId } = await fixture();
+  await heartbeat(0);
+  const first = (await operations())[0];
+  const secondHost = hosts[1];
+  if (!first || !secondHost) throw new Error("Missing demand or host");
+  const job = await t.run((ctx) => ctx.db.get("githubJobs", jobId));
+  vi.advanceTimersByTime(119999);
+  await t.finishInProgressScheduledFunctions();
+  expect((await operations())[0]?.phase).toBe("accepted");
+  vi.advanceTimersByTime(1);
+  await t.finishInProgressScheduledFunctions();
+  const expired = await t.run((ctx) => ctx.db.get("operations", first._id));
+  expect(expired?.phase).toBe("cancelled");
+  expect(JSON.parse(expired?.resultJson ?? "{}")).toMatchObject({
+    code: "machine_offline",
+    status: "cancelled",
+    message: "The machine went offline before it claimed this runner request.",
+    resultAvailableLocally: false,
+  });
+  await heartbeat(1);
+  const retry = (await operations()).find((operation) => operation._id !== first._id);
+  expect(retry).toMatchObject({ machineId: secondHost.machineId, phase: "accepted" });
+  expect(decodeCommand(JSON.parse(retry?.commandJson ?? "{}"))).toMatchObject({
+    bindingId: secondHost.bindingId,
+    jobId: 4,
+  });
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").collect())).toMatchObject([
+    { bindingId: secondHost.bindingId, operationId: retry?._id, attempt: 2 },
+  ]);
+  expect(await t.run((ctx) => ctx.db.get("githubJobs", jobId))).toEqual(job);
+  const device = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: secondHost.machineId,
+    credentialVersion: 0,
+  });
+  if (!retry) throw new Error("Missing retry");
+  await device.mutation(api.operations.acknowledge, { id: retry._id, phase: "claimed" });
+  expect((await t.run((ctx) => ctx.db.get("operations", retry._id)))?.phase).toBe("claimed");
+});
+
+test("an online slow relay gets more time and a successful claim prevents expiry", async () => {
+  vi.useFakeTimers();
+  const { t, heartbeat, operations, hosts } = await fixture();
+  await heartbeat(0);
+  const first = (await operations())[0];
+  const host = hosts[0];
+  if (!first || !host) throw new Error("Missing demand or host");
+  vi.advanceTimersByTime(90000);
+  await heartbeat(0);
+  vi.advanceTimersByTime(30000);
+  await t.finishInProgressScheduledFunctions();
+  expect((await operations())[0]?.phase).toBe("accepted");
+  const scheduled = await t.run((ctx) => ctx.db.system.query("_scheduled_functions").collect());
+  expect(
+    scheduled.some(
+      (item) => item.state.kind === "pending" && item.scheduledTime === first.createdAt + 240000,
+    ),
+  ).toBe(true);
+  const device = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: host.machineId,
+    credentialVersion: 0,
+  });
+  await device.mutation(api.operations.acknowledge, { id: first._id, phase: "claimed" });
+  const claimed = (await operations())[0];
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect((await operations())[0]).toEqual(claimed);
+});
+
+test("an online request expires at the ten-minute cap and can retry an unchanged job", async () => {
+  vi.useFakeTimers();
+  const { t, heartbeat, operations } = await fixture();
+  await heartbeat(0);
+  for (let elapsed = 30000; elapsed <= 600000; elapsed += 30000) {
+    vi.advanceTimersByTime(30000);
+    await t.finishInProgressScheduledFunctions();
+    if (elapsed < 600000) {
+      expect((await operations())[0]?.phase).toBe("accepted");
+      await heartbeat(0, false, true, 0);
+    }
+  }
+  const first = (await operations())[0];
+  expect(first?.phase).toBe("cancelled");
+  expect(JSON.parse(first?.resultJson ?? "{}")).toMatchObject({
+    code: "claim_timeout",
+    resultAvailableLocally: false,
+  });
+  expect(first?.updatedAt).toBe((first?.createdAt ?? 0) + 600000);
+  await heartbeat(1);
+  expect(await operations()).toHaveLength(2);
+});
+
+test.each(["claimed", "running", "succeeded", "failed", "cancelled", "action_required"] as const)(
+  "expiry preserves an operation already %s",
+  async (phase) => {
+    vi.useFakeTimers();
+    const { t, heartbeat, operations } = await fixture();
+    await heartbeat(0);
+    const first = (await operations())[0];
+    if (!first) throw new Error("Missing demand");
+    await t.run((ctx) =>
+      ctx.db.patch("operations", first._id, {
+        phase,
+        resultJson: JSON.stringify({ message: "Existing outcome", resultAvailableLocally: false }),
+      }),
+    );
+    const before = (await operations())[0];
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect((await operations())[0]).toEqual(before);
+  },
+);
+
+test("a human cancellation retries only after the job changes", async () => {
+  vi.useFakeTimers();
+  const { t, heartbeat, operations, jobId } = await fixture();
+  await heartbeat(0);
+  const first = (await operations())[0];
+  if (!first) throw new Error("Missing demand");
+  await t.run((ctx) => cancelForOwner(ctx, "owner", first._id));
+  const cancelled = (await operations())[0];
+  await t.finishAllScheduledFunctions(vi.runAllTimers);
+  expect((await operations())[0]).toEqual(cancelled);
+  await heartbeat(1);
+  expect(await operations()).toHaveLength(1);
+  await t.run((ctx) => ctx.db.patch("githubJobs", jobId, { updatedAt: Date.now() }));
+  await heartbeat(1);
+  expect(await operations()).toHaveLength(2);
 });
 
 test.each([
