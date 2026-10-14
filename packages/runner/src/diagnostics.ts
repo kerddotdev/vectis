@@ -27,12 +27,12 @@ export function runtimeDiagnostics(
           }),
     },
   ];
-  for (const [component, variable, windowsOnly] of [
-    ["appleHelper", "VECTIS_APPLE_HELPER", false],
-    ["qemu", "VECTIS_QEMU", true],
-    ["qemuImg", "VECTIS_QEMU_IMG", true],
-    ["swtpm", "VECTIS_SWTPM", true],
-    ["keychainHelper", "VECTIS_KEYCHAIN_HELPER", false],
+  for (const [component, name, variable, windowsOnly] of [
+    ["appleHelper", "Apple Virtualization helper", "VECTIS_APPLE_HELPER", false],
+    ["qemu", "QEMU", "VECTIS_QEMU", true],
+    ["qemuImg", "qemu-img", "VECTIS_QEMU_IMG", true],
+    ["swtpm", "swtpm", "VECTIS_SWTPM", true],
+    ["keychainHelper", "Keychain helper", "VECTIS_KEYCHAIN_HELPER", false],
   ] as const) {
     const path = options[component];
     let executable = false;
@@ -46,13 +46,13 @@ export function runtimeDiagnostics(
       id: `runtime.${component}`,
       status: executable ? "ok" : windowsOnly && !windows ? "attention" : "blocked",
       message: executable
-        ? `${component} is configured and executable.`
-        : `${component} is not configured with an existing executable file.${windowsOnly && !windows ? " It is needed only for Windows environments." : ""}`,
+        ? `${name} is configured and executable.`
+        : `${name} is not configured with an existing executable file.${windowsOnly && !windows ? " It is needed only for Windows environments." : ""}`,
       ...(executable
         ? {}
         : {
             code: "runtime_component_missing",
-            nextStep: `Set ${variable} to an executable file and restart the service.`,
+            nextStep: `Set ${variable} to the ${name} executable file and restart the service.`,
             target: { area: "diagnostics", section: "runtime" } as const,
           }),
     });

@@ -62,3 +62,36 @@ test("missing Windows components need attention until a Windows environment exis
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each([
+  ["appleHelper", "Apple Virtualization helper", "VECTIS_APPLE_HELPER"],
+  ["qemu", "QEMU", "VECTIS_QEMU"],
+  ["qemuImg", "qemu-img", "VECTIS_QEMU_IMG"],
+  ["swtpm", "swtpm", "VECTIS_SWTPM"],
+  ["keychainHelper", "Keychain helper", "VECTIS_KEYCHAIN_HELPER"],
+])(
+  "runtime checks name %s clearly in messages and recovery steps",
+  async (component, name, variable) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-doctor-messages-"));
+    try {
+      const helper = join(home, "helper");
+      const options = { home, [component]: helper };
+      expect(runtimeDiagnostics(options, "service", [{ os: "windows" }]).checks).toContainEqual({
+        id: `runtime.${component}`,
+        status: "blocked",
+        code: "runtime_component_missing",
+        message: `${name} is not configured with an existing executable file.`,
+        nextStep: `Set ${variable} to the ${name} executable file and restart the service.`,
+        target: { area: "diagnostics", section: "runtime" },
+      });
+      await writeFile(helper, "synthetic test executable", { mode: 0o700 });
+      expect(runtimeDiagnostics(options, "service").checks).toContainEqual({
+        id: `runtime.${component}`,
+        status: "ok",
+        message: `${name} is configured and executable.`,
+      });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
