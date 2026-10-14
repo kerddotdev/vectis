@@ -8,9 +8,9 @@ import { action } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { GitHubApiError, GitHubAppClient } from "../packages/github/src/app-client.js";
 
-const Runner = Schema.Struct({
-  id: Schema.Int,
-  name: Schema.String,
+const Runner = Schema.Struct({ id: Schema.Int, name: Schema.String });
+const RunnerState = Schema.Struct({
+  ...Runner.fields,
   busy: Schema.Boolean,
   status: Schema.Literals(["online", "offline"]),
 });
@@ -186,7 +186,7 @@ export const status = action({
       purpose: "cleanup",
     });
     try {
-      const runner = Schema.decodeUnknownSync(Runner)(
+      const runner = Schema.decodeUnknownSync(RunnerState)(
         await client.request(access.token, `${access.path}/actions/runners/${lease.runnerId}`),
       );
       if (runner.id !== lease.runnerId || runner.name !== `vectis-${lease._id}`)
