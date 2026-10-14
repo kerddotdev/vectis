@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { openActivity } from "@/lib/activities";
 import { onboardingSteps, type OnboardingStep } from "@/lib/onboarding";
 import { cn } from "@/lib/utils";
+import { useStateApi } from "@/state";
 
 const titles = {
   environment: "Prepare an environment",
@@ -31,8 +32,15 @@ function StepState({ step }: { step: OnboardingStep }) {
 
 export function GetStarted({ snapshot, linked }: { snapshot: Snapshot; linked: boolean }) {
   const navigate = useNavigate();
+  const { machineId } = useStateApi();
+  // Activity history expires, so completion is remembered instead of re-derived later.
+  const completedKey = `vectis.onboarded:${machineId ?? "local"}`;
   const steps = onboardingSteps(snapshot);
-  if (!steps) return null;
+  if (!steps) {
+    localStorage.setItem(completedKey, "1");
+    return null;
+  }
+  if (localStorage.getItem(completedKey) === "1") return null;
   const prepared = snapshot.environments.length > 0;
   function content(step: OnboardingStep): { detail: string; action?: ReactNode } {
     const activity = step.activity;
