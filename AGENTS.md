@@ -6,7 +6,7 @@ Vectis runs repository-scoped GitHub Actions runners in disposable local virtual
 
 ### 1. The host stays in charge
 
-Vectis runs untrusted CI code on someone's own machine. Guests never receive host directories, host Docker sockets, or broad host credentials by default. The GitHub App private key stays in the cloud. Repository IDs and installation access establish authority; labels, names, and display strings never do. Forks never inherit upstream runner capacity, and approving external pull requests stays a GitHub maintainer decision, never an automatic Vectis action.
+Vectis runs untrusted CI code on someone's own machine. Guests never receive host directories, host Docker sockets, or broad host credentials by default. The sole host-directory exception is Apple's read-only Rosetta runtime, shared only when the user enables it for a Linux environment. The GitHub App private key stays in the cloud. Repository IDs and installation access establish authority; labels, names, and display strings never do. Forks never inherit upstream runner capacity, and approving external pull requests stays a GitHub maintainer decision, never an automatic Vectis action.
 
 ### 2. Honest state
 

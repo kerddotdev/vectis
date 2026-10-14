@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { VmRuntime } from "./runtime.js";
+import { readyGuest } from "./guest-ready.js";
+vi.mock("./guest-ready.js", () => ({ readyGuest: vi.fn() }));
 
 vi.mock("./memory.js", () => ({ availableHostMemory: async () => 8 * 1024 ** 3 }));
 
@@ -29,6 +31,7 @@ afterEach(async () => {
   for (const cleanup of cleanups.reverse()) await cleanup();
   cleanups.length = 0;
   failedRemovals.clear();
+  vi.resetAllMocks();
 });
 const hostTest = test.skipIf(process.platform !== "darwin" || process.arch !== "arm64");
 async function fixture(script: string) {
@@ -225,5 +228,66 @@ hostTest(
       await chmod(instances, 0o700);
     }
     expect(await runtime.hasWorkDirectory("denied")).toBe(false);
+  },
+);
+
+hostTest.each([undefined, "rosetta"] as const)(
+  "Apple startup passes x64=%s only when enabled",
+  async (x64) => {
+    const { home, runtime, environment } = await fixture(
+      `require("node:fs").writeFileSync(require("node:path").join(__dirname, "args.json"), JSON.stringify(process.argv.slice(2))); process.stdout.write('{"event":"vm.running","macAddress":"02:00:00:00:00:01"}\\n'); setInterval(() => {}, 1000);`,
+    );
+    const seedPath = join(home, "seed.img");
+    await writeFile(seedPath, "synthetic seed");
+    vi.mocked(readyGuest).mockResolvedValue({
+      host: "192.168.64.2",
+      port: 22,
+      user: "vectis",
+      identityFile: "/synthetic/key",
+      knownHostsFile: "/synthetic/hosts",
+      hostKeyAlias: "test",
+    });
+    const instance = await runtime.start(
+      "args",
+      { ...environment, seedPath, ...(x64 ? { x64 } : {}) },
+      () => {},
+    );
+    expect(JSON.parse(await readFile(join(home, "args.json"), "utf8"))).toEqual([
+      "run",
+      "linux",
+      join(instance.directory, "disk.img"),
+      "1",
+      "512",
+      join(instance.directory, "efi.bin"),
+      seedPath,
+      ...(x64 ? ["--rosetta"] : []),
+    ]);
+    if (x64) expect(readyGuest).toHaveBeenCalledOnce();
+    else expect(readyGuest).not.toHaveBeenCalled();
+    await runtime.stop(instance.id);
+  },
+);
+
+hostTest(
+  "missing Rosetta guest support stops the owned helper and removes its work directory",
+  async () => {
+    const { runtime, environment } = await fixture(
+      `process.stdout.write('{"event":"vm.running","macAddress":"02:00:00:00:00:01"}\\n'); setInterval(() => {}, 1000);`,
+    );
+    const { VectisError } = await import("../../protocol/src/index.js");
+    vi.mocked(readyGuest).mockRejectedValue(
+      new VectisError(
+        "rosetta_guest_unprepared",
+        "Missing Rosetta.",
+        "Prepare the Linux environment again",
+      ),
+    );
+    await expect(
+      runtime.start("unprepared", { ...environment, x64: "rosetta" }, () => {}),
+    ).rejects.toMatchObject({
+      code: "rosetta_guest_unprepared",
+      nextStep: "Prepare the Linux environment again",
+    });
+    expect(await runtime.hasWorkDirectory("unprepared")).toBe(false);
   },
 );

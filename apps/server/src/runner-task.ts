@@ -226,6 +226,19 @@ export async function runRunnerTask(
     !(failure instanceof VectisError && failure.code === "runner_assignment_rejected")
   )
     return { status: "cancelled" as const, progress, message: "Runner cancelled and cleaned up." };
+  if (
+    failure instanceof VectisError &&
+    ["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprepared"].includes(
+      failure.code,
+    )
+  )
+    return {
+      status: "action_required" as const,
+      progress,
+      message: failure.message,
+      code: failure.code,
+      nextStep: failure.nextStep,
+    };
   if (failure)
     return {
       status: "failed" as const,

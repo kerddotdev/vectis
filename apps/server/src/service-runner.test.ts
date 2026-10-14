@@ -227,3 +227,62 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
     }
   },
 );
+
+test.each(["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprepared"])(
+  "parent runner operation preserves %s from its instance startup",
+  async (code) => {
+    const { VectisError } = await import("../../../packages/protocol/src/index.js");
+    const home = await mkdtemp(join(tmpdir(), "vectis-rosetta-runner-"));
+    const store = new Store(":memory:");
+    const runtime = new VmRuntime({ home });
+    const unused = async () => {
+      throw new Error("Unexpected broker call");
+    };
+    const broker = {
+      reconcileRunner: vi.fn(unused),
+      prepareRunner: vi.fn(unused),
+      releaseRunner: vi.fn(async () => {}),
+      runnerStatus: vi.fn(unused),
+      repositories: async () => [
+        { id: "binding", repositoryId: 1, repositoryName: "test/repo", environmentId: "linux" },
+      ],
+      analyzeMigration: unused,
+      publishMigration: unused,
+      connectRepository: unused,
+      disconnectRepository: unused,
+      setAutomatic: unused,
+      setAccess: unused,
+      scanJobs: unused,
+      refreshJob: unused,
+    };
+    const service = new Service(store, runtime, () => broker);
+    vi.spyOn(runtime, "start").mockRejectedValue(
+      new VectisError(code, "Rosetta needs setup.", "Fix Rosetta setup."),
+    );
+    store.put("environment", "linux", {
+      id: "linux",
+      name: "Linux",
+      os: "linux",
+      state: "ready",
+      cpu: 1,
+      memoryMiB: 512,
+      basePath: join(home, "synthetic.img"),
+      x64: "rosetta",
+    });
+    try {
+      const operation = service.submit("runner", { type: "runner.run", bindingId: "binding" });
+      await service.drain();
+      await vi.waitFor(() =>
+        expect(store.snapshot().operations.find((item) => item.id === operation.id)).toMatchObject({
+          status: "action_required",
+          result: { code, nextStep: "Fix Rosetta setup." },
+        }),
+      );
+      expect(broker.prepareRunner).not.toHaveBeenCalled();
+    } finally {
+      await service.close();
+      store.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

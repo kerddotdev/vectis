@@ -98,3 +98,48 @@ test.each([
     }
   },
 );
+
+test.each(["rosetta", "off"])(
+  "environment configure parses --x64 %s through the shared command",
+  async (x64) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cli-x64-"));
+    const server = await startService({ home });
+    const submit = vi.spyOn(server.service, "submit");
+    const argv = process.argv;
+    const exitCode = process.exitCode;
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      vi.resetModules();
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "environment",
+        "configure",
+        "linux",
+        "--x64",
+        x64,
+        "--key",
+        "x64",
+        "--json",
+      ];
+      await import("./main.js");
+      await vi.waitFor(() =>
+        expect(submit).toHaveBeenCalledWith("x64", {
+          type: "environment.configure",
+          id: "linux",
+          x64,
+        }),
+      );
+      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+    } finally {
+      process.argv = argv;
+      process.exitCode = exitCode;
+      output.mockRestore();
+      submit.mockRestore();
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

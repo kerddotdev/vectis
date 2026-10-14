@@ -758,9 +758,15 @@ export class Service {
           if (
             command.cpu === undefined &&
             command.memoryMiB === undefined &&
-            command.storagePath === undefined
+            command.storagePath === undefined &&
+            command.x64 === undefined
           )
-            throw new VectisError("invalid_request", "Provide CPU, memory or a storage path.");
+            throw new VectisError("invalid_request", "Provide CPU, memory, a storage path or x64.");
+          if (command.x64 === "rosetta" && current.os !== "linux")
+            throw new VectisError(
+              "unsupported",
+              "Rosetta x86_64 support is available only for Linux environments.",
+            );
           if (
             snapshot.instances.some(
               (item) =>
@@ -773,8 +779,11 @@ export class Service {
               "environment_busy",
               "Stop legacy instances before changing their resource configuration.",
             );
+          const { x64, ...configuration } = current;
+          const enabledX64 = command.x64 === "off" ? undefined : (command.x64 ?? x64);
           const environment = {
-            ...current,
+            ...configuration,
+            ...(enabledX64 ? { x64: enabledX64 } : {}),
             ...(command.cpu !== undefined ? { cpu: command.cpu } : {}),
             ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
@@ -943,6 +952,9 @@ export class Service {
     this.store.update(operation, {
       status: [
         "setup_required",
+        "rosetta_not_installed",
+        "rosetta_unsupported",
+        "rosetta_guest_unprepared",
         "runtime_missing",
         "runtime_incompatible",
         "storage_unavailable",
@@ -962,8 +974,26 @@ export class Service {
       if (!operation)
         throw new VectisError("operation_missing", "Runner control operation is missing.");
       if (operation.status === "succeeded") return;
-      if (operation.status !== "accepted" && operation.status !== "running")
+      if (operation.status !== "accepted" && operation.status !== "running") {
+        const result = operation.result;
+        if (
+          typeof result === "object" &&
+          result !== null &&
+          "code" in result &&
+          typeof result.code === "string" &&
+          ["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprepared"].includes(
+            result.code,
+          )
+        )
+          throw new VectisError(
+            result.code,
+            operation.message,
+            "nextStep" in result && typeof result.nextStep === "string"
+              ? result.nextStep
+              : undefined,
+          );
         throw new VectisError("runner_control_failed", operation.message);
+      }
       await delay(100);
     }
     throw new VectisError("runner_control_timeout", "Runner VM control did not finish in time.");
