@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { Identifier } from "./identifier.js";
 
 export const Job = Schema.Struct({
   jobId: Schema.Int,
@@ -30,3 +31,30 @@ export const JobScan = Schema.Struct({
   complete: Schema.Boolean,
 });
 export type JobScan = typeof JobScan.Type;
+
+export const JobLogRequest = Schema.Struct({
+  bindingId: Identifier,
+  jobId: Schema.Int.check(
+    Schema.isGreaterThan(0),
+    Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+  ),
+  after: Schema.optional(
+    Schema.Int.check(
+      Schema.isGreaterThanOrEqualTo(0),
+      Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+    ),
+  ),
+});
+export type JobLogRequest = typeof JobLogRequest.Type;
+
+export const JobLogs = Schema.Struct({
+  text: Schema.String,
+  next: Schema.Int.check(
+    Schema.isGreaterThanOrEqualTo(0),
+    Schema.isLessThanOrEqualTo(Number.MAX_SAFE_INTEGER),
+  ),
+  status: Job.fields.status,
+  complete: Schema.Boolean,
+  truncated: Schema.Boolean,
+});
+export type JobLogs = typeof JobLogs.Type;
