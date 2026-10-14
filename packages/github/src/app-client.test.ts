@@ -40,6 +40,11 @@ test("App authentication signs a short JWT and narrows runner access to the veri
       return Response.json({ token: "installation-secret" });
     }
     expect(authorization).toBe("Bearer installation-secret");
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     return Response.json({ id: 123, private: true, owner: { id: 7 } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -49,7 +54,7 @@ test("App authentication signs a short JWT and narrows runner access to the veri
     installationId: 10,
     repositoryId: 123,
   });
-  expect(fetch).toHaveBeenCalledTimes(3);
+  expect(fetch).toHaveBeenCalledTimes(4);
 });
 test("foreign owners, suspended installations and repository mismatches cannot obtain runner admission", async () => {
   for (const installation of [
@@ -103,6 +108,11 @@ test("initial repository discovery still issues a token limited to one explicit 
       });
       return Response.json({ token: "secret" });
     }
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     return Response.json({ id: 123, private: true, owner: { id: 7 } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -149,6 +159,11 @@ test("job inspection uses read-only Actions permission without runner administra
       });
       return Response.json({ token: "read-only-secret" });
     }
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     return Response.json({ id: 123, private: true, owner: { id: 7 } });
   });
   expect(
@@ -158,6 +173,7 @@ test("job inspection uses read-only Actions permission without runner administra
 
 for (const purpose of ["migration-read", "migration-write"] as const) {
   test(`${purpose} narrows workflow access without runner or Actions administration`, async () => {
+    let tokens = 0;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
       if (url.endsWith("/installation"))
         return Response.json({
@@ -167,15 +183,28 @@ for (const purpose of ["migration-read", "migration-write"] as const) {
           suspended_at: null,
         });
       if (url.endsWith("/access_tokens")) {
+        tokens++;
         expect(JSON.parse(String(init?.body))).toEqual({
           repository_ids: [123],
           permissions:
-            purpose === "migration-read"
-              ? { contents: "read", metadata: "read" }
-              : { contents: "write", workflows: "write", pull_requests: "write", metadata: "read" },
+            purpose === "migration-write" && tokens === 2
+              ? { administration: "read", metadata: "read" }
+              : purpose === "migration-read"
+                ? { contents: "read", metadata: "read" }
+                : {
+                    contents: "write",
+                    workflows: "write",
+                    pull_requests: "write",
+                    metadata: "read",
+                  },
         });
         return Response.json({ token: "test-migration-token" });
       }
+      if (url.endsWith("/fork-pr-workflows-private-repos"))
+        return Response.json({
+          run_workflows_from_fork_pull_requests: false,
+          require_approval_for_fork_pr_workflows: false,
+        });
       return Response.json({ id: 123, private: true, owner: { id: 7 } });
     });
     expect(
@@ -263,6 +292,11 @@ test("organization admission rechecks the verified user's current repository adm
       });
     if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped-token" });
     if (url.endsWith("/permission")) return Response.json({ permission, user: { id: userId } });
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: false,
+        require_approval_for_fork_pr_workflows: false,
+      });
     return Response.json({ id: 123, private: true, owner: { id: 99 } });
   });
   vi.stubGlobal("fetch", fetch);
@@ -290,4 +324,206 @@ test("organization admission rechecks the verified user's current repository adm
     client.repositoryToken({ ...organization, purpose: "cleanup" }),
   ).resolves.toMatchObject({ repositoryId: 123 });
   expect(fetch.mock.calls.some(([url]) => url.includes("/collaborators/"))).toBe(false);
+});
+
+test("private fork policy is required and rechecked for runner admission", async () => {
+  let enabled = true;
+  let approval = false;
+  const fetch = vi.fn(async (url: string) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 7, type: "User" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped-token" });
+    if (url.endsWith("/fork-pr-workflows-private-repos"))
+      return Response.json({
+        run_workflows_from_fork_pull_requests: enabled,
+        require_approval_for_fork_pr_workflows: approval,
+      });
+    return Response.json({ id: 123, private: true, owner: { id: 7 } });
+  });
+  vi.stubGlobal("fetch", fetch);
+  const client = new GitHubAppClient(app);
+  await expect(client.repositoryToken(input)).rejects.toMatchObject({
+    code: "private_runner_approval_required",
+  });
+  approval = true;
+  await expect(client.repositoryToken(input)).resolves.toMatchObject({ repositoryId: 123 });
+  approval = false;
+  await expect(client.repositoryToken({ ...input, purpose: "runners" })).rejects.toMatchObject({
+    code: "private_runner_approval_required",
+  });
+  enabled = false;
+  await expect(client.repositoryToken(input)).resolves.toMatchObject({ repositoryId: 123 });
+  fetch.mockClear();
+  enabled = true;
+  await expect(client.repositoryToken({ ...input, purpose: "cleanup" })).resolves.toMatchObject({
+    repositoryId: 123,
+  });
+  expect(fetch.mock.calls.some(([url]) => url.endsWith("/fork-pr-workflows-private-repos"))).toBe(
+    false,
+  );
+});
+
+test("readiness reports transient admin lookup failures as unknown while still evaluating public policy", async () => {
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 99, type: "Organization" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) return Response.json({ token: "read-only" });
+    if (url.endsWith("/permission")) return new Response(null, { status: 503 });
+    if (url.endsWith("/fork-pr-contributor-approval"))
+      return Response.json({ approval_policy: "first_time_contributors" });
+    return Response.json({ id: 123, private: false, owner: { id: 99 } });
+  });
+  const client = new GitHubAppClient(app);
+  const checks = await client.repositoryReadiness({ ...input, githubLogin: "test-owner" });
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: "github.admin",
+      status: "unknown",
+      code: "github_unavailable",
+      nextStep: expect.any(String),
+    }),
+  );
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: "github.approval",
+      status: "blocked",
+      code: "public_runner_approval_required",
+    }),
+  );
+});
+
+test("connect and readiness share repository authority checks and preserve their denial code", async () => {
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 7, type: "User" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped" });
+    return Response.json({ id: 999, private: true, owner: { id: 7 } });
+  });
+  const client = new GitHubAppClient(app);
+  await expect(client.repositoryToken(input)).rejects.toMatchObject({
+    code: "repository_access_denied",
+  });
+  expect(await client.repositoryReadiness(input)).toContainEqual(
+    expect.objectContaining({
+      id: "github.app",
+      status: "blocked",
+      code: "repository_access_denied",
+    }),
+  );
+});
+
+test.each([202, 204])(
+  "run POST accepts an empty %s body and exposes its status",
+  async (status) => {
+    vi.stubGlobal("fetch", async () => new Response(null, { status }));
+    const client = new GitHubAppClient(app);
+    expect(
+      await client.post("token", "/repos/test-owner/sandbox/actions/runs/5/cancel", {}),
+    ).toEqual({ status, body: null });
+    expect(
+      await client.request("token", "/repos/test-owner/sandbox/actions/runs/5/cancel", {}),
+    ).toBeNull();
+  },
+);
+
+test("integration permission denial carries a recovery step without exposing response contents", async () => {
+  vi.stubGlobal("fetch", async () =>
+    Response.json(
+      { message: "Resource not accessible by integration", privateDiagnostic: "secret" },
+      { status: 403 },
+    ),
+  );
+  await expect(
+    new GitHubAppClient(app).post("token", "/repos/test-owner/sandbox/actions/runs/5/cancel", {}),
+  ).rejects.toMatchObject({
+    code: "github_app_permission_required",
+    nextStep:
+      "Approve the updated Vectis GitHub App permissions on GitHub (Settings -> Applications), then retry.",
+  });
+});
+
+test.each([false, true])(
+  "Actions write token checks public capacity policy unless cancelling: %s",
+  async (cancel) => {
+    const tokens: unknown[] = [];
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/installation"))
+        return Response.json({
+          id: 10,
+          app_id: 42,
+          account: { id: 7, type: "User" },
+          suspended_at: null,
+        });
+      if (url.endsWith("/access_tokens")) {
+        tokens.push(JSON.parse(String(init?.body)));
+        return Response.json({ token: tokens.length === 1 ? "actions-token" : "policy-token" });
+      }
+      if (url.endsWith("/fork-pr-contributor-approval")) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer policy-token");
+        return Response.json({ approval_policy: "first_time_contributors" });
+      }
+      return Response.json({ id: 123, private: false, owner: { id: 7 } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const request = new GitHubAppClient(app).repositoryToken({
+      ...input,
+      purpose: "actions-write",
+      ...(cancel ? { actionsOperation: "cancel" } : {}),
+    });
+    if (cancel) await expect(request).resolves.toMatchObject({ token: "actions-token" });
+    else await expect(request).rejects.toMatchObject({ code: "public_runner_approval_required" });
+    expect(tokens[0]).toEqual({
+      repository_ids: [123],
+      permissions: { actions: "write", metadata: "read" },
+    });
+    expect(tokens).toHaveLength(cancel ? 1 : 2);
+  },
+);
+
+test.each([403, 422])(
+  "Actions write token minting denial %s uses the App permission code",
+  async (status) => {
+    vi.stubGlobal("fetch", async (url: string) =>
+      url.endsWith("/installation")
+        ? Response.json({
+            id: 10,
+            app_id: 42,
+            account: { id: 7, type: "User" },
+            suspended_at: null,
+          })
+        : Response.json(
+            { message: "Permissions requested are not granted to this installation" },
+            { status },
+          ),
+    );
+    await expect(
+      new GitHubAppClient(app).repositoryToken({ ...input, purpose: "actions-write" }),
+    ).rejects.toMatchObject({ code: "github_app_permission_required" });
+  },
+);
+
+test("an empty streamed 202 body is not parsed as JSON", async () => {
+  vi.stubGlobal("fetch", async () => new Response("", { status: 202 }));
+  expect(
+    await new GitHubAppClient(app).post(
+      "token",
+      "/repos/test-owner/sandbox/actions/runs/5/cancel",
+      {},
+    ),
+  ).toEqual({ status: 202, body: null });
 });

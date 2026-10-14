@@ -8,6 +8,11 @@
  * @module
  */
 
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
 import type * as account from "../account.js";
 import type * as auth from "../auth.js";
 import type * as clerkWebhook from "../clerkWebhook.js";
@@ -26,6 +31,7 @@ import type * as githubOAuth from "../githubOAuth.js";
 import type * as githubRepositories from "../githubRepositories.js";
 import type * as githubRunnerProbe from "../githubRunnerProbe.js";
 import type * as githubRunners from "../githubRunners.js";
+import type * as githubRuns from "../githubRuns.js";
 import type * as githubValidators from "../githubValidators.js";
 import type * as githubWebhook from "../githubWebhook.js";
 import type * as http from "../http.js";
@@ -42,16 +48,20 @@ import type * as presence from "../presence.js";
 import type * as purge from "../purge.js";
 import type * as repositoryBindings from "../repositoryBindings.js";
 import type * as retention from "../retention.js";
+import type * as runCommands from "../runCommands.js";
+import type * as runReceipts from "../runReceipts.js";
 import type * as runnerDemand from "../runnerDemand.js";
 import type * as runnerLeases from "../runnerLeases.js";
 import type * as site from "../site.js";
 
-import type {
-  ApiFromModules,
-  FilterApi,
-  FunctionReference,
-} from "convex/server";
-
+/**
+ * A utility for referencing Convex functions in your app's API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
 declare const fullApi: ApiFromModules<{
   account: typeof account;
   auth: typeof auth;
@@ -71,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   githubRepositories: typeof githubRepositories;
   githubRunnerProbe: typeof githubRunnerProbe;
   githubRunners: typeof githubRunners;
+  githubRuns: typeof githubRuns;
   githubValidators: typeof githubValidators;
   githubWebhook: typeof githubWebhook;
   http: typeof http;
@@ -87,32 +98,16 @@ declare const fullApi: ApiFromModules<{
   purge: typeof purge;
   repositoryBindings: typeof repositoryBindings;
   retention: typeof retention;
+  runCommands: typeof runCommands;
+  runReceipts: typeof runReceipts;
   runnerDemand: typeof runnerDemand;
   runnerLeases: typeof runnerLeases;
   site: typeof site;
 }>;
-
-/**
- * A utility for referencing Convex functions in your app's public API.
- *
- * Usage:
- * ```js
- * const myFunctionReference = api.myModule.myFunction;
- * ```
- */
 export declare const api: FilterApi<
   typeof fullApi,
   FunctionReference<any, "public">
 >;
-
-/**
- * A utility for referencing Convex functions in your app's internal API.
- *
- * Usage:
- * ```js
- * const myFunctionReference = internal.myModule.myFunction;
- * ```
- */
 export declare const internal: FilterApi<
   typeof fullApi,
   FunctionReference<any, "internal">

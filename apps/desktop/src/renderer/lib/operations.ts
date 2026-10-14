@@ -21,6 +21,9 @@ export const cancellableCommands = [
   "environment.prepare-linux",
   "environment.resume",
   "runner.run",
+  "run.rerun-failed",
+  "run.cancel",
+  "workflow.dispatch",
   "job.refresh",
   "job.scan",
   "migration.analyze",
@@ -31,6 +34,7 @@ export { commandLabels } from "../../command-labels.js";
 // A setting is confirmed after it happened, so its message is what changed, not what was asked.
 export const settingLabels: Record<string, string> = {
   "repository.automatic": "Automatic runners updated",
+  "repository.access": "Repository access updated",
   "environment.configure": "Environment updated",
   "environment.register": "Environment registered",
   "environment.remove": "Environment removed",

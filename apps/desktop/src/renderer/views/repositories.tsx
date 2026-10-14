@@ -1,11 +1,17 @@
-import { useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { Schema } from "effect";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { EllipsisIcon, PlayIcon, PlusIcon } from "lucide-react";
+import {
+  RepositoryReadiness,
+  type ReadinessCheck,
+} from "../../../../../packages/protocol/src/readiness.js";
 import type { MachineRepositories } from "../../../../../packages/protocol/src/repositories.js";
 import { GitHubIcon } from "@/components/github-icon";
 import { Hint, Reason } from "@/components/hint";
 import { EmptyState, ExpandableRow, List, Mono, Page, Section } from "@/components/layout";
 import { OsIcon } from "@/components/os-icon";
+import { ReadinessIndicator, ReadinessList } from "@/components/readiness";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,11 +28,59 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import { useStateApi } from "@/state";
+import { readinessFailure, summarizeReadiness } from "@/lib/readiness";
+import { request, useStateApi } from "@/state";
 import { ConnectRepository } from "./connect-repository";
+import { RepositoryAccessEditor } from "./repository-access";
 import { RepositoryJobs } from "./repository-jobs";
 
 type Binding = MachineRepositories[number];
+
+// Every check asks GitHub through the cloud, so results are shared across visits for a while and
+// bindings are checked one at a time.
+const readinessCache = new Map<
+  string,
+  { at: number; checks?: readonly ReadinessCheck[]; unavailable?: boolean }
+>();
+const readinessAge = 120_000;
+
+function useBindingReadiness(bindingIds: readonly string[]) {
+  const { machineId } = useStateApi();
+  const scope = machineId ?? "local";
+  const [, setVersion] = useState(0);
+  const ids = bindingIds.join(",");
+  useEffect(() => {
+    let stopped = false;
+    void (async () => {
+      for (const bindingId of bindingIds) {
+        if (stopped) return;
+        const key = `${scope}:${bindingId}`;
+        const cached = readinessCache.get(key);
+        if (cached && Date.now() - cached.at < readinessAge) continue;
+        try {
+          const { checks } = Schema.decodeUnknownSync(RepositoryReadiness)(
+            await request("repository.readiness", { bindingId }, machineId),
+          );
+          // The automatic switch sits next to the binding, so its state is not a problem to report.
+          readinessCache.set(key, {
+            at: Date.now(),
+            checks: checks.filter((check) => check.code !== "automatic_disabled"),
+          });
+          if (!stopped) setVersion((value) => value + 1);
+        } catch (issue) {
+          if (readinessFailure(issue).unavailable) {
+            readinessCache.set(key, { at: Date.now(), unavailable: true });
+            if (!stopped) setVersion((value) => value + 1);
+          } else readinessCache.delete(key);
+        }
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [scope, ids]);
+  return (bindingId: string) => readinessCache.get(`${scope}:${bindingId}`);
+}
 
 export function Repositories() {
   const { submit, snapshot, machineId } = useStateApi();
@@ -34,7 +88,13 @@ export function Repositories() {
   const linked = !!machineId || (!!snapshot?.cloud && snapshot.cloud.state !== "unconfigured");
   const repositories = snapshot?.repositories ?? null;
   const [starting, setStarting] = useState<string | null>(null);
+  const { connect } = useSearch({ from: "/repositories" });
   const [connecting, setConnecting] = useState(false);
+  useEffect(() => {
+    if (!connect) return;
+    if (linked) setConnecting(true);
+    void navigate({ to: "/repositories", search: {}, replace: true });
+  }, [connect, linked]);
   async function startRunner(bindingId: string) {
     setStarting(bindingId);
     try {
@@ -51,6 +111,7 @@ export function Repositories() {
   const groups = [...grouped.values()].sort((left, right) =>
     (left[0]?.repositoryName ?? "").localeCompare(right[0]?.repositoryName ?? ""),
   );
+  const readiness = useBindingReadiness((repositories ?? []).map((binding) => binding.id));
   return (
     <Page
       title="Repositories"
@@ -91,6 +152,9 @@ export function Repositories() {
               const first = bindings[0];
               if (!first) return null;
               const automatic = bindings.filter((binding) => binding.automatic).length;
+              const status = summarizeReadiness(
+                bindings.flatMap((binding) => readiness(binding.id)?.checks ?? []),
+              ).status;
               return (
                 <ExpandableRow
                   key={first.repositoryId}
@@ -100,6 +164,17 @@ export function Repositories() {
                     </span>
                   }
                   title={first.repositoryName}
+                  aside={
+                    <span className="text-xs">
+                      {bindings.some((binding) => readiness(binding.id)?.unavailable) ? (
+                        <span className="text-muted-foreground">
+                          Readiness unavailable on this machine
+                        </span>
+                      ) : (
+                        <ReadinessIndicator status={status} />
+                      )}
+                    </span>
+                  }
                   summary={
                     <>
                       {bindings.length} {bindings.length === 1 ? "environment" : "environments"}
@@ -121,6 +196,7 @@ export function Repositories() {
                         const environment = snapshot?.environments.find(
                           (item) => item.id === binding.environmentId,
                         );
+                        const checks = readiness(binding.id)?.checks;
                         return (
                           <div
                             key={binding.id}
@@ -209,10 +285,29 @@ export function Repositories() {
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
+                            {checks && summarizeReadiness(checks).status !== "ok" && (
+                              <ReadinessList
+                                checks={checks}
+                                className="basis-full rounded-lg ring-1 ring-border ring-inset"
+                              />
+                            )}
                           </div>
                         );
                       })}
                     </div>
+                  </Section>
+                  <Section title="Access">
+                    {bindings.map((binding) => (
+                      <RepositoryAccessEditor
+                        key={`${binding.id}:${JSON.stringify(binding.access)}`}
+                        binding={binding}
+                        repositoryName={first.repositoryName}
+                        label={
+                          snapshot?.environments.find((item) => item.id === binding.environmentId)
+                            ?.name ?? binding.environmentId
+                        }
+                      />
+                    ))}
                   </Section>
                   <RepositoryJobs bindingId={first.id} />
                 </ExpandableRow>
@@ -222,7 +317,7 @@ export function Repositories() {
         )}
       </Section>
       <Dialog open={connecting} onOpenChange={setConnecting}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100vh-4rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Connect a repository</DialogTitle>
             <DialogDescription>

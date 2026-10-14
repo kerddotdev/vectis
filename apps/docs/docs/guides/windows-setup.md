@@ -9,7 +9,7 @@ Windows support is **experimental**. It installs Windows 11 ARM64 from your own 
 
 Vectis needs four programs and two firmware files:
 
-- **QEMU 11.1.1 with the Vectis TPM patch.** Stock QEMU cannot map the Windows TPM on Apple Silicon. Build it by following [the QEMU build notes](https://github.com/kerddotdev/vectis/blob/main/native/qemu/README.md); `qemu-img` comes from the same build or from Homebrew (`brew install qemu`).
+- **QEMU 11.1.1 with both Vectis patches for TPM compatibility and network isolation.** Stock QEMU is not accepted. Build it by following [the QEMU build notes](https://github.com/kerddotdev/vectis/blob/main/native/qemu/README.md); `qemu-img` comes from the same build or from Homebrew (`brew install qemu`).
 - **swtpm**, the software TPM: `brew install swtpm`.
 - **ARM64 UEFI firmware with Secure Boot support** and a blank **raw** variable-store template that matches it. The QEMU build notes name a pinned source and explain how to convert a QCOW2 template to raw. Do not reuse another VM's variable store or TPM state.
 - **The VirtIO driver ISO** for ARM64 Windows, from the [virtio-win project](https://github.com/virtio-win/virtio-win-pkg-scripts).
@@ -53,11 +53,25 @@ The service creates a dedicated disk, UEFI variables, TPM state and setup identi
 
 The recipe creates a local `vectis` account, disables automatic login after bootstrap, installs OpenSSH Server, restricts guest SSH to the QEMU host address and uses dedicated pinned keys. It does not share host directories or credentials with the guest. Windows setup and OpenSSH installation can require internet access.
 
+Windows environments default to `internet_only` egress, reported as `network: { egress: "internet_only", enforcement: "enforced" }` in status. Guests use IPv4 internet access. Host addresses, loopback, private networks and link-local destinations are blocked by the patched QEMU runtime. Virtual DNS, DHCP and the owned SSH forward on host loopback remain available; guest administrator changes cannot disable the host filter.
+
+You can deliberately select weaker networking for future instances:
+
+```sh
+vectis environment configure windows-11-arm64 --egress open --json
+# Restore the default restriction for future instances:
+vectis environment configure windows-11-arm64 --egress internet_only --json
+```
+
+`open` disables the host egress filter and allows the guest to reach host and local network services. Status reports `network: { egress: "open", enforcement: "not_enforced" }`. It still requires the patched Vectis QEMU runtime and keeps IPv6 disabled. Installation always uses internet-only egress. Changing the setting affects future instances, invalidates previous environment evidence and leaves running instances unchanged. Inspect it with `vectis status --json`, `vectis environment list --json` or MCP `vectis_status`; MCP configuration uses the same `environment.configure` command.
+
 The service reports success only after checking guest ARM64 architecture, clock synchronization and the setup marker over SSH, then observing a completed guest shutdown. It removes temporary setup media after completion. A successful setup registers the base environment; connecting a repository and observing its first Actions job are separate steps.
 
 ## What the guest contains
 
-Windows installs unattended from start to finish, so nobody is ever inside the guest to add anything by hand. Preparation therefore installs one thing a workflow cannot do without: Git. It downloads the pinned MinGit ARM64 build published by Git for Windows, the same portable build GitHub's own runner images use, verifies its SHA-256, unpacks it into `C:\Program Files\Git` and puts it on the machine `Path`. Without it `actions/checkout` has no `git`. The installed version is recorded in the guest at `C:\ProgramData\Vectis\toolchain.json` together with the Windows build.
+The recipe is designed to install Windows unattended. Preparation installs one thing a workflow cannot do without: Git. It downloads the pinned MinGit ARM64 build published by Git for Windows, the same portable build GitHub's own runner images use, verifies its SHA-256, unpacks it into `C:\Program Files\MinGit` and puts it on the machine `Path`. MinGit's configuration includes the standard `C:\Program Files\Git` configuration, so installing MinGit there would create a circular include. Without Git, `actions/checkout` cannot check out the repository. The installed version is recorded in the guest at `C:\ProgramData\Vectis\toolchain.json` together with the Windows build.
+
+The download uses basic parsing to avoid the [Windows PowerShell 5.1 web-content confirmation prompt](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest?view=powershell-5.1). It still verifies the pinned SHA-256 before extracting Git.
 
 Everything else comes from the workflow. Windows 11 provides PowerShell, `curl` and `tar`; `actions/setup-*` actions download their own toolchains at job time; build tools, SDKs and package managers are a job's own step. Nothing a job installs survives it, because every VM starts from the same base image.
 
@@ -70,4 +84,8 @@ vectis environment resume-windows <setup-id> --json
 
 Closing the desktop does not cancel the service operation. Cancellation preserves the owned disk for diagnosis and resume. The previous VM must have a matching exit receipt before another attempt is admitted. An uncertain process state blocks new VM starts.
 
-An interrupted operation reports `action_required` with the setup ID and private directory. Its `setup.ppm` screenshot and `preparation.log` can help diagnose guest setup failures. Screenshots may contain guest information; keep them local. Resume uses the same setup identity and disk, not a second fresh installation. A changed environment configuration requires a separate setup.
+An interrupted operation reports `action_required` with the setup ID and private directory. Its `setup.ppm` screenshot and `preparation.log` can help diagnose guest setup failures. The preparation log contains host runtime output, not the guest PowerShell error. The bootstrap records its failing stage, error message and script line in `C:\ProgramData\Vectis\diagnostic.json`. When SSH remains reachable, Vectis saves a bounded copy as `bootstrap-diagnostic.json` in the private setup directory before stopping the VM. Only the known stage appears in the operation message; the detailed error stays local. Older setup media may have only the generic failure marker. Keep screenshots, diagnostics and setup credentials local.
+
+Resume uses the same setup identity and disk, not a second fresh installation. It regenerates setup media from the current service recipe and retries a failed bootstrap once if SSH is reachable. A new bootstrap attempt clears old completion and failure markers before running. A changed environment configuration requires a separate setup.
+
+If SSH cannot start or the firewall blocks it, automatic bootstrap retry cannot reach the guest. The setup may need human console recovery; repeatedly resuming does not fix unreachable SSH. Preserve the setup disk and inspect its screenshot and local diagnostics before deciding how to recover. Do not treat a stopped or unreachable guest as a completed environment, or disable pinned host-key checking to reach it.

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { Environment } from "../../protocol/src/index.js";
+import { Schema } from "effect";
+import { Environment } from "../../protocol/src/index.js";
 
 export async function environmentRevision(environment: Environment): Promise<string | undefined> {
   const paths =
@@ -21,8 +22,8 @@ export async function environmentRevision(environment: Environment): Promise<str
         return [canonical, info.size.toString(), info.mtimeNs.toString(), info.ctimeNs.toString()];
       }),
     );
-    const configuration = Object.entries(environment).sort(([left], [right]) =>
-      left.localeCompare(right),
+    const configuration = Object.entries(Schema.decodeUnknownSync(Environment)(environment)).sort(
+      ([left], [right]) => left.localeCompare(right),
     );
     return createHash("sha256").update(JSON.stringify({ configuration, files })).digest("hex");
   } catch {
