@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Schema } from "effect";
 import { EllipsisIcon } from "lucide-react";
-import { Jobs } from "../../../../../packages/protocol/src/jobs.js";
+import { Job, Jobs } from "../../../../../packages/protocol/src/jobs.js";
 import { Notice } from "@/components/layout";
 import { JobStatus } from "@/components/status";
 import { Button } from "@/components/ui/button";
@@ -16,13 +16,16 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
+import { pendingRunIds, runActions } from "@/lib/run-control";
 import { useStateApi } from "@/state";
+import { DispatchWorkflowDialog } from "@/views/dispatch-workflow-dialog";
 
 export function RepositoryJobs({ bindingId }: { bindingId: string }) {
   const { perform, submit, snapshot } = useStateApi();
@@ -30,6 +33,14 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
   const [recovering, setRecovering] = useState(false);
   const [jobId, setJobId] = useState("");
   const [notice, setNotice] = useState<string>();
+  const [dispatching, setDispatching] = useState(false);
+  const [cancelling, setCancelling] = useState<number>();
+  const [submitted, setSubmitted] = useState<ReadonlyMap<number, string>>(new Map());
+  const pending = pendingRunIds(submitted, snapshot?.operations ?? []);
+  async function controlRun(type: "run.cancel" | "run.rerun-failed", runId: number) {
+    const operation = await submit({ type, bindingId, runId });
+    if (operation) setSubmitted((current) => new Map(current).set(runId, operation.id));
+  }
   // The service raises its revision when GitHub reports something new for this repository, so the
   // list follows the jobs by itself. A service too old to report one still moves its operations.
   const revision = snapshot?.revision ?? `${snapshot?.operations.length ?? 0}`;
@@ -62,6 +73,10 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
               <EllipsisIcon />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-60">
+              <DropdownMenuItem onClick={() => setDispatching(true)}>
+                Run workflow…
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => void submit({ type: "job.scan", bindingId })}>
                 Discover missing jobs
               </DropdownMenuItem>
@@ -102,10 +117,51 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
                 {formatRelative(job.updatedAt)}
               </span>
               <JobStatus status={job.status} conclusion={job.conclusion} />
+              <JobMenu
+                job={job}
+                busy={pending.has(job.runId)}
+                onCancel={() => setCancelling(job.runId)}
+                onRerun={() => void controlRun("run.rerun-failed", job.runId)}
+                onOpen={(url) => void perform("open.url", url)}
+              />
             </div>
           ))}
         </div>
       )}
+      <DispatchWorkflowDialog
+        key={dispatching ? "open" : "closed"}
+        bindingId={bindingId}
+        open={dispatching}
+        onOpenChange={setDispatching}
+      />
+      <Dialog
+        open={cancelling !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setCancelling(undefined);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel run {cancelling}?</DialogTitle>
+            <DialogDescription>Every job in this run stops.</DialogDescription>
+          </DialogHeader>
+          <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={() => setCancelling(undefined)}>
+              Keep running
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                const runId = cancelling;
+                setCancelling(undefined);
+                if (runId !== undefined) void controlRun("run.cancel", runId);
+              }}
+            >
+              Cancel run
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       <Dialog open={recovering} onOpenChange={setRecovering}>
         <DialogContent>
           <DialogHeader>
@@ -146,5 +202,49 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function JobMenu({
+  job,
+  busy,
+  onCancel,
+  onRerun,
+  onOpen,
+}: {
+  job: Job;
+  busy: boolean;
+  onCancel: () => void;
+  onRerun: () => void;
+  onOpen: (url: string) => void;
+}) {
+  const actions = runActions(job);
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button variant="ghost" size="icon-xs" aria-label={`Actions for run ${job.runId}`} />
+        }
+      >
+        <EllipsisIcon />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        {actions.cancel && (
+          <DropdownMenuItem disabled={busy} onClick={onCancel}>
+            Cancel run
+          </DropdownMenuItem>
+        )}
+        {actions.rerun && (
+          <DropdownMenuItem disabled={busy} onClick={onRerun}>
+            Rerun failed jobs
+          </DropdownMenuItem>
+        )}
+        {job.htmlUrl && (
+          <DropdownMenuItem onClick={() => onOpen(job.htmlUrl ?? "")}>
+            Open run on GitHub
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

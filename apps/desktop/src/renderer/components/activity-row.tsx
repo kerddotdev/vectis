@@ -57,6 +57,14 @@ export function ActivityRow({
     typeof result.nextStep === "string"
       ? result.nextStep
       : undefined;
+  const runUrl =
+    deciding?.command.startsWith("run.") &&
+    typeof result === "object" &&
+    result &&
+    "htmlUrl" in result &&
+    typeof result.htmlUrl === "string"
+      ? result.htmlUrl
+      : undefined;
   const diagnostics =
     typeof result === "object" &&
     result &&
@@ -118,6 +126,15 @@ export function ActivityRow({
           >
             <GitHubIcon className="size-3.5" />
             Open job on GitHub
+            <ExternalLinkIcon />
+          </Button>
+        </div>
+      )}
+      {runUrl && (
+        <div>
+          <Button variant="secondary" size="sm" onClick={() => void perform("open.url", runUrl)}>
+            <GitHubIcon className="size-3.5" />
+            Open run on GitHub
             <ExternalLinkIcon />
           </Button>
         </div>
