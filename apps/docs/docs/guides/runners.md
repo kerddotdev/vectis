@@ -74,6 +74,8 @@ An unreachable guest is reported as such, with SSH's reason (timeout, no route, 
 
 If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Vectis never guesses: it cleans up only after it has evidence that the VM process exited.
 
+If deleting an owned VM's files fails after its process exits, Vectis retains an exit receipt so reconciliation can retry the file cleanup.
+
 ```sh
 vectis instance reconcile <instance-id> --wait
 vectis runner reconcile <operation-id> --wait

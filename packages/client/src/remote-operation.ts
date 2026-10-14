@@ -1,5 +1,6 @@
 import { ConvexError } from "convex/values";
 import { Schema } from "effect";
+import { redact } from "./redact.js";
 import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import type { api } from "../../../convex/_generated/api.js";
 import { decodeCommand } from "../../protocol/src/index.js";
@@ -78,7 +79,7 @@ export async function advanceRemoteOperation(
     resultJson: JSON.stringify({
       operationId: operation.id,
       status: operation.status,
-      message: operation.message.slice(0, 1000),
+      message: redact(operation.message).slice(0, 1000),
       resultAvailableLocally: operation.result !== undefined,
     }),
   });
