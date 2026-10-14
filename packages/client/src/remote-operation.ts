@@ -1,3 +1,5 @@
+import { ConvexError } from "convex/values";
+import { Schema } from "effect";
 import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import type { api } from "../../../convex/_generated/api.js";
 import { decodeCommand } from "../../protocol/src/index.js";
@@ -14,7 +16,17 @@ export async function advanceRemoteOperation(
 ) {
   signal.throwIfAborted();
   if (remote.phase === "accepted") {
-    await acknowledge({ id: remote._id, phase: "claimed" });
+    try {
+      await acknowledge({ id: remote._id, phase: "claimed" });
+    } catch (error) {
+      if (
+        !(
+          error instanceof ConvexError &&
+          Schema.is(Schema.Struct({ code: Schema.Literal("operation_cancelled") }))(error.data)
+        )
+      )
+        throw error;
+    }
     return;
   }
   if (remote.phase !== "claimed" && remote.phase !== "running") return;

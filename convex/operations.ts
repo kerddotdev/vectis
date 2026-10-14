@@ -91,6 +91,8 @@ export const acknowledge = mutation({
         throw new ConvexError({ code: "acknowledgement_conflict" });
       return;
     }
+    if (operation.phase === "cancelled" && args.phase === "claimed")
+      throw new ConvexError({ code: "operation_cancelled" });
     const allowed: Record<typeof operation.phase, readonly string[]> = {
       accepted: ["claimed"],
       claimed: ["running", "failed", "action_required", "cancelled"],
