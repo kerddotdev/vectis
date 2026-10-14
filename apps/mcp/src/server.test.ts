@@ -44,6 +44,9 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
     expect(JSON.stringify(commandTool?.inputSchema)).toContain('"x64"');
     expect(JSON.stringify(commandTool?.inputSchema)).toContain('"rosetta"');
     expect(JSON.stringify(commandTool?.inputSchema)).toContain('"off"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"egress"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"internet_only"');
+    expect(JSON.stringify(commandTool?.inputSchema)).toContain('"open"');
     const basePath = join(home, "base.img");
     await writeFile(basePath, "synthetic Linux image");
     service.store.put("environment", "linux", {
@@ -69,6 +72,25 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
         x64 === "rosetta" ? "rosetta" : undefined,
       );
     }
+    for (const egress of ["open", "internet_only"]) {
+      const accepted = await client.callTool({
+        name: "vectis_command",
+        arguments: {
+          key: `mcp-egress-${egress}`,
+          command: { type: "environment.configure", id: "linux", egress },
+        },
+      });
+      expect(accepted.isError).not.toBe(true);
+      await service.service.drain();
+      const operations = (await api.status()).operations;
+      expect(
+        operations.find((operation) => operation.key === `mcp-egress-${egress}`),
+      ).toMatchObject(
+        egress === "open"
+          ? { status: "succeeded", result: { environment: { egress: "open" } } }
+          : { status: "failed", result: { code: "egress_unsupported" } },
+      );
+    }
     expect(await client.callTool({ name: "vectis_doctor", arguments: {} })).toMatchObject({
       structuredContent: { result: { source: "service" } },
     });
@@ -76,7 +98,14 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
       isError: true,
     });
     const status = await client.callTool({ name: "vectis_status", arguments: {} });
-    expect(status).toMatchObject({ structuredContent: { result: { machine: { paused: true } } } });
+    expect(status).toMatchObject({
+      structuredContent: {
+        result: {
+          machine: { paused: true },
+          environments: [{ network: { egress: "open", enforcement: "not_enforced" } }],
+        },
+      },
+    });
   } finally {
     await client.close();
     await server.close();

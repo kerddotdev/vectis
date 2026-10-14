@@ -1,3 +1,4 @@
+import { environmentNetwork } from "../../../packages/runner/src/environment-network.js";
 import { inspect } from "node:util";
 import { redact } from "../../../packages/client/src/redact.js";
 import { startMacGuestAccess, completedMacEnvironment } from "./macos-access-task.js";
@@ -91,6 +92,10 @@ export class Service {
     const snapshot = this.store.snapshot();
     return {
       ...snapshot,
+      environments: snapshot.environments.map((environment) => ({
+        ...environment,
+        network: environmentNetwork(environment),
+      })),
       runnerCapacity: runnerCapacity(snapshot, { cpus: cpus().length, memoryBytes: totalmem() }),
       ...(repositories === undefined ? {} : { repositories }),
     };
@@ -759,9 +764,13 @@ export class Service {
             command.cpu === undefined &&
             command.memoryMiB === undefined &&
             command.storagePath === undefined &&
-            command.x64 === undefined
+            command.x64 === undefined &&
+            command.egress === undefined
           )
-            throw new VectisError("invalid_request", "Provide CPU, memory, a storage path or x64.");
+            throw new VectisError(
+              "invalid_request",
+              "Provide CPU, memory, a storage path, x64 or egress.",
+            );
           if (command.x64 === "rosetta" && current.os !== "linux")
             throw new VectisError(
               "unsupported",
@@ -784,6 +793,7 @@ export class Service {
           const environment = {
             ...configuration,
             ...(enabledX64 ? { x64: enabledX64 } : {}),
+            ...(command.egress !== undefined ? { egress: command.egress } : {}),
             ...(command.cpu !== undefined ? { cpu: command.cpu } : {}),
             ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),

@@ -21,6 +21,12 @@ The service downloads a pinned official Ubuntu QCOW2 image, checks its exact siz
 
 Each disposable instance receives its own SSH host key through private, read-only setup media. Images prepared with a shared SSH host key must be prepared again before starting runners; Vectis reports `action_required` for those images. Prepare a new environment and reconnect its repositories before removing the old one.
 
+## Network access
+
+Apple Virtualization NAT does not enforce egress filtering. The guest can reach the internet, the host and the local network. Status reports `network: { egress: "open", enforcement: "not_enforced" }`, including for existing environments without an explicit setting.
+
+`vectis environment configure <id> --egress open --json` is accepted. Requesting `internet_only` fails with `egress_unsupported`: "Apple Virtualization NAT cannot restrict guest network access yet; this environment can reach the host and local network." Windows environments support enforced internet-only egress. Inspect effective state with `vectis status --json`, `vectis environment list --json` or MCP `vectis_status`; MCP uses the same configuration command.
+
 ## What the image contains
 
 A prepared image is a runner host, not a copy of a GitHub-hosted runner. GitHub's Ubuntu ARM64 image is built by 63 provisioning steps and carries hundreds of preinstalled tools, which does not belong in a disposable VM on a personal Mac. What a workflow actually depends on is narrower, because `actions/setup-*` actions download toolchains at job time. That is the layer Vectis matches, and it takes the list from the same place GitHub does: the `apt` section of [the Ubuntu 24.04 ARM64 toolset](https://github.com/actions/runner-images/blob/main/images/ubuntu/toolsets/toolset-2404-arm64.json) in `actions/runner-images`.

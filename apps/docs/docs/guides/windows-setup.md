@@ -53,7 +53,17 @@ The service creates a dedicated disk, UEFI variables, TPM state and setup identi
 
 The recipe creates a local `vectis` account, disables automatic login after bootstrap, installs OpenSSH Server, restricts guest SSH to the QEMU host address and uses dedicated pinned keys. It does not share host directories or credentials with the guest. Windows setup and OpenSSH installation can require internet access.
 
-Windows guests use IPv4 internet access. Host addresses, private networks and link-local destinations are blocked by the host runtime. The owned SSH forward remains available only on host loopback; guest administrator changes cannot disable the host filter.
+Windows environments default to `internet_only` egress, reported as `network: { egress: "internet_only", enforcement: "enforced" }` in status. Guests use IPv4 internet access. Host addresses, loopback, private networks and link-local destinations are blocked by the patched QEMU runtime. Virtual DNS, DHCP and the owned SSH forward on host loopback remain available; guest administrator changes cannot disable the host filter.
+
+You can deliberately select weaker networking for future instances:
+
+```sh
+vectis environment configure windows-11-arm64 --egress open --json
+# Restore the default restriction for future instances:
+vectis environment configure windows-11-arm64 --egress internet_only --json
+```
+
+`open` disables the host egress filter and allows the guest to reach host and local network services. Status reports `network: { egress: "open", enforcement: "not_enforced" }`. It still requires the patched Vectis QEMU runtime and keeps IPv6 disabled. Installation always uses internet-only egress. Changing the setting affects future instances, invalidates previous environment evidence and leaves running instances unchanged. Inspect it with `vectis status --json`, `vectis environment list --json` or MCP `vectis_status`; MCP configuration uses the same `environment.configure` command.
 
 The service reports success only after checking guest ARM64 architecture, clock synchronization and the setup marker over SSH, then observing a completed guest shutdown. It removes temporary setup media after completion. A successful setup registers the base environment; connecting a repository and observing its first Actions job are separate steps.
 

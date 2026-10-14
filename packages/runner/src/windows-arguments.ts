@@ -1,9 +1,11 @@
 import { resolve } from "node:path";
+import type { Egress } from "../../protocol/src/index.js";
 
 export function windowsVmArguments(input: {
   firmwarePath: string;
   cpu: number;
   memoryMiB: number;
+  egress?: Egress;
 }) {
   return [
     "-machine",
@@ -29,7 +31,7 @@ export function windowsVmArguments(input: {
     "-device",
     "virtio-gpu-pci",
     "-netdev",
-    "user,id=net0,ipv6=off,vectis-isolate=on,hostfwd=tcp:127.0.0.1:0-:22",
+    `user,id=net0,ipv6=off,vectis-isolate=${input.egress === "open" ? "off" : "on"},hostfwd=tcp:127.0.0.1:0-:22`,
     "-device",
     "virtio-net-pci,netdev=net0,romfile=",
     "-chardev",

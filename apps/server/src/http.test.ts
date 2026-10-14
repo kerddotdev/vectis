@@ -208,7 +208,10 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     );
     expect((await client.wait(start.id)).status).toBe("succeeded");
     const snapshot = await client.status();
-    expect(snapshot.environments[0]).toEqual(environment);
+    expect(snapshot.environments[0]).toEqual({
+      ...environment,
+      network: { egress: "open", enforcement: "not_enforced" },
+    });
     expect(snapshot.instances[0]).toMatchObject({
       id: start.id,
       macAddress: "02:00:00:00:00:01",

@@ -245,3 +245,40 @@ test.each(["rosetta", "off"] as const)(
     });
   },
 );
+
+test("remote status preserves effective environment egress", async () => {
+  const { request, client } = fixture();
+  request.mockResolvedValueOnce({ queryId: "egress-status" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({
+      ok: true,
+      result: {
+        protocolVersion: 1,
+        machine: { id: "machine1", name: "Host", paused: false },
+        environments: [
+          {
+            id: "windows",
+            name: "Windows",
+            os: "windows",
+            state: "ready",
+            basePath: "/synthetic/base.img",
+            cpu: 1,
+            memoryMiB: 512,
+            network: { egress: "internet_only", enforcement: "enforced" },
+          },
+        ],
+        instances: [],
+        operations: [],
+      },
+    }),
+  });
+  expect((await client.status()).environments[0]?.network).toEqual({
+    egress: "internet_only",
+    enforcement: "enforced",
+  });
+  expect(request.mock.calls[0]?.[0]).toMatchObject({
+    type: "query.submit",
+    machineId: "machine1",
+    query: { name: "status" },
+  });
+});

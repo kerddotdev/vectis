@@ -56,7 +56,7 @@ Before calling a change done, walk this list and say which entries applied:
 - **Desktop.** `apps/desktop/src/renderer/lib/operations.ts` (labels, cancellable and preparation commands) and the relevant view in `apps/desktop/src/renderer/views`.
 - **MCP.** `vectis_command` derives its schema from `Command` and usually needs no change. New tools belong in `apps/mcp/src/server.ts`.
 - **Remote control.** Remote commands replay locally through `packages/client/src/remote-operation.ts`. Check that the command behaves correctly when submitted remotely.
-- **Guest OS.** Linux, macOS, and Windows guests differ. Guest-shaped features need a decision per OS, even if it is "not supported".
+- **Guest OS.** Linux, macOS, and Windows guests differ. Guest-shaped features need a decision per OS, even if it is "not supported". Report effective egress honestly: Windows defaults to enforced internet-only access; Linux and macOS NAT cannot enforce filtering.
 - **Reverse states.** A way in needs a way out: connect needs disconnect, start needs cancel, prepare needs resume or discard.
 - **Docs.** Update `apps/docs/docs/guides` and `skills/vectis/SKILL.md` when behavior they describe changes.
 
