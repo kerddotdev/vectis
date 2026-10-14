@@ -17,6 +17,6 @@ export const Diagnostics = Schema.Struct({
     keychainHelper: Schema.Boolean,
   }),
   home: Schema.String,
-  checks: Schema.Array(ReadinessCheck),
+  checks: Schema.optional(Schema.Array(ReadinessCheck)),
 });
 export type Diagnostics = typeof Diagnostics.Type;

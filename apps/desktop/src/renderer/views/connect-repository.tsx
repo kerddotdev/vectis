@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { summarizeReadiness } from "@/lib/readiness";
+import { readinessFailure, summarizeReadiness } from "@/lib/readiness";
 import { cn } from "@/lib/utils";
 import { request, useStateApi } from "@/state";
 
@@ -31,6 +31,7 @@ function useReadiness(repositoryName: string, environmentId: string) {
     token: string;
     readiness?: RepositoryReadiness;
     error?: string;
+    unavailable?: boolean;
   }>();
   const latest = useRef("");
   const token = `${machineId ?? ""}:${key}#${focus}`;
@@ -53,7 +54,7 @@ function useReadiness(repositoryName: string, environmentId: string) {
             setResult({
               key,
               token,
-              error: issue instanceof Error ? issue.message : "The request failed.",
+              ...readinessFailure(issue),
             });
         });
     }, 400);
@@ -68,6 +69,7 @@ function useReadiness(repositoryName: string, environmentId: string) {
     checking: !!key && result?.token !== token,
     checks,
     error: current?.error,
+    unavailable: current?.unavailable,
     blocking: checks && summarizeReadiness(checks).blocking,
   };
 }
@@ -188,7 +190,11 @@ export function ConnectRepository({ onDone }: { onDone: () => void }) {
           </Field>
         </FieldGroup>
         {message && <Notice>{message}</Notice>}
-        {readiness.error ? (
+        {readiness.unavailable ? (
+          <p className="text-xs text-muted-foreground">
+            Readiness unavailable on this machine. Update its Vectis service to see checks.
+          </p>
+        ) : readiness.error ? (
           <Notice tone="attention" title="Readiness could not be checked">
             {readiness.error}
           </Notice>

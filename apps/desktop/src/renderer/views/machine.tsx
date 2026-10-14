@@ -342,7 +342,7 @@ export function Diagnostics() {
     "doctor",
     Schema.decodeUnknownSync(DiagnosticsReport),
   );
-  const runtimeMissing = report?.checks.some(
+  const runtimeMissing = report?.checks?.some(
     (check) => check.id.startsWith("runtime.") && check.status !== "ok",
   );
   return (
@@ -373,21 +373,56 @@ export function Diagnostics() {
         !error && <EmptyState>Checking this machine</EmptyState>
       ) : (
         <>
-          <Section id="runtime" title="Checks">
-            <List>
-              <ReadinessList checks={report.checks} titles={checkTitles} />
-            </List>
-            {runtimeMissing && (
-              <Button variant="link" className="self-start px-0" onClick={() => setHelp(true)}>
-                How to configure missing components
-              </Button>
-            )}
-          </Section>
+          {report.checks ? (
+            <Section id="runtime" title="Checks">
+              <List>
+                <ReadinessList checks={report.checks} titles={checkTitles} />
+              </List>
+              {runtimeMissing && (
+                <Button variant="link" className="self-start px-0" onClick={() => setHelp(true)}>
+                  How to configure missing components
+                </Button>
+              )}
+            </Section>
+          ) : (
+            <Section id="runtime" title="Runtime components">
+              <p className="text-xs text-muted-foreground">
+                Update this machine's Vectis service to see detailed checks.
+              </p>
+              <List>
+                {Object.entries(report.configured).map(([key, configured]) => (
+                  <Row
+                    key={key}
+                    title={checkTitles[`runtime.${key}`] ?? key}
+                    trailing={
+                      <StatusBadge
+                        tone={configured ? "success" : "idle"}
+                        label={configured ? "Configured" : "Not configured"}
+                      />
+                    }
+                  />
+                ))}
+              </List>
+              {Object.values(report.configured).some((configured) => !configured) && (
+                <Button variant="link" className="self-start px-0" onClick={() => setHelp(true)}>
+                  How to configure missing components
+                </Button>
+              )}
+            </Section>
+          )}
           <Section title="Host">
             <List>
               <Row
                 title={`${platforms[report.host.platform] ?? report.host.platform} on ${architectures[report.host.arch] ?? report.host.arch}`}
                 detail={`${report.host.cpus} CPU cores · ${formatMemory(report.host.memoryMiB)} memory`}
+                trailing={
+                  !report.checks && (
+                    <StatusBadge
+                      tone={report.supportedHost ? "success" : "unsupported"}
+                      label={report.supportedHost ? "Supported" : "Unsupported"}
+                    />
+                  )
+                }
               />
             </List>
           </Section>

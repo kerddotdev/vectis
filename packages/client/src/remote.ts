@@ -186,9 +186,29 @@ export class RemoteClient {
     const decoded = Schema.decodeUnknownSync(RepositoryReadinessInput, {
       onExcessProperty: "error",
     })(input);
-    return Schema.decodeUnknownSync(RepositoryReadiness)(
-      await this.inspect({ name: "repository.readiness", input: decoded }, signal),
-    );
+    try {
+      return Schema.decodeUnknownSync(RepositoryReadiness)(
+        await this.inspect({ name: "repository.readiness", input: decoded }, signal),
+      );
+    } catch (error) {
+      if (!(error instanceof VectisError) || error.code !== "inspection_failed") throw error;
+      // Older services reject unknown queries with the same code as inspection failures.
+      let capabilities;
+      try {
+        capabilities = Schema.decodeUnknownSync(
+          Schema.Struct({ capabilities: Schema.Array(Schema.Struct({ name: Schema.String })) }),
+        )(await this.inspect({ name: "capabilities" }, signal));
+      } catch {
+        throw error;
+      }
+      if (!capabilities.capabilities.some(({ name }) => name === "repository.readiness"))
+        throw new VectisError(
+          "unknown_query",
+          "Repository readiness is unavailable on this machine.",
+          "Update this machine's Vectis service to see readiness checks.",
+        );
+      throw error;
+    }
   }
   async doctor() {
     return Schema.decodeUnknownSync(Diagnostics)(await this.inspect({ name: "doctor" }));

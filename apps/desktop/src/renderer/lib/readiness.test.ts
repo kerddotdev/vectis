@@ -1,6 +1,11 @@
 import { expect, test } from "vitest";
 import type { ReadinessCheck } from "../../../../../packages/protocol/src/readiness.js";
-import { readinessRoute, readinessSection, summarizeReadiness } from "./readiness.js";
+import {
+  readinessFailure,
+  readinessRoute,
+  readinessSection,
+  summarizeReadiness,
+} from "./readiness.js";
 
 const check = (id: string, status: ReadinessCheck["status"]): ReadinessCheck => ({
   id,
@@ -33,3 +38,19 @@ test("GitHub targets open the GitHub part of Connections", () => {
   expect(readinessSection({ area: "environments", section: "env-1" })).toBe("env-1");
   expect(readinessSection({ area: "connections" })).toBeUndefined();
 });
+
+test.each(["unknown_query", "not_found"])(
+  "unsupported readiness (%s) is unavailable rather than an error",
+  (code) => {
+    const issue = Object.assign(new Error("The service does not support this query."), { code });
+    expect(readinessFailure(issue)).toEqual({ unavailable: true });
+  },
+);
+
+test.each(["inspection_failed", "remote_query_timeout", "repository_access_denied"])(
+  "readiness failures (%s) remain errors",
+  (code) => {
+    const issue = Object.assign(new Error("The request failed."), { code });
+    expect(readinessFailure(issue)).toEqual({ error: issue.message });
+  },
+);

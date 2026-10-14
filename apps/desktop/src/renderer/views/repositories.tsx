@@ -28,7 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import { summarizeReadiness } from "@/lib/readiness";
+import { readinessFailure, summarizeReadiness } from "@/lib/readiness";
 import { request, useStateApi } from "@/state";
 import { ConnectRepository } from "./connect-repository";
 import { RepositoryJobs } from "./repository-jobs";
@@ -37,7 +37,10 @@ type Binding = MachineRepositories[number];
 
 // Every check asks GitHub through the cloud, so results are shared across visits for a while and
 // bindings are checked one at a time.
-const readinessCache = new Map<string, { at: number; checks: readonly ReadinessCheck[] }>();
+const readinessCache = new Map<
+  string,
+  { at: number; checks?: readonly ReadinessCheck[]; unavailable?: boolean }
+>();
 const readinessAge = 120_000;
 
 function useBindingReadiness(bindingIds: readonly string[]) {
@@ -63,8 +66,11 @@ function useBindingReadiness(bindingIds: readonly string[]) {
             checks: checks.filter((check) => check.code !== "automatic_disabled"),
           });
           if (!stopped) setVersion((value) => value + 1);
-        } catch {
-          readinessCache.delete(key);
+        } catch (issue) {
+          if (readinessFailure(issue).unavailable) {
+            readinessCache.set(key, { at: Date.now(), unavailable: true });
+            if (!stopped) setVersion((value) => value + 1);
+          } else readinessCache.delete(key);
         }
       }
     })();
@@ -72,7 +78,7 @@ function useBindingReadiness(bindingIds: readonly string[]) {
       stopped = true;
     };
   }, [scope, ids]);
-  return (bindingId: string) => readinessCache.get(`${scope}:${bindingId}`)?.checks;
+  return (bindingId: string) => readinessCache.get(`${scope}:${bindingId}`);
 }
 
 export function Repositories() {
@@ -146,7 +152,7 @@ export function Repositories() {
               if (!first) return null;
               const automatic = bindings.filter((binding) => binding.automatic).length;
               const status = summarizeReadiness(
-                bindings.flatMap((binding) => readiness(binding.id) ?? []),
+                bindings.flatMap((binding) => readiness(binding.id)?.checks ?? []),
               ).status;
               return (
                 <ExpandableRow
@@ -159,7 +165,13 @@ export function Repositories() {
                   title={first.repositoryName}
                   aside={
                     <span className="text-xs">
-                      <ReadinessIndicator status={status} />
+                      {bindings.some((binding) => readiness(binding.id)?.unavailable) ? (
+                        <span className="text-muted-foreground">
+                          Readiness unavailable on this machine
+                        </span>
+                      ) : (
+                        <ReadinessIndicator status={status} />
+                      )}
                     </span>
                   }
                   summary={
@@ -183,7 +195,7 @@ export function Repositories() {
                         const environment = snapshot?.environments.find(
                           (item) => item.id === binding.environmentId,
                         );
-                        const checks = readiness(binding.id);
+                        const checks = readiness(binding.id)?.checks;
                         return (
                           <div
                             key={binding.id}

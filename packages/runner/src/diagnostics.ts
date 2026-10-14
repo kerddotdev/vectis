@@ -8,7 +8,7 @@ export function runtimeDiagnostics(
   options: RuntimeOptions & { keychainHelper?: string },
   source: Diagnostics["source"],
   environments: ReadonlyArray<Pick<Environment, "os">> = [],
-): Diagnostics {
+): Diagnostics & { checks: ReadinessCheck[] } {
   const supportedHost = platform() === "darwin" && arch() === "arm64";
   const windows = environments.some((environment) => environment.os === "windows");
   const checks: ReadinessCheck[] = [

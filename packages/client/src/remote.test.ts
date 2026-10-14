@@ -190,3 +190,64 @@ test("remote readiness sends a read inspection and validates the returned checks
     client.repositoryReadiness({ repositoryName: "owner/repo", environmentId: "linux" }),
   ).rejects.toThrow();
 });
+
+test.each([false, true])(
+  "remote readiness checks capabilities after an ambiguous inspection failure (supported: %s)",
+  async (supported) => {
+    const { request, client } = fixture();
+    const failure = {
+      ok: false,
+      code: "inspection_failed",
+      message: "The local inspection could not be completed.",
+      nextStep: "Retry the inspection.",
+    };
+    request
+      .mockResolvedValueOnce({ queryId: "query1" })
+      .mockResolvedValueOnce({ pending: false, responseJson: JSON.stringify(failure) })
+      .mockResolvedValueOnce({ queryId: "query2" })
+      .mockResolvedValueOnce({
+        pending: false,
+        responseJson: JSON.stringify({
+          ok: true,
+          result: {
+            protocolVersion: 1,
+            capabilities: supported
+              ? [{ name: "repository.readiness", kind: "query" }]
+              : [{ name: "doctor", kind: "query" }],
+          },
+        }),
+      });
+    await expect(client.repositoryReadiness({ bindingId: "binding1" })).rejects.toMatchObject(
+      supported
+        ? { code: failure.code, message: failure.message }
+        : {
+            code: "unknown_query",
+            message: "Repository readiness is unavailable on this machine.",
+          },
+    );
+    expect(request.mock.calls[2]?.[0]).toMatchObject({
+      query: { name: "capabilities" },
+      machineId: "machine1",
+    });
+  },
+);
+
+test("remote readiness preserves the original failure when capability discovery fails", async () => {
+  const { request, client } = fixture();
+  request
+    .mockResolvedValueOnce({ queryId: "query1" })
+    .mockResolvedValueOnce({
+      pending: false,
+      responseJson: JSON.stringify({
+        ok: false,
+        code: "inspection_failed",
+        message: "The original inspection failed.",
+        nextStep: "Retry the inspection.",
+      }),
+    })
+    .mockRejectedValueOnce(new Error("Capability discovery failed."));
+  await expect(client.repositoryReadiness({ bindingId: "binding1" })).rejects.toMatchObject({
+    code: "inspection_failed",
+    message: "The original inspection failed.",
+  });
+});

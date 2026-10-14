@@ -52,3 +52,13 @@ export function summarizeReadiness(checks: readonly ReadinessCheck[]) {
     blocking: checks.find((check) => check.status === "blocked"),
   };
 }
+
+export function readinessFailure(issue: unknown) {
+  if (
+    issue instanceof Error &&
+    "code" in issue &&
+    (issue.code === "unknown_query" || issue.code === "not_found")
+  )
+    return { unavailable: true };
+  return { error: issue instanceof Error ? issue.message : "The request failed." };
+}
