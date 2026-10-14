@@ -1,4 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
+import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
+import { VectisError } from "../../../packages/protocol/src/index.js";
 import { runRunnerTask } from "./runner-task.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
@@ -11,7 +13,15 @@ vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
 vi.mock("../../../packages/runner/src/guest-diagnostics.js", () => ({
   collectRunnerDiagnostics: vi.fn(async () => "collected"),
 }));
-afterEach(() => vi.resetAllMocks());
+const listeningTasks: Array<{ abort: AbortController; done: Promise<unknown> }> = [];
+afterEach(async () => {
+  for (const task of listeningTasks) task.abort.abort();
+  await Promise.all(listeningTasks.map((task) => task.done));
+  listeningTasks.length = 0;
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.resetAllMocks();
+});
 const environment = {
   id: "test",
   name: "Test",
@@ -34,6 +44,10 @@ function fixture() {
       encodedConfig: "c2VjcmV0",
       environmentId: "test",
       os: "linux" as const,
+    })),
+    runnerStatus: vi.fn<RunnerBroker["runnerStatus"]>(async () => ({
+      busy: false,
+      status: "online",
     })),
     releaseRunner: vi.fn(async () => {
       events.push("release");
@@ -217,4 +231,188 @@ test("successful and cancelled runners gather no diagnostics", async () => {
   });
   await runRunnerTask("binding", "key", environment, controls, abort.signal);
   expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
+});
+
+async function listeningFixture(withJob = true) {
+  vi.useFakeTimers();
+  const { controls, broker, events } = fixture();
+  const abort = new AbortController();
+  const needed = vi.fn(async (_signal: AbortSignal) => true);
+  let complete = () => {};
+  vi.mocked(executeGuest)
+    .mockImplementationOnce(async () => ({
+      exitCode: 0,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+    }))
+    .mockImplementationOnce(async (_connection, _script, { signal }) => {
+      await new Promise<void>((resolve, reject) => {
+        const cancelled = () => reject(new VectisError("guest_cancelled", "Guest cancelled."));
+        complete = () => {
+          signal.removeEventListener("abort", cancelled);
+          resolve();
+        };
+        signal.addEventListener("abort", cancelled, { once: true });
+        if (signal.aborted) cancelled();
+      });
+      return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+    });
+  const done = runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    { ...controls, ...(withJob ? { needed } : {}) },
+    abort.signal,
+  );
+  listeningTasks.push({ abort, done });
+  await vi.advanceTimersByTimeAsync(0);
+  expect(controls.progress).toHaveBeenLastCalledWith(
+    expect.objectContaining({ stage: "listening" }),
+  );
+  return { controls, broker, events, abort, needed, done, complete };
+}
+
+test.each([
+  { busy: false, status: "online" as const },
+  { busy: false, status: "offline" as const },
+  { missing: true as const },
+])(
+  "an idle runner with status %j drains only after ten minutes and releases capacity",
+  async (status) => {
+    const { broker, events, needed, done } = await listeningFixture();
+    broker.runnerStatus.mockResolvedValue(status);
+    needed.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+    expect(events).toEqual([]);
+    expect(needed).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await done).toMatchObject({
+      status: "cancelled",
+      code: "runner_idle",
+      progress: { stage: "finished" },
+    });
+    expect(events).toEqual(["stop", "release"]);
+    expect(broker.releaseRunner).toHaveBeenCalledWith("lease", expect.any(AbortSignal));
+    expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("a busy runner keeps its VM even after the requested job no longer needs capacity", async () => {
+  const { broker, events, needed, done, complete } = await listeningFixture();
+  needed.mockResolvedValue(false);
+  await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+  expect(events).toEqual([]);
+  expect(needed).toHaveBeenCalledTimes(2);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+  expect(events).toEqual(["stop", "release"]);
+});
+
+test("the idle window restarts after the runner was busy", async () => {
+  const { broker, events, needed, done } = await listeningFixture();
+  needed.mockResolvedValue(false);
+  await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+  await vi.advanceTimersByTimeAsync(30000);
+  broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
+  await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+  expect(events).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
+});
+
+test("an idle runner whose requested job still needs queued capacity keeps listening", async () => {
+  const { events, needed, done, complete } = await listeningFixture();
+  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+  expect(needed.mock.calls.length).toBeGreaterThan(2);
+  expect(events).toEqual([]);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
+test.each(["status", "job"] as const)(
+  "%s lookup errors keep listening and require a fresh idle window",
+  async (lookup) => {
+    const { broker, events, needed, done } = await listeningFixture();
+    if (lookup === "status") {
+      broker.runnerStatus.mockRejectedValue(new Error("GitHub unavailable"));
+      needed.mockResolvedValue(false);
+    } else needed.mockRejectedValue(new Error("Job unknown"));
+    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+    expect(events).toEqual([]);
+    broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
+    needed.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+    expect(events).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
+  },
+);
+
+test("a job assigned during the demand read prevents drain", async () => {
+  const { broker, events, needed, done, complete } = await listeningFixture();
+  needed.mockImplementation(async () => {
+    broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+    return false;
+  });
+  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+  expect(events).toEqual([]);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
+test.each(["stop", "release"] as const)(
+  "idle drain with failed %s cleanup needs reconciliation",
+  async (step) => {
+    const { controls, broker, needed, done } = await listeningFixture();
+    needed.mockResolvedValue(false);
+    if (step === "stop") controls.stop.mockRejectedValue(new Error("VM exit unknown"));
+    else broker.releaseRunner.mockRejectedValue(new Error("Registration unknown"));
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(await done).toMatchObject({
+      status: "action_required",
+      code: "runner_cleanup_required",
+    });
+    if (step === "stop") expect(broker.releaseRunner).not.toHaveBeenCalled();
+  },
+);
+
+test("cancellation interrupts an in-flight status read and releases its watcher", async () => {
+  const { broker, abort, done } = await listeningFixture();
+  broker.runnerStatus.mockImplementation(
+    (_id, signal) =>
+      new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+  );
+  await vi.advanceTimersByTimeAsync(30000);
+  abort.abort();
+  expect(await done).toMatchObject({ status: "cancelled" });
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("the six-hour listening timeout still cleans up without reporting idle drain", async () => {
+  const timeout = new AbortController();
+  const originalTimeout = AbortSignal.timeout;
+  vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) =>
+    ms === 6 * 60 * 60 * 1000 ? timeout.signal : originalTimeout(ms),
+  );
+  const { done, events } = await listeningFixture();
+  timeout.abort(new DOMException("Timed out", "TimeoutError"));
+  expect(await done).toMatchObject({ status: "failed", code: "guest_cancelled" });
+  expect(events).toEqual(["stop", "release"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a manual runner without a requested job keeps listening beyond the idle window", async () => {
+  const { broker, events, done, complete } = await listeningFixture(false);
+  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+  expect(events).toEqual([]);
+  expect(broker.runnerStatus).not.toHaveBeenCalled();
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
 });

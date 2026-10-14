@@ -40,6 +40,10 @@ const transport = vi.hoisted(() => {
     mutation: vi.fn<
       (mutation: FunctionReference<"mutation">, args: Record<string, unknown>) => Promise<unknown>
     >(async () => null),
+    action:
+      vi.fn<
+        (action: FunctionReference<"action">, args: Record<string, unknown>) => Promise<unknown>
+      >(),
     connectionState: vi.fn(() => ({ isWebSocketConnected: true })),
     disconnect: vi.fn(),
     close: vi.fn(async () => {}),
@@ -50,6 +54,7 @@ vi.mock("convex/browser", () => ({
     onUpdate = transport.onUpdate;
     query = transport.query;
     mutation = transport.mutation;
+    action = transport.action;
     close = transport.close;
     client = {
       connectionState: transport.connectionState,
@@ -401,4 +406,45 @@ test("runner recovery uses an authenticated atomic mutation and validates its le
   expect(call?.[1]).toEqual(request);
   transport.mutation.mockResolvedValueOnce(null);
   await expect(relay.reconcileRunner(request, signal)).rejects.toThrow();
+});
+
+test.each([
+  { busy: true, status: "online" },
+  { busy: false, status: "offline" },
+  { missing: true },
+])("runner status uses the lease action and decodes %j", async (status) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockResolvedValue(status);
+  expect(await relay.runnerStatus("lease1", new AbortController().signal)).toEqual(status);
+  expect(
+    transport.action.mock.calls.map(([action, args]) => [getFunctionName(action), args]),
+  ).toEqual([["githubRunners:status", { id: "lease1" }]]);
+});
+
+test("runner status rejects malformed responses and unavailable or aborted requests", async () => {
+  const { relay } = await fixture();
+  await expect(relay.runnerStatus("lease1", new AbortController().signal)).rejects.toMatchObject({
+    code: "cloud_unavailable",
+  });
+  transport.auth.changed?.(true);
+  transport.action.mockResolvedValue({ busy: "false", status: "online" });
+  await expect(relay.runnerStatus("lease1", new AbortController().signal)).rejects.toThrow();
+  const abort = new AbortController();
+  transport.action.mockImplementation(async () => new Promise(() => {}));
+  const pending = relay.runnerStatus("lease1", abort.signal);
+  const reason = new Error("Status read cancelled");
+  const rejected = expect(pending).rejects.toBe(reason);
+  abort.abort(reason);
+  await rejected;
+});
+
+test("relay shutdown interrupts runner status polling", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockImplementation(async () => new Promise(() => {}));
+  const pending = relay.runnerStatus("lease1", new AbortController().signal);
+  const rejected = expect(pending).rejects.toThrow();
+  await relay.close();
+  await rejected;
 });

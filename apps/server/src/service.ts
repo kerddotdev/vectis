@@ -464,7 +464,7 @@ export class Service {
               ...(demandJobId === undefined
                 ? {}
                 : {
-                    needed: async () => {
+                    needed: async (signal) => {
                       if (
                         command.automatic &&
                         !(await broker.repositories()).some(
@@ -472,11 +472,7 @@ export class Service {
                         )
                       )
                         return false;
-                      const job = await broker.refreshJob(
-                        command.bindingId,
-                        demandJobId,
-                        abort.signal,
-                      );
+                      const job = await broker.refreshJob(command.bindingId, demandJobId, signal);
                       this.store.updateActivity(operation.id, (base) => ({
                         ...base,
                         subject: {
@@ -485,7 +481,7 @@ export class Service {
                           requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
                         },
                       }));
-                      if (job.status !== "queued") return false;
+                      if (job.status !== "queued" || job.runnerId !== null) return false;
                       if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
                         throw new VectisError(
                           "runner_labels_mismatch",
@@ -558,10 +554,14 @@ export class Service {
                   ...("code" in completed
                     ? {
                         code: completed.code,
-                        nextStep:
-                          completed.status === "action_required"
-                            ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
-                            : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                        ...(completed.status === "cancelled"
+                          ? {}
+                          : {
+                              nextStep:
+                                completed.status === "action_required"
+                                  ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
+                                  : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
+                            }),
                       }
                     : {}),
                 },

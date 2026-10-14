@@ -37,6 +37,7 @@ test("uncertain publication remains actionable and does not block or duplicate m
       throw new Error("unused");
     },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: async () => {},
   }));
   try {

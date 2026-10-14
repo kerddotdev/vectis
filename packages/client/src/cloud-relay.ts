@@ -6,7 +6,12 @@ import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migr
 import { MachineRepositories, type RepositoryConnection } from "../../protocol/src/repositories.js";
 import { JobRefresh, JobScan, JobObservations } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
-import { RunnerGrant, RunnerLease, type RunnerBroker } from "../../protocol/src/runners.js";
+import {
+  RunnerGrant,
+  RunnerLease,
+  RunnerStatus,
+  type RunnerBroker,
+} from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
 import { api } from "../../../convex/_generated/api.js";
 import { VectisError } from "../../protocol/src/index.js";
@@ -437,6 +442,15 @@ export function startCloudRelay(
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
       );
       return Schema.decodeUnknownSync(RunnerGrant)(value);
+    },
+    async runnerStatus(leaseId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      const value = await interruptible(
+        cloud.action(api.githubRunners.status, { id: leaseId }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
+      );
+      return Schema.decodeUnknownSync(RunnerStatus)(value);
     },
     async releaseRunner(id: string, signal: AbortSignal) {
       signal.throwIfAborted();
