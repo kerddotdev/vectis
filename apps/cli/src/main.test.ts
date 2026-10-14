@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { startService } from "../../server/src/http.js";
+import type { JobLogRequest, JobLogs } from "../../../packages/protocol/src/jobs.js";
 
 test("machine configure settles without --wait and status prints runner capacity", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-cli-capacity-"));
@@ -146,3 +147,91 @@ test("job log follow stops on interrupt and releases its polling timer and liste
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each([false, true])(
+  "job log follow backs off empty chunks and resets on text, json=%s",
+  async (json) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cli-backoff-"));
+    const argv = process.argv;
+    const exitCode = process.exitCode;
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const empty: JobLogs = {
+      text: "",
+      next: 0,
+      status: "in_progress",
+      complete: false,
+      truncated: false,
+    };
+    const read = vi
+      .fn<(input: JobLogRequest, signal?: AbortSignal) => Promise<JobLogs>>()
+      .mockResolvedValue(empty);
+    for (let index = 0; index < 6; index++) read.mockResolvedValueOnce(empty);
+    read.mockResolvedValueOnce({ ...empty, text: "new output", next: 10 });
+    read.mockResolvedValueOnce({ ...empty, next: 10 });
+    read.mockResolvedValueOnce({ ...empty, next: 10, status: "completed", complete: true });
+    const interrupts = process.listenerCount("SIGINT");
+    const terminations = process.listenerCount("SIGTERM");
+    vi.resetModules();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.doMock("../../../packages/client/src/local.js", () => ({
+      localClient: async (selectedHome: string) => {
+        expect(selectedHome).toBe(home);
+        return { jobLogs: read };
+      },
+    }));
+    vi.doMock("node:timers/promises", () => ({
+      setTimeout: (milliseconds: number) =>
+        new Promise<void>((resolve) => setTimeout(resolve, milliseconds)),
+    }));
+    try {
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "job",
+        "logs",
+        "4",
+        "--binding",
+        "binding1",
+        "--follow",
+        ...(json ? ["--json"] : []),
+      ];
+      await import("./main.js");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(read).toHaveBeenCalledOnce();
+      const delays = [2000, 4000, 8000, 16000, 30000, 30000, 2000, 2000];
+      for (const [index, delay] of delays.entries()) {
+        await vi.advanceTimersByTimeAsync(delay - 1);
+        expect(read).toHaveBeenCalledTimes(index + 1);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(read).toHaveBeenCalledTimes(index + 2);
+      }
+      expect(read.mock.calls.map(([input]) => input)).toEqual([
+        { bindingId: "binding1", jobId: 4 },
+        ...Array.from({ length: 6 }, () => ({ bindingId: "binding1", jobId: 4, after: 0 })),
+        ...Array.from({ length: 2 }, () => ({ bindingId: "binding1", jobId: 4, after: 10 })),
+      ]);
+      expect(output).toHaveBeenCalledWith(
+        json ? expect.stringContaining('"text":"new output"') : "new output",
+      );
+      expect(process.listenerCount("SIGINT")).toBe(interrupts);
+      expect(process.listenerCount("SIGTERM")).toBe(terminations);
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60000);
+      expect(read).toHaveBeenCalledTimes(9);
+      expect(process.exitCode).toBe(exitCode);
+    } finally {
+      if (process.listenerCount("SIGINT") > interrupts) process.emit("SIGINT");
+      vi.clearAllTimers();
+      vi.useRealTimers();
+      vi.doUnmock("node:timers/promises");
+      vi.doUnmock("../../../packages/client/src/local.js");
+      vi.resetModules();
+      process.argv = argv;
+      process.exitCode = exitCode;
+      output.mockRestore();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

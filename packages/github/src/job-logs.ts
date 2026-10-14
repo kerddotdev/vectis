@@ -54,61 +54,63 @@ export async function downloadJobLog(token: string, path: string, after?: number
       redirect: "error",
       signal,
     });
-  let response = await fetchBlob(
-    after === undefined ? `bytes=-${jobLogWindowBytes}` : `bytes=${after}-`,
-  );
-  // An end cursor also yields 416. Fetch the tail to distinguish EOF from an invalid cursor.
-  if (response.status === 416) {
-    await response.body?.cancel();
-    response = await fetchBlob(`bytes=-${jobLogWindowBytes}`);
-    if (response.status === 416 && response.headers.get("Content-Range") === "bytes */0") {
+  const fetchPage = async (from: number) => {
+    const requestedEnd = Math.min(Number.MAX_SAFE_INTEGER, from + jobLogChunkBytes + 3);
+    const response = await fetchBlob(`bytes=${from}-${requestedEnd}`);
+    if (response.status !== 200 && response.status !== 206 && response.status !== 416) {
       await response.body?.cancel();
-      if (after !== undefined && after > 0) throw new Error("Job log cursor exceeds the log size.");
-      return { bytes: Buffer.alloc(0), start: 0, total: 0 };
+      throw new GitHubApiError(response.status);
     }
-  }
-  if (response.status === 206 && after !== undefined) {
-    const range = /^bytes [0-9]+-[0-9]+\/([0-9]+)$/.exec(
-      response.headers.get("Content-Range") ?? "",
-    );
-    const total = Number(range?.[1]);
-    if (Number.isSafeInteger(total) && total - after > jobLogWindowBytes) {
+    if (
+      response.headers.has("Content-Encoding") &&
+      response.headers.get("Content-Encoding") !== "identity"
+    ) {
       await response.body?.cancel();
-      response = await fetchBlob(`bytes=-${jobLogWindowBytes}`);
+      throw new Error("GitHub returned an encoded log; byte cursors require identity encoding.");
     }
-  }
-  if (response.status !== 200 && response.status !== 206) {
-    await response.body?.cancel();
-    throw new GitHubApiError(response.status);
-  }
-  if (
-    response.headers.has("Content-Encoding") &&
-    response.headers.get("Content-Encoding") !== "identity"
-  ) {
-    await response.body?.cancel();
-    throw new Error("GitHub returned an encoded log; byte cursors require identity encoding.");
-  }
-  let start = 0;
-  let total: number | undefined;
-  if (response.status === 206) {
-    const range = /^bytes ([0-9]+)-([0-9]+)\/([0-9]+)$/.exec(
-      response.headers.get("Content-Range") ?? "",
-    );
-    if (!range) {
+    if (response.status === 200) return { response };
+    const header = response.headers.get("Content-Range") ?? "";
+    const range = /^bytes ([0-9]+)-([0-9]+)\/([0-9]+)$/.exec(header);
+    const empty = /^bytes \*\/([0-9]+)$/.exec(header);
+    const start = Number(range?.[1]);
+    const end = Number(range?.[2]);
+    const total = Number(response.status === 416 ? empty?.[1] : range?.[3]);
+    if (
+      !Number.isSafeInteger(total) ||
+      total < 0 ||
+      (response.status === 416
+        ? !empty || from < total
+        : !range ||
+          ![start, end].every(Number.isSafeInteger) ||
+          start !== from ||
+          start > end ||
+          end !== Math.min(requestedEnd, total - 1))
+    ) {
       await response.body?.cancel();
       throw new Error("GitHub returned an invalid log byte range.");
     }
-    start = Number(range[1]);
-    const end = Number(range[2]);
-    total = Number(range[3]);
-    if (![start, end, total].every(Number.isSafeInteger) || start > end || end !== total - 1) {
-      await response.body?.cancel();
-      throw new Error("GitHub returned an invalid log byte range.");
+    return { response, range: { start, end, total } };
+  };
+  let page = await fetchPage(after ?? 0);
+  if (page.range && page.response.status === 206) {
+    const from = Math.max(after ?? 0, page.range.total - jobLogWindowBytes);
+    if (from !== page.range.start) {
+      await page.response.body?.cancel();
+      page = await fetchPage(from);
     }
   }
+  const { response, range } = page;
+  if (response.status === 416 && range) {
+    await response.body?.cancel();
+    if (after !== undefined && after > range.total)
+      throw new Error("Job log cursor exceeds the log size.");
+    return { bytes: Buffer.alloc(0), start: range.total, total: range.total };
+  }
+  let total = range?.total;
   const reader = response.body?.getReader();
   if (!reader) throw new Error("GitHub returned no log body.");
-  const tail = Buffer.alloc(jobLogWindowBytes);
+  const capacity = range ? range.end - range.start + 1 : jobLogWindowBytes;
+  const tail = Buffer.alloc(capacity);
   let size = 0;
   let position = 0;
   try {
@@ -116,6 +118,7 @@ export async function downloadJobLog(token: string, path: string, after?: number
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
+      if (range && size > capacity) throw new Error("GitHub returned an oversized log byte range.");
       if (size > jobLogDownloadBytes) throw new Error("GitHub log download exceeded 64 MiB.");
       if (value.byteLength >= tail.length) {
         tail.set(value.subarray(value.byteLength - tail.length));
@@ -133,8 +136,7 @@ export async function downloadJobLog(token: string, path: string, after?: number
   } finally {
     reader.releaseLock();
   }
-  if (total !== undefined && start + size !== total)
-    throw new Error("GitHub returned an incomplete log byte range.");
+  if (range && size !== capacity) throw new Error("GitHub returned an incomplete log byte range.");
   total ??= size;
   if (after !== undefined && after > total) throw new Error("Job log cursor exceeds the log size.");
   const retained = Math.min(size, tail.length);
@@ -142,7 +144,7 @@ export async function downloadJobLog(token: string, path: string, after?: number
     size < tail.length
       ? tail.subarray(0, retained)
       : Buffer.concat([tail.subarray(position), tail.subarray(0, position)]);
-  return { bytes, start: total - retained, total };
+  return { bytes, start: range?.start ?? total - retained, total };
 }
 
 export function pageJobLog(

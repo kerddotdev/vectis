@@ -148,7 +148,7 @@ Repositories and jobs
   runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
   runner reconcile <operation-id>  Clean up an interrupted runner after verifying its VM stopped
   job list <binding-id>         Read recent GitHub job states for a connected repository
-  job logs <job-id> --binding <id> [--follow]  Read the retained log; follow polls every 2 seconds
+  job logs <job-id> --binding <id> [--follow]  Read the retained log; follow backs off from 2 to 30 seconds when empty
   job scan <binding-id>         Discover missing jobs through the GitHub API
   job refresh <binding-id> <job-id>  Recover one job state directly from GitHub
 
@@ -470,6 +470,7 @@ Documentation: https://vectis.kerd.dev/docs
     process.once("SIGINT", stop);
     process.once("SIGTERM", stop);
     let after: number | undefined;
+    let pollDelay = 2000;
     try {
       while (!abort.signal.aborted) {
         const log = await api.jobLogs(
@@ -483,7 +484,11 @@ Documentation: https://vectis.kerd.dev/docs
         after = log.next;
         if (log.complete) break;
         if (!log.text && !values.follow) break;
-        if (values.follow) await delay(2000, undefined, { signal: abort.signal });
+        if (values.follow) {
+          if (log.text) pollDelay = 2000;
+          await delay(pollDelay, undefined, { signal: abort.signal });
+          if (!log.text) pollDelay = Math.min(pollDelay * 2, 30000);
+        }
       }
     } catch (error) {
       if (!abort.signal.aborted) throw error;

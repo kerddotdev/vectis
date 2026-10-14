@@ -8,6 +8,7 @@ const location = "https://productionresultssa0.blob.core.windows.net/logs/job?si
 afterEach(() => vi.unstubAllGlobals());
 
 function logsFetch(bytes: Uint8Array, ranges = true) {
+  let transferred = 0;
   const fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
     const headers = new Headers(init?.headers);
     if (String(url).startsWith("https://api.github.com/")) {
@@ -16,24 +17,31 @@ function logsFetch(bytes: Uint8Array, ranges = true) {
       return new Response(null, { status: 302, headers: { Location: location } });
     }
     expect(headers.has("Authorization")).toBe(false);
+    expect(headers.get("Accept-Encoding")).toBe("identity");
     expect(init?.redirect).toBe("error");
     const range = headers.get("Range") ?? "";
-    if (!ranges) return new Response(bytes.slice());
+    if (!ranges) {
+      transferred += bytes.length;
+      return new Response(bytes.slice());
+    }
     const start = range.startsWith("bytes=-")
       ? Math.max(0, bytes.length - Number(range.slice(7)))
-      : Number(range.slice(6, -1));
+      : Number(range.slice(6).split("-")[0]);
+    const requestedEnd = range.startsWith("bytes=-") ? "" : range.slice(6).split("-")[1];
+    const end = requestedEnd ? Math.min(Number(requestedEnd), bytes.length - 1) : bytes.length - 1;
     if (start >= bytes.length)
       return new Response(null, {
         status: 416,
         headers: { "Content-Range": `bytes */${bytes.length}` },
       });
-    return new Response(bytes.slice(start), {
+    transferred += end - start + 1;
+    return new Response(bytes.slice(start, end + 1), {
       status: 206,
-      headers: { "Content-Range": `bytes ${start}-${bytes.length - 1}/${bytes.length}` },
+      headers: { "Content-Range": `bytes ${start}-${end}/${bytes.length}` },
     });
   });
   vi.stubGlobal("fetch", fetch);
-  return fetch;
+  return Object.assign(fetch, { transferredBytes: () => transferred });
 }
 
 test.each([
@@ -70,7 +78,9 @@ test("downloads a signed blob without authorization, requests a range and handle
   const bytes = new TextEncoder().encode("masked *** log\n");
   const fetch = logsFetch(bytes);
   const log = await client.downloadJobLog("test-secret", path, 3);
-  expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get("Range")).toBe("bytes=3-");
+  expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get("Range")).toBe(
+    `bytes=3-${3 + jobLogChunkBytes + 3}`,
+  );
   expect(log).toMatchObject({ start: 3, total: bytes.length });
   expect(pageJobLog(log, "completed", 3)).toMatchObject({
     text: "ked *** log\n",
@@ -164,7 +174,14 @@ test("empty logs and malformed or incomplete ranges are handled without fabricat
   expect(
     pageJobLog(await client.downloadJobLog("test-secret", path, 0), "completed", 0),
   ).toMatchObject({ text: "", next: 0, complete: true });
-  for (const range of ["bytes 0-9/*", "bytes 0-4/10", "bytes 0-9/10"]) {
+  for (const range of [
+    "bytes 0-9/*",
+    "bytes 0-4/10",
+    "bytes 0-9/10",
+    "bytes 1-9/10",
+    "bytes 0-32772/100000",
+    "bytes 0-9/9007199254740992",
+  ]) {
     vi.stubGlobal("fetch", async (url: string | URL) =>
       String(url).startsWith("https://api.github.com/")
         ? new Response(null, { status: 302, headers: { Location: location } })
@@ -220,15 +237,19 @@ test("an old cursor skips directly to the retained range even when the full log 
     if (String(url).startsWith("https://api.github.com/"))
       return new Response(null, { status: 302, headers: { Location: location } });
     const range = new Headers(init?.headers).get("Range");
-    if (range === "bytes=0-")
-      return new Response("discarded", {
+    if (range === `bytes=0-${jobLogChunkBytes + 3}`)
+      return new Response(new Uint8Array(jobLogChunkBytes + 4), {
         status: 206,
-        headers: { "Content-Range": `bytes 0-${total - 1}/${total}` },
+        headers: { "Content-Range": `bytes 0-${jobLogChunkBytes + 3}/${total}` },
       });
-    expect(range).toBe(`bytes=-${jobLogWindowBytes}`);
-    return new Response(new Uint8Array(jobLogWindowBytes).fill(97), {
+    expect(range).toBe(
+      `bytes=${total - jobLogWindowBytes}-${total - jobLogWindowBytes + jobLogChunkBytes + 3}`,
+    );
+    return new Response(new Uint8Array(jobLogChunkBytes + 4).fill(97), {
       status: 206,
-      headers: { "Content-Range": `bytes ${total - jobLogWindowBytes}-${total - 1}/${total}` },
+      headers: {
+        "Content-Range": `bytes ${total - jobLogWindowBytes}-${total - jobLogWindowBytes + jobLogChunkBytes + 3}/${total}`,
+      },
     });
   });
   vi.stubGlobal("fetch", fetch);
@@ -241,4 +262,110 @@ test("an old cursor skips directly to the retained range even when the full log 
     truncated: true,
   });
   expect(fetch).toHaveBeenCalledTimes(3);
+});
+
+test.each([undefined, 0])(
+  "range pages catch up within one chunk per request, after=%s",
+  async (cursor) => {
+    const bytes = Buffer.from("prefix" + "sample \u{1f6e0}\u00e9\n".repeat(450000));
+    const fetch = logsFetch(bytes);
+    let after = cursor;
+    let text = "";
+    let pages = 0;
+    let start = bytes.length - jobLogWindowBytes;
+    while (((bytes[start] ?? 0) & 0xc0) === 0x80) start++;
+    const expectedRanges = [`bytes=0-${jobLogChunkBytes + 3}`];
+    let from = bytes.length - jobLogWindowBytes;
+    while (true) {
+      expectedRanges.push(`bytes=${from}-${from + jobLogChunkBytes + 3}`);
+      const log = await client.downloadJobLog("test-secret", path, after);
+      const chunk = pageJobLog(log, "completed", after);
+      expect(chunk.truncated).toBe(pages === 0);
+      expect(Buffer.byteLength(chunk.text)).toBeLessThanOrEqual(jobLogChunkBytes);
+      expect(chunk.next).toBeGreaterThan(after ?? log.start);
+      text += chunk.text;
+      after = chunk.next;
+      from = after;
+      pages++;
+      if (chunk.complete) break;
+    }
+    expect(text).toBe(bytes.subarray(start).toString("utf8"));
+    expect(after).toBe(bytes.length);
+    expect(pages).toBeGreaterThan(100);
+    expect(
+      fetch.mock.calls
+        .filter(([url]) => String(url) === location)
+        .map(([, init]) => new Headers(init?.headers).get("Range")),
+    ).toEqual(expectedRanges);
+    expect(fetch.transferredBytes()).toBeLessThanOrEqual((pages + 1) * (jobLogChunkBytes + 4));
+  },
+);
+
+test("recent cursors use one bounded blob request per page", async () => {
+  const bytes = Buffer.from("x".repeat(jobLogChunkBytes) + "\u{1f6e0}" + "tail");
+  const fetch = logsFetch(bytes);
+  const first = pageJobLog(await client.downloadJobLog("test-secret", path, 1), "completed", 1);
+  expect(first).toMatchObject({
+    text: "x".repeat(jobLogChunkBytes - 1),
+    next: jobLogChunkBytes,
+    complete: false,
+    truncated: false,
+  });
+  const second = pageJobLog(
+    await client.downloadJobLog("test-secret", path, first.next),
+    "completed",
+    first.next,
+  );
+  expect(second).toMatchObject({
+    text: "\u{1f6e0}tail",
+    next: bytes.length,
+    complete: true,
+    truncated: false,
+  });
+  expect(
+    fetch.mock.calls
+      .filter(([url]) => String(url) === location)
+      .map(([, init]) => new Headers(init?.headers).get("Range")),
+  ).toEqual([
+    `bytes=1-${jobLogChunkBytes + 4}`,
+    `bytes=${first.next}-${first.next + jobLogChunkBytes + 3}`,
+  ]);
+  expect(fetch.transferredBytes()).toBeLessThanOrEqual(2 * (jobLogChunkBytes + 4));
+});
+
+test.each([
+  null,
+  "bytes */unknown",
+  "bytes */-1",
+  "bytes */9007199254740992",
+  "bytes */11",
+  "bytes 0-9/10",
+])("rejects an invalid unsatisfied range: %s", async (range) => {
+  vi.stubGlobal("fetch", async (url: string | URL) =>
+    String(url).startsWith("https://api.github.com/")
+      ? new Response(null, { status: 302, headers: { Location: location } })
+      : new Response(null, { status: 416, headers: range ? { "Content-Range": range } : {} }),
+  );
+  await expect(client.downloadJobLog("test-secret", path, 10)).rejects.toThrow("log byte range");
+});
+
+test("a range body cannot exceed the requested chunk and its stream is cancelled", async () => {
+  const cancel = vi.fn();
+  vi.stubGlobal("fetch", async (url: string | URL) =>
+    String(url).startsWith("https://api.github.com/")
+      ? new Response(null, { status: 302, headers: { Location: location } })
+      : new Response(
+          new ReadableStream<Uint8Array>({
+            pull(controller) {
+              controller.enqueue(new Uint8Array(jobLogChunkBytes + 5));
+            },
+            cancel,
+          }),
+          { status: 206, headers: { "Content-Range": `bytes 0-${jobLogChunkBytes + 3}/100000` } },
+        ),
+  );
+  await expect(client.downloadJobLog("test-secret", path)).rejects.toThrow(
+    "oversized log byte range",
+  );
+  expect(cancel).toHaveBeenCalledOnce();
 });
