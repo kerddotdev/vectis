@@ -24,7 +24,7 @@ import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
-import { awaitingApproval, jobAccessPresentation } from "@/lib/repository-access";
+import { approvalBinding, awaitingApproval, jobAccessPresentation } from "@/lib/repository-access";
 import { useStateApi } from "@/state";
 
 const maxApprovalRepositories = 5;
@@ -49,7 +49,8 @@ export function useAwaitingApprovals(bindings: MachineRepositories) {
             const value = await perform("jobs", bindingId);
             if (value === undefined) continue;
             for (const job of Schema.decodeUnknownSync(Jobs)(value))
-              if (awaitingApproval(job)) found.push({ bindingId, job });
+              if (awaitingApproval(job) && !found.some((item) => item.job.jobId === job.jobId))
+                found.push({ bindingId, job });
           } catch {
             continue;
           }
@@ -65,22 +66,27 @@ export function useAwaitingApprovals(bindings: MachineRepositories) {
   return waiting;
 }
 
-export function ApproveJobButton({ bindingId, jobId }: { bindingId: string; jobId: number }) {
+export function ApproveJobButton({ bindingId, job }: { bindingId: string; job: Job }) {
   const { submit, snapshot } = useStateApi();
   const [requesting, setRequesting] = useState(false);
+  const target = approvalBinding(job, snapshot?.repositories ?? [], bindingId);
   return (
     <Reason
       reason={
         (!snapshot && "The service is not reachable.") ||
-        (snapshot?.machine.paused && "New VMs are paused. Resume them in Overview.")
+        (snapshot?.machine.paused && "New VMs are paused. Resume them in Overview.") ||
+        (!target && "This job asks for an environment this Mac has not connected.")
       }
     >
       <Button
         size="sm"
-        disabled={requesting || !snapshot || snapshot.machine.paused}
+        disabled={requesting || !snapshot || snapshot.machine.paused || !target}
         onClick={() => {
+          if (!target) return;
           setRequesting(true);
-          void submit({ type: "runner.run", bindingId, jobId }).finally(() => setRequesting(false));
+          void submit({ type: "runner.run", bindingId: target, jobId: job.jobId }).finally(() =>
+            setRequesting(false),
+          );
         }}
       >
         {requesting ? "Requesting" : "Approve and start"}
@@ -167,9 +173,7 @@ export function RepositoryJobs({ bindingId }: { bindingId: string }) {
                 {formatRelative(job.updatedAt)}
               </span>
               {job.access && job.status !== "completed" && <JobAccessStatus access={job.access} />}
-              {awaitingApproval(job) && (
-                <ApproveJobButton bindingId={bindingId} jobId={job.jobId} />
-              )}
+              {awaitingApproval(job) && <ApproveJobButton bindingId={bindingId} job={job} />}
               <JobStatus status={job.status} conclusion={job.conclusion} />
             </div>
           ))}

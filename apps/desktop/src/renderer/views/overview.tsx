@@ -179,7 +179,7 @@ export function Overview() {
                     </span>
                   </span>
                 }
-                trailing={<ApproveJobButton bindingId={bindingId} jobId={job.jobId} />}
+                trailing={<ApproveJobButton bindingId={bindingId} job={job} />}
               />
             ))}
             {attention.map((activity) => (

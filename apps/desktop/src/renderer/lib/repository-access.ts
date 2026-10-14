@@ -1,3 +1,5 @@
+import type { MachineRepositories } from "../../../../../packages/protocol/src/repositories.js";
+import { workflowLabel } from "../../../../../packages/github/src/runner-labels.js";
 import type { Job } from "../../../../../packages/protocol/src/jobs.js";
 import type { RepositoryAccess } from "../../../../../packages/protocol/src/repository-access.js";
 import type { Tone } from "@/components/status";
@@ -55,4 +57,19 @@ export const jobAccessPresentation = {
 
 export function awaitingApproval(job: Job): boolean {
   return job.access === "approval_required" && job.status !== "completed";
+}
+
+// Approval starts the runner on the environment the job asked for, not on whichever binding listed it.
+export function approvalBinding(
+  job: Pick<Job, "labels">,
+  bindings: MachineRepositories,
+  listedBy: string,
+): string | undefined {
+  const repositoryId = bindings.find((binding) => binding.id === listedBy)?.repositoryId;
+  const labels = new Set(job.labels.map((label) => label.toLowerCase()));
+  return bindings.find(
+    (binding) =>
+      binding.repositoryId === repositoryId &&
+      labels.has(workflowLabel(binding.environmentId).toLowerCase()),
+  )?.id;
 }

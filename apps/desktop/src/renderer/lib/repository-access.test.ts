@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addActorId,
+  approvalBinding,
   canSaveAccess,
   defaultAccess,
   maxActorIds,
@@ -40,5 +41,17 @@ describe("access changes", () => {
       false,
     );
     expect(canSaveAccess(defaultAccess, { actors: "any", approval: "required" })).toBe(true);
+  });
+});
+
+describe("approvalBinding", () => {
+  const bindings = [
+    { id: "a", repositoryId: 1, repositoryName: "o/r", environmentId: "ubuntu" },
+    { id: "b", repositoryId: 1, repositoryName: "o/r", environmentId: "macos" },
+    { id: "c", repositoryId: 2, repositoryName: "o/x", environmentId: "macos" },
+  ];
+  it("starts the job on the environment it asked for", () => {
+    expect(approvalBinding({ labels: ["Vectis-macOS"] }, bindings, "a")).toBe("b");
+    expect(approvalBinding({ labels: ["vectis-windows"] }, bindings, "a")).toBeUndefined();
   });
 });
