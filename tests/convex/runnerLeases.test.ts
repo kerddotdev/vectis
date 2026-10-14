@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from "node:crypto";
 import { convexTest } from "convex-test";
+import { ConvexError } from "convex/values";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api, internal } from "../../convex/_generated/api.js";
@@ -516,4 +517,36 @@ test("policy changes during JIT registration cannot return an outdated ready gra
   expect(
     await device.action(api.githubRunners.prepare, { bindingId, key: "changed", jobId: 4 }),
   ).toMatchObject({ state: "action_required" });
+});
+
+test("a busy runner retains its lease until a later release succeeds", async () => {
+  const { device, bindingId, fetch } = await fixture();
+  const grant = await device.action(api.githubRunners.prepare, { bindingId, key: "busy" });
+  const original = fetch.getMockImplementation();
+  let busy = true;
+  fetch.mockImplementation(async (url, init) => {
+    if (url.endsWith("/actions/runners/501") && init?.method === "DELETE" && busy)
+      return Response.json({ message: "Runner is busy" }, { status: 422 });
+    if (!original) throw new Error("Missing fetch fixture");
+    return original(url, init);
+  });
+  const failure = device.action(api.githubRunners.release, { id: grant.id });
+  await expect(failure).rejects.toBeInstanceOf(ConvexError);
+  await expect(failure).rejects.toMatchObject({
+    data: {
+      code: "runner_busy",
+      message: "GitHub still shows this runner on a job.",
+      nextStep:
+        "Vectis retries cleanup automatically after GitHub releases the job, usually within 15 minutes.",
+    },
+  });
+  expect(await device.query(api.runnerLeases.list, {})).toMatchObject([
+    { id: grant.id, phase: "ready" },
+  ]);
+  busy = false;
+  expect(await device.action(api.githubRunners.release, { id: grant.id })).toEqual({
+    state: "released",
+    id: grant.id,
+  });
+  expect(await device.query(api.runnerLeases.list, {})).toEqual([]);
 });

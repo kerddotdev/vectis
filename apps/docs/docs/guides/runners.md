@@ -125,4 +125,8 @@ vectis runner reconcile <operation-id> --wait
 
 The app offers the same actions as **Reconcile** in **Overview**. Until an interrupted VM is reconciled, the Mac starts no new VMs and offers no runner slots. Do not start new runners to work around an unresolved one.
 
+For `runner_cleanup_required`, the service retries runner reconciliation about every minute while connected to the cloud, for up to 30 minutes from the operation's last update. A stopped runner can still be busy on GitHub, usually for up to 15 minutes until GitHub releases its job. `runner_busy` leaves cleanup unresolved until a later retry succeeds. Once the retry window expires, the operation remains `action_required` and you can reconcile it manually.
+
+A refused assignment retains its policy reason during cleanup. After manual or automatic reconciliation succeeds, the runner operation ends as `failed` with `runner_assignment_rejected` and the original refusal message. Other interrupted runners end as `cancelled`; this does not establish the GitHub job result.
+
 Runner reconciliation also works when registration stopped before creating a cloud lease. After confirming VM cleanup, Vectis records the request as released in the cloud so a delayed registration cannot create a duplicate runner. If the cloud cannot confirm this, the operation stays unresolved.

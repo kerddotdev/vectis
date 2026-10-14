@@ -160,7 +160,18 @@ export const release = action({
         const runner = Schema.decodeUnknownSync(Runner)(await client.request(access.token, path));
         if (runner.id !== runnerId || runner.name !== expectedName)
           throw new ConvexError({ code: "runner_identity_conflict" });
-        await client.delete(access.token, path);
+        try {
+          await client.delete(access.token, path);
+        } catch (error) {
+          if (error instanceof GitHubApiError && error.status === 422)
+            throw new ConvexError({
+              code: "runner_busy",
+              message: "GitHub still shows this runner on a job.",
+              nextStep:
+                "Vectis retries cleanup automatically after GitHub releases the job, usually within 15 minutes.",
+            });
+          throw error;
+        }
       } catch (error) {
         if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
       }

@@ -9,6 +9,7 @@ import { api } from "../../../convex/_generated/api.js";
 import { Store } from "../../../apps/server/src/store.js";
 import { VectisClient } from "./index.js";
 import { startCloudRelay } from "./cloud-relay.js";
+import { VectisError } from "../../protocol/src/index.js";
 
 type Subscription = {
   name: string;
@@ -708,4 +709,19 @@ test("run control relay passes through code-only authorization refusals", async 
       new AbortController().signal,
     ),
   ).rejects.toMatchObject({ code: "repository_access_denied" });
+});
+
+test("runner release preserves the busy code and guidance as a VectisError", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  const data = {
+    code: "runner_busy",
+    message: "GitHub still shows this runner on a job.",
+    nextStep:
+      "Vectis retries cleanup automatically after GitHub releases the job, usually within 15 minutes.",
+  };
+  transport.action.mockRejectedValueOnce(new ConvexError(data));
+  const failure = relay.releaseRunner("lease", new AbortController().signal);
+  await expect(failure).rejects.toBeInstanceOf(VectisError);
+  await expect(failure).rejects.toMatchObject(data);
 });

@@ -673,3 +673,33 @@ test.each(["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprep
     expect(controls.stop).toHaveBeenCalledOnce();
   },
 );
+
+test.each(["stop", "release"] as const)(
+  "assignment refusal survives failed %s cleanup",
+  async (step) => {
+    const { controls, broker } = fixture();
+    const refusal = new VectisError(
+      "runner_assignment_rejected",
+      "Vectis refused an unapproved assigned job.",
+    );
+    vi.mocked(executeGuest)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+      .mockRejectedValueOnce(refusal);
+    if (step === "stop") controls.stop.mockRejectedValue(new Error("VM exit unknown"));
+    else broker.releaseRunner.mockRejectedValue(new VectisError("runner_busy", "Runner is busy."));
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      environment,
+      controls,
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      status: "action_required",
+      code: "runner_cleanup_required",
+      message: expect.stringContaining("Vectis refused the assigned job"),
+      progress: { cause: { code: refusal.code, message: refusal.message } },
+    });
+    if (step === "stop") expect(broker.releaseRunner).not.toHaveBeenCalled();
+  },
+);

@@ -27,9 +27,13 @@ vectis logs --lines 200 --json
 
 Displayed logs, stored operation details and retained runner and preparation diagnostics redact recognized credentials.
 
-The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means Vectis stopped safely and is waiting for the step it describes.
+The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means completion is unconfirmed; follow its `nextStep`. Runner cleanup may still be retried automatically.
 
-An operation that stays in **Needs you** after you have read it, usually because the service restarted before it finished, can be closed with **Dismiss** in the app or `vectis operation cancel <operation-id>`. It ends as `cancelled` and nothing else changes. Two cases keep their own way out instead: an interrupted runner is closed by `vectis runner reconcile <operation-id>` once its VM is confirmed stopped, and an image preparation by resuming or discarding the setup.
+An operation that stays in **Needs you** after you have read it, usually because the service restarted before it finished, can be closed with **Dismiss** in the app or `vectis operation cancel <operation-id>`. It ends as `cancelled` and nothing else changes. Two cases keep their own way out instead: an interrupted runner is reconciled once its VM is confirmed stopped, and an image preparation is resumed or discarded.
+
+For `runner_cleanup_required`, Vectis retries cleanup about every minute while connected to the cloud, for up to 30 minutes from the operation's last update. GitHub can keep a stopped runner busy until it releases the job, usually within 15 minutes; `runner_busy` means cleanup must wait. Failed retries leave the operation `action_required` and preserve its original update time. After the retry window, or for other interrupted runner states, use `vectis runner reconcile <operation-id>` once the VM is confirmed stopped.
+
+If Vectis refused the assigned job, the cleanup result keeps the original reason in `cause`. Successful reconciliation ends that runner operation as `failed` with `runner_assignment_rejected` and the original refusal message. Other interrupted runners end as `cancelled`; check GitHub separately for the job result.
 
 `vectis status --json` groups related operations into `activities`. A preparation keeps one activity across setup attempts; a runner activity includes its VM start and cleanup. Preparation status follows the latest attempt, while a runner follows its root operation. A successful discard cancels the preparation activity; the discard operation itself stays `succeeded`. Operation IDs and request keys stay unchanged.
 

@@ -109,6 +109,7 @@ export async function startService(
     options.keychainHelper ? new KeychainCredentials(options.keychainHelper) : undefined,
     () => relay?.repositorySnapshot,
     (ids) => relay?.watchLeases(ids),
+    { connected: () => cloud.state === "connected" },
   );
   let cloud: CloudStatus = { state: "unconfigured" };
   let relay: Awaited<ReturnType<typeof configuredRelay>>;
