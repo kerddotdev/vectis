@@ -49,6 +49,31 @@ vectis job scan <binding-id> --wait             # find queued and running jobs V
 vectis job refresh <binding-id> <job-id> --wait # reread one job from GitHub
 ```
 
+## Rerun, cancel and dispatch
+
+Control a connected repository's GitHub Actions runs from the CLI or MCP `vectis_command`:
+
+```sh
+vectis run rerun-failed <binding-id> <run-id> --wait
+vectis run cancel <binding-id> <run-id> --wait
+vectis workflow dispatch <binding-id> ci.yml --ref main --input target=staging --wait
+```
+
+`workflow` accepts a file name or numeric ID, `ref` is a branch or tag, and `--input key=value` can be repeated for up to 25 string inputs. Vectis limits the complete command JSON to 65,535 bytes, including keys and metadata. The workflow must enable `workflow_dispatch`. Like other intents, these commands return an operation immediately unless `--wait` is supplied. The same typed commands work through local and remote clients; the desktop recognizes their operations but has no run control buttons yet.
+
+The GitHub App needs **Actions: write**. Existing installations must approve the updated permissions in GitHub **Settings -> Applications**. A missing approval returns `github_app_permission_required` with instructions. After correcting a rejected request, submit a new operation key; replaying the old key returns its stored rejection. Public repositories require approval for every external contributor before rerun or dispatch; cancellation does not require that policy.
+
+Rerun requires a completed run with failed jobs. After GitHub accepts a rerun or cancellation, Vectis rereads the run with backoff for up to 5 seconds for rerun or 20 seconds for cancellation. Both requests finish as `succeeded` with `result.state: "accepted"`:
+
+- `result.cancellation: "observed"` means Vectis observed the run stopped (`completed` or `cancelled`). `"requested"` means GitHub accepted cancellation, but Vectis has not observed it stop. The message is "GitHub accepted the cancellation; the run is still stopping."
+- `result.rerun: "observed"` means Vectis observed a newer attempt. `"requested"` means GitHub accepted the rerun, but the newer attempt is not yet visible.
+
+A failed reread does not undo GitHub's acceptance. Request success does not mean the jobs passed. Dispatch reports the run ID when GitHub returns it. An empty 204 response means accepted with an unknown run ID.
+
+GitHub has no idempotency keys for these requests. Vectis saves a cloud receipt before submission and never repeats a POST for the same machine and operation key while that receipt is retained, including remote replay. The daily retention sweep removes receipts older than 30 days since their last update. Do not replay old keys after that window: their duplicate protection has expired.
+
+Only an ambiguous POST response (such as a network error, 5xx response or missing status) leaves rerun or cancellation `action_required` with `run_command_unconfirmed`. Check the run on GitHub before submitting a new key; never blindly retry. Cancelling the Vectis operation stops waiting and can leave the GitHub outcome unconfirmed.
+
 ## Read a job's log
 
 Read a failed job directly through Vectis, using its GitHub job ID and repository binding:

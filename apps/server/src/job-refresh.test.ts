@@ -23,6 +23,9 @@ test("job refresh does not block machine control and retries reuse its durable o
       throw new Error("Unexpected job log read.");
     },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
+    controlRun: async () => {
+      throw new Error("unused");
+    },
     refreshJob,
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},
@@ -84,6 +87,9 @@ test("disabling automatic admission cancels a queued demand before guest startup
       throw new Error("Unexpected job log read.");
     },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
+    controlRun: async () => {
+      throw new Error("unused");
+    },
     refreshJob,
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},
@@ -150,6 +156,9 @@ test("incomplete repository scans require attention instead of claiming full rec
       throw new Error("Unexpected job log read.");
     },
     scanJobs,
+    controlRun: async () => {
+      throw new Error("unused");
+    },
     refreshJob: async () => ({
       jobId: 1,
       runId: 2,
@@ -240,6 +249,9 @@ test.each([
       },
       jobLogs: async () => {
         throw new Error("Must not read job logs");
+      },
+      controlRun: async () => {
+        throw new Error("unused");
       },
       prepareRunner: async () => {
         throw new Error("Must not register a runner");

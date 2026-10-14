@@ -33,6 +33,9 @@ async function fixture() {
       throw new Error("Unexpected job log read.");
     },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
+    controlRun: async () => {
+      throw new Error("unused");
+    },
     refreshJob: vi.fn(async () => ({
       jobId: 1,
       runId: 2,

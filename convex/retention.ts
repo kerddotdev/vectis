@@ -9,6 +9,7 @@ export const windows = {
   jobs: 90 * day,
   operations: 90 * day,
   leases: 30 * day,
+  runReceipts: 30 * day,
   controllers: 30 * day,
   requests: day,
 };
@@ -62,6 +63,14 @@ export async function sweepOnce(ctx: MutationCtx, now: number) {
       .take(limit),
     (row) => row.phase !== "released",
     async (row) => ctx.db.delete("runnerLeases", row._id),
+  );
+  deleted += await sweepTable(
+    await ctx.db
+      .query("runCommandReceipts")
+      .withIndex("by_updated", (q) => q.lt("updatedAt", now - windows.runReceipts))
+      .take(limit),
+    () => false,
+    async (row) => ctx.db.delete("runCommandReceipts", row._id),
   );
   deleted += await sweepTable(
     await ctx.db

@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { runControlOutcome } from "./runCommands.js";
 import { installation, verifiedUser, repositoryAccess, runnerAccess } from "./githubValidators.js";
 
 export const environmentSummary = v.object({
@@ -21,6 +22,24 @@ export const phase = v.union(
   v.literal("cancelled"),
 );
 export default defineSchema({
+  // Receipts prevent duplicate POSTs within the 30-day retention window.
+  runCommandReceipts: defineTable({
+    machineId: v.id("machines"),
+    bindingId: v.id("repositoryBindings"),
+    key: v.string(),
+    requestHash: v.string(),
+    state: v.union(
+      v.literal("submitted"),
+      v.literal("accepted"),
+      v.literal("uncertain"),
+      v.literal("rejected"),
+    ),
+    outcome: v.optional(runControlOutcome),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_machine_key", ["machineId", "key"])
+    .index("by_updated", ["updatedAt"]),
   inspections: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),

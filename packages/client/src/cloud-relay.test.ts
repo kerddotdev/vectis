@@ -3,9 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { getFunctionName, type FunctionReference } from "convex/server";
+import { ConvexError } from "convex/values";
 import { afterEach, expect, test, vi } from "vitest";
 import { api } from "../../../convex/_generated/api.js";
-import { ConvexError } from "convex/values";
 import { Store } from "../../../apps/server/src/store.js";
 import { VectisClient } from "./index.js";
 import { startCloudRelay } from "./cloud-relay.js";
@@ -625,4 +625,87 @@ test.each([
     code: "repository_connection_unconfirmed",
     nextStep: expect.stringContaining("List repository connections"),
   });
+});
+
+test("run control relay sends the caller key and preserves requested, observed and uncertain outcomes", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  const command = { type: "run.rerun-failed", bindingId: "binding1", runId: 5 } as const;
+  const accepted = {
+    state: "accepted",
+    message: "New attempt observed.",
+    rerun: "observed",
+    runId: 5,
+    runAttempt: 2,
+  };
+  transport.action.mockResolvedValueOnce(accepted);
+  expect(
+    await relay.controlRun(command, "remote:operation1", new AbortController().signal),
+  ).toEqual(accepted);
+  const [reference, args] = transport.action.mock.calls[0] ?? [];
+  if (!reference) throw new Error("Missing action reference");
+  expect(getFunctionName(reference)).toBe("githubRuns:control");
+  expect(args).toEqual({ command, key: "remote:operation1" });
+  const requested = {
+    state: "accepted",
+    cancellation: "requested",
+    message: "GitHub accepted the cancellation; the run is still stopping.",
+    runId: 5,
+  };
+  transport.action.mockResolvedValueOnce(requested);
+  expect(
+    await relay.controlRun(
+      { ...command, type: "run.cancel" },
+      "cancel-key",
+      new AbortController().signal,
+    ),
+  ).toEqual(requested);
+  const uncertain = {
+    state: "uncertain",
+    code: "run_command_unconfirmed",
+    message: "Unconfirmed.",
+    nextStep: "Check GitHub before retrying.",
+  };
+  transport.action.mockResolvedValueOnce(uncertain);
+  expect(await relay.controlRun(command, "other-key", new AbortController().signal)).toEqual(
+    uncertain,
+  );
+});
+
+test("run control relay preserves permission errors and releases interrupted waits", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  const command = { type: "run.cancel", bindingId: "binding1", runId: 5 } as const;
+  transport.action.mockRejectedValueOnce(
+    new ConvexError({
+      code: "github_app_permission_required",
+      message: "Approval needed.",
+      nextStep: "Approve updated App permissions.",
+    }),
+  );
+  await expect(
+    relay.controlRun(command, "permission", new AbortController().signal),
+  ).rejects.toMatchObject({
+    code: "github_app_permission_required",
+    nextStep: "Approve updated App permissions.",
+  });
+  transport.action.mockImplementationOnce(async () => new Promise(() => {}));
+  const abort = new AbortController();
+  const pending = relay.controlRun(command, "wait", abort.signal);
+  const rejection = expect(pending).rejects.toThrow("Stopped waiting");
+  abort.abort(new Error("Stopped waiting"));
+  await rejection;
+});
+
+test("run control relay passes through code-only authorization refusals", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(new ConvexError({ code: "repository_access_denied" }));
+  await expect(
+    relay.controlRun(
+      { type: "run.cancel", bindingId: "binding1", runId: 5 },
+      "denied",
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code: "repository_access_denied" });
 });

@@ -46,6 +46,9 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         throw new Error("Unexpected job log read.");
       },
       scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
+      controlRun: async () => {
+        throw new Error("unused");
+      },
       refreshJob: vi.fn(async (): Promise<JobRefresh> => ({
         jobId: 1,
         runId: 2,
@@ -247,6 +250,9 @@ test.each(["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprep
       releaseRunner: vi.fn(async () => {}),
       runnerStatus: vi.fn(unused),
       jobLogs: unused,
+      controlRun: async () => {
+        throw new Error("unused");
+      },
       repositories: async () => [
         { id: "binding", repositoryId: 1, repositoryName: "test/repo", environmentId: "linux" },
       ],

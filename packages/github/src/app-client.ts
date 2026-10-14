@@ -83,6 +83,15 @@ export class GitHubApiError extends Error {
     super(`GitHub API request failed (${status}).`);
   }
 }
+export class GitHubPermissionError extends GitHubApiError {
+  readonly code = "github_app_permission_required";
+  readonly nextStep =
+    "Approve the updated Vectis GitHub App permissions on GitHub (Settings -> Applications), then retry.";
+  constructor(status = 403) {
+    super(status);
+    this.message = "The Vectis GitHub App needs updated Actions write permission.";
+  }
+}
 export class GitHubAppClient {
   constructor(private readonly app: { appId: number; clientId: string; privateKey: string }) {}
   private jwt() {
@@ -91,8 +100,21 @@ export class GitHubAppClient {
     const data = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: this.app.clientId, iat: now - 60, exp: now + 300 })}`;
     return `${data}.${sign("RSA-SHA256", Buffer.from(data), createPrivateKey(this.app.privateKey)).toString("base64url")}`;
   }
-  async request(token: string, path: string, body?: unknown): Promise<unknown> {
-    return this.send(token, path, body === undefined ? "GET" : "POST", body);
+  async request(
+    token: string,
+    path: string,
+    body?: unknown,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
+    return (await this.send(token, path, body === undefined ? "GET" : "POST", body, signal)).body;
+  }
+  async post(
+    token: string,
+    path: string,
+    body: unknown,
+    responseBody: "json" | "discard" = "json",
+  ) {
+    return this.send(token, path, "POST", body, undefined, responseBody);
   }
   async downloadJobLog(token: string, path: string, after?: number) {
     return downloadJobLog(token, path, after);
@@ -105,7 +127,9 @@ export class GitHubAppClient {
     path: string,
     method: "GET" | "POST" | "DELETE",
     body?: unknown,
-  ): Promise<unknown> {
+    signal?: AbortSignal,
+    responseBody: "json" | "discard" = "json",
+  ): Promise<{ status: number; body: unknown }> {
     if (!path.startsWith("/") || path.startsWith("//") || path.includes(".."))
       throw new Error("Invalid GitHub API path.");
     const response = await fetch(`https://api.github.com${path}`, {
@@ -118,15 +142,22 @@ export class GitHubAppClient {
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       redirect: "error",
-      signal: AbortSignal.timeout(15000),
+      signal: signal
+        ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
+        : AbortSignal.timeout(15000),
     });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new GitHubApiError(response.status);
+    if (response.ok && responseBody === "discard") {
+      await response.body?.cancel().catch(() => {});
+      return { status: response.status, body: null };
     }
-    if (response.status === 204) return null;
+    if (response.status === 204) return { status: response.status, body: null };
     const reader = response.body?.getReader();
-    if (!reader) throw new Error("GitHub returned no response body.");
+    if (!reader) {
+      if (!response.ok) throw new GitHubApiError(response.status);
+      if (response.status === 202 || response.status === 201)
+        return { status: response.status, body: null };
+      throw new Error("GitHub returned no response body.");
+    }
     let size = 0;
     const chunks: Uint8Array[] = [];
     try {
@@ -143,7 +174,13 @@ export class GitHubAppClient {
     } finally {
       reader.releaseLock();
     }
-    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const text = Buffer.concat(chunks).toString("utf8");
+    if (!response.ok) {
+      if (response.status === 403 && text.includes("Resource not accessible by integration"))
+        throw new GitHubPermissionError();
+      throw new GitHubApiError(response.status);
+    }
+    return { status: response.status, body: text ? JSON.parse(text) : null };
   }
   private async repositoryContext(input: {
     owner: string;
@@ -152,7 +189,15 @@ export class GitHubAppClient {
     installationId?: number;
     githubUserId: number;
     githubLogin?: string;
-    purpose?: "runners" | "cleanup" | "jobs" | "migration-read" | "migration-write" | "readiness";
+    purpose?:
+      | "runners"
+      | "cleanup"
+      | "jobs"
+      | "migration-read"
+      | "migration-write"
+      | "readiness"
+      | "actions-write";
+    actionsOperation?: "cancel";
   }) {
     if (
       !/^[A-Za-z0-9-]+$/.test(input.owner) ||
@@ -187,22 +232,30 @@ export class GitHubAppClient {
           ? { repositories: [input.repo] }
           : { repository_ids: [input.repositoryId] }),
         permissions:
-          input.purpose === "jobs"
-            ? { actions: "read", metadata: "read" }
-            : input.purpose === "migration-read"
-              ? { contents: "read", metadata: "read" }
-              : input.purpose === "migration-write"
-                ? {
-                    contents: "write",
-                    workflows: "write",
-                    pull_requests: "write",
-                    metadata: "read",
-                  }
-                : {
-                    administration: input.purpose === "readiness" ? "read" : "write",
-                    metadata: "read",
-                  },
+          input.purpose === "actions-write"
+            ? { actions: "write", metadata: "read" }
+            : input.purpose === "jobs"
+              ? { actions: "read", metadata: "read" }
+              : input.purpose === "migration-read"
+                ? { contents: "read", metadata: "read" }
+                : input.purpose === "migration-write"
+                  ? {
+                      contents: "write",
+                      workflows: "write",
+                      pull_requests: "write",
+                      metadata: "read",
+                    }
+                  : {
+                      administration: input.purpose === "readiness" ? "read" : "write",
+                      metadata: "read",
+                    },
       }).catch((error: unknown) => {
+        if (
+          input.purpose === "actions-write" &&
+          error instanceof GitHubApiError &&
+          (error.status === 403 || error.status === 422)
+        )
+          throw new GitHubPermissionError(error.status);
         if (error instanceof GitHubApiError && [403, 404, 422].includes(error.status))
           throw new GitHubAccessError("repository_access_denied");
         throw error;
@@ -278,10 +331,12 @@ export class GitHubAppClient {
     if (
       input.purpose === undefined ||
       input.purpose === "runners" ||
-      input.purpose === "migration-write"
+      input.purpose === "migration-write" ||
+      (input.purpose === "actions-write" && input.actionsOperation !== "cancel")
     ) {
       let policyContext = context;
-      if (input.purpose === "migration-write") {
+      // Starting runs consumes host capacity; cancellation never needs the fork approval policy.
+      if (input.purpose === "migration-write" || input.purpose === "actions-write") {
         const { token } = Schema.decodeUnknownSync(AccessToken)(
           await this.request(
             this.jwt(),

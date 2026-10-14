@@ -426,3 +426,104 @@ test("connect and readiness share repository authority checks and preserve their
     }),
   );
 });
+
+test.each([202, 204])(
+  "run POST accepts an empty %s body and exposes its status",
+  async (status) => {
+    vi.stubGlobal("fetch", async () => new Response(null, { status }));
+    const client = new GitHubAppClient(app);
+    expect(
+      await client.post("token", "/repos/test-owner/sandbox/actions/runs/5/cancel", {}),
+    ).toEqual({ status, body: null });
+    expect(
+      await client.request("token", "/repos/test-owner/sandbox/actions/runs/5/cancel", {}),
+    ).toBeNull();
+  },
+);
+
+test("integration permission denial carries a recovery step without exposing response contents", async () => {
+  vi.stubGlobal("fetch", async () =>
+    Response.json(
+      { message: "Resource not accessible by integration", privateDiagnostic: "secret" },
+      { status: 403 },
+    ),
+  );
+  await expect(
+    new GitHubAppClient(app).post("token", "/repos/test-owner/sandbox/actions/runs/5/cancel", {}),
+  ).rejects.toMatchObject({
+    code: "github_app_permission_required",
+    nextStep:
+      "Approve the updated Vectis GitHub App permissions on GitHub (Settings -> Applications), then retry.",
+  });
+});
+
+test.each([false, true])(
+  "Actions write token checks public capacity policy unless cancelling: %s",
+  async (cancel) => {
+    const tokens: unknown[] = [];
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/installation"))
+        return Response.json({
+          id: 10,
+          app_id: 42,
+          account: { id: 7, type: "User" },
+          suspended_at: null,
+        });
+      if (url.endsWith("/access_tokens")) {
+        tokens.push(JSON.parse(String(init?.body)));
+        return Response.json({ token: tokens.length === 1 ? "actions-token" : "policy-token" });
+      }
+      if (url.endsWith("/fork-pr-contributor-approval")) {
+        expect(new Headers(init?.headers).get("Authorization")).toBe("Bearer policy-token");
+        return Response.json({ approval_policy: "first_time_contributors" });
+      }
+      return Response.json({ id: 123, private: false, owner: { id: 7 } });
+    });
+    vi.stubGlobal("fetch", fetch);
+    const request = new GitHubAppClient(app).repositoryToken({
+      ...input,
+      purpose: "actions-write",
+      ...(cancel ? { actionsOperation: "cancel" } : {}),
+    });
+    if (cancel) await expect(request).resolves.toMatchObject({ token: "actions-token" });
+    else await expect(request).rejects.toMatchObject({ code: "public_runner_approval_required" });
+    expect(tokens[0]).toEqual({
+      repository_ids: [123],
+      permissions: { actions: "write", metadata: "read" },
+    });
+    expect(tokens).toHaveLength(cancel ? 1 : 2);
+  },
+);
+
+test.each([403, 422])(
+  "Actions write token minting denial %s uses the App permission code",
+  async (status) => {
+    vi.stubGlobal("fetch", async (url: string) =>
+      url.endsWith("/installation")
+        ? Response.json({
+            id: 10,
+            app_id: 42,
+            account: { id: 7, type: "User" },
+            suspended_at: null,
+          })
+        : Response.json(
+            { message: "Permissions requested are not granted to this installation" },
+            { status },
+          ),
+    );
+    await expect(
+      new GitHubAppClient(app).repositoryToken({ ...input, purpose: "actions-write" }),
+    ).rejects.toMatchObject({ code: "github_app_permission_required" });
+  },
+);
+
+test("an empty streamed 202 body is not parsed as JSON", async () => {
+  vi.stubGlobal("fetch", async () => new Response("", { status: 202 }));
+  expect(
+    await new GitHubAppClient(app).post(
+      "token",
+      "/repos/test-owner/sandbox/actions/runs/5/cancel",
+      {},
+    ),
+  ).toEqual({ status: 202, body: null });
+});
