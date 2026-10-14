@@ -222,3 +222,73 @@ test("activity cancellation preserves setup ownership and runner reconciliation,
     store.close();
   }
 });
+
+test("an uncertain repository connection outcome stays unconfirmed in activity results", async () => {
+  const { store, service, broker, status } = await fixture();
+  try {
+    store.put("environment", "test", {
+      id: "test",
+      name: "Test",
+      os: "linux",
+      basePath: "/unused",
+      cpu: 1,
+      memoryMiB: 512,
+      state: "ready",
+    });
+    broker.connectRepository.mockRejectedValue(new Error("Response lost after submission."));
+    const operation = service.submit("connect-unknown", {
+      type: "repository.connect",
+      accountId: "account",
+      repositoryName: "repo",
+      environmentId: "test",
+    });
+    await service.drain();
+    await vi.waitFor(() => expect(status(operation.id)?.status).toBe("failed"));
+    expect(status(operation.id)).toMatchObject({
+      message: "Repository connection could not be confirmed.",
+      result: {
+        code: "repository_connection_unconfirmed",
+        nextStep: expect.stringContaining("List repository connections"),
+      },
+    });
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
+
+test("repository connect distinguishes an absent environment from incomplete preparation before cloud submission", async () => {
+  const { store, service, broker, status } = await fixture();
+  try {
+    store.put("environment", "setup", {
+      id: "setup",
+      name: "Setup",
+      os: "linux",
+      basePath: "/unused",
+      cpu: 1,
+      memoryMiB: 512,
+      state: "action_required",
+    });
+    for (const [environmentId, code] of [
+      ["missing", "environment_unavailable"],
+      ["setup", "setup_required"],
+    ]) {
+      if (!environmentId) throw new Error("Missing test environment ID.");
+      const operation = service.submit(`connect:${environmentId}`, {
+        type: "repository.connect",
+        accountId: "account",
+        repositoryName: "repo",
+        environmentId,
+      });
+      await service.drain();
+      expect(status(operation.id)).toMatchObject({
+        status: code === "setup_required" ? "action_required" : "failed",
+        result: { code, nextStep: expect.stringContaining("preparation") },
+      });
+    }
+    expect(broker.connectRepository).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    store.close();
+  }
+});

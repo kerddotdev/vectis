@@ -2,10 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { ConvexError } from "convex/values";
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { afterEach, expect, test, vi } from "vitest";
 import { api } from "../../../convex/_generated/api.js";
+import { ConvexError } from "convex/values";
 import { Store } from "../../../apps/server/src/store.js";
 import { VectisClient } from "./index.js";
 import { startCloudRelay } from "./cloud-relay.js";
@@ -89,6 +89,7 @@ async function fixture() {
     if (getFunctionName(query) === "machines:self") return new Promise(() => {});
     return [];
   });
+  transport.action.mockResolvedValue("binding");
   const onJobObservations = vi.fn();
   const local = new VectisClient({ url: "http://127.0.0.1:1", token: "unused" });
   const relay = startCloudRelay(
@@ -572,4 +573,56 @@ test("job log relay forwards cursors to the action, decodes results and preserve
   await expect(relay.jobLogs(input)).rejects.toMatchObject({ code: "repository_access_denied" });
   transport.action.mockResolvedValueOnce({ ...result, next: "17" });
   await expect(relay.jobLogs(input)).rejects.toThrow();
+});
+
+test.each([
+  "github_app_not_installed",
+  "repository_admin_required",
+  "public_runner_approval_required",
+  "repository_access_denied",
+  "installation_changed",
+  "github_account_missing",
+  "github_app_unavailable",
+  "machine_revoked",
+  "setup_required",
+  "environment_unavailable",
+  "cloud_unconfigured",
+  "cloud_unavailable",
+])("connection relay preserves the coded %s refusal even without cloud prose", async (code) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(new ConvexError({ code }));
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code, nextStep: expect.any(String) });
+  transport.action.mockRejectedValueOnce(
+    new ConvexError({ code, message: "Refused.", nextStep: "Fix this prerequisite." }),
+  );
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code, message: "Refused.", nextStep: "Fix this prerequisite." });
+});
+
+test.each([
+  new Error("Connection lost after submit"),
+  new ConvexError({ code: "unexpected_failure" }),
+])("an uncertain connection outcome remains unconfirmed", async (error) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(error);
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({
+    code: "repository_connection_unconfirmed",
+    nextStep: expect.stringContaining("List repository connections"),
+  });
 });

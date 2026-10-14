@@ -4,6 +4,12 @@ import { Identifier } from "./identifier.js";
 import { MachineRepositories, RepositoryConnection } from "./repositories.js";
 
 export { Identifier } from "./identifier.js";
+export {
+  ReadinessCheck,
+  ReadinessTarget,
+  RepositoryReadiness,
+  RepositoryReadinessInput,
+} from "./readiness.js";
 export { RepositoryConnection } from "./repositories.js";
 
 export const protocolVersion = 1;
@@ -465,6 +471,11 @@ export const capabilities = [
     name: "repository.list",
     kind: "query",
     description: "List currently authorized repositories for this cloud-connected machine.",
+  },
+  {
+    name: "repository.readiness",
+    kind: "query",
+    description: "Check repository prerequisites before connecting or when jobs stay queued.",
   },
   {
     name: "doctor",

@@ -17,6 +17,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
 import { useStateApi } from "@/state";
+import { GetStarted } from "./get-started";
 import { ApproveJobButton, useAwaitingApprovals } from "./repository-jobs";
 
 const cloudLabels = {
@@ -56,6 +57,7 @@ export function Overview() {
   const olderInstances = instances.length - recent.length;
   const environments = snapshot?.environments ?? [];
   const ready = environments.filter((environment) => environment.state === "ready");
+  const linked = !!machineId || (!!snapshot?.cloud && snapshot.cloud.state !== "unconfigured");
   return (
     <Page
       title="Overview"
@@ -107,6 +109,7 @@ export function Overview() {
         </>
       }
     >
+      {snapshot && <GetStarted snapshot={snapshot} linked={linked} />}
       <div className="grid grid-cols-2 gap-3 @3xl:grid-cols-4">
         <StatCard
           label="Service"

@@ -24,6 +24,26 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
     expect(
       JSON.stringify(discovered.find((tool) => tool.name === "vectis_command")?.inputSchema),
     ).toContain("repository.access");
+    expect(
+      await client.callTool({
+        name: "vectis_readiness",
+        arguments: { repositoryName: "owner/repo" },
+      }),
+    ).toMatchObject({
+      structuredContent: {
+        result: {
+          ready: false,
+          checks: expect.arrayContaining([expect.objectContaining({ code: "cloud_unconfigured" })]),
+        },
+      },
+    });
+    expect(
+      await client.callTool({
+        name: "vectis_readiness",
+        arguments: { repositoryName: "owner/repo", bindingId: "binding" },
+      }),
+    ).toMatchObject({ isError: true });
+    expect((await api.status()).operations).toEqual([]);
     const args = { key: "mcp-pause", command: { type: "machine.pause", paused: true } };
     const accepted = await client.callTool({ name: "vectis_command", arguments: args });
     expect(accepted.isError).not.toBe(true);

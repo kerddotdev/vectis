@@ -22,6 +22,8 @@ export async function answerInspection(
           return local.storage();
         case "doctor":
           return local.doctor();
+        case "repository.readiness":
+          return local.repositoryReadiness(query.input, signal);
         case "repositories":
           return local.repositories();
         case "github.accounts":

@@ -1,3 +1,4 @@
+import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
 import { redact } from "../../../packages/client/src/redact.js";
 import { KeychainCredentials } from "../../../packages/client/src/keychain.js";
 import { isDeepStrictEqual } from "node:util";
@@ -215,6 +216,25 @@ export async function startService(
           throw new VectisError("cloud_unconfigured", "Connect this machine before reading jobs.");
         return reply(response, 200, await relay.jobs(bindingId));
       }
+      if (request.method === "GET" && request.url?.startsWith("/v1/repositories/readiness?")) {
+        const params = new URL(request.url, "http://127.0.0.1").searchParams;
+        const input = Schema.decodeUnknownSync(RepositoryReadinessInput, {
+          onExcessProperty: "error",
+        })(Object.fromEntries(params));
+        return reply(
+          response,
+          200,
+          await service.repositoryReadiness(input, async (input) => {
+            if (!relay)
+              throw new VectisError(
+                "cloud_unconfigured",
+                "This machine is not paired with Vectis.",
+                "Pair this machine before checking GitHub repository readiness.",
+              );
+            return relay.repositoryReadiness(input);
+          }),
+        );
+      }
       if (request.method === "GET" && request.url === "/v1/github/accounts") {
         if (!relay)
           throw new VectisError(
@@ -238,7 +258,11 @@ export async function startService(
         return reply(response, 200, await readServiceLog(options.home, input.lines ?? 200));
       }
       if (request.method === "GET" && request.url === "/v1/doctor")
-        return reply(response, 200, runtimeDiagnostics(options, "service"));
+        return reply(
+          response,
+          200,
+          runtimeDiagnostics(options, "service", store.snapshot().environments),
+        );
       if (request.method === "GET" && request.url === "/v1/storage")
         return reply(response, 200, await inspectStorage());
       if (request.method === "GET" && request.url === "/v1/status") {

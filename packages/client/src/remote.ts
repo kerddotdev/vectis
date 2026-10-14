@@ -1,3 +1,4 @@
+import { RepositoryReadiness, RepositoryReadinessInput } from "../../protocol/src/readiness.js";
 import { randomUUID } from "node:crypto";
 import { ServiceLog } from "../../protocol/src/logs.js";
 import { Snapshot, Operation as OperationSchema } from "../../protocol/src/index.js";
@@ -182,6 +183,34 @@ export class RemoteClient {
   }
   async storage() {
     return Schema.decodeUnknownSync(StorageReport)(await this.inspect({ name: "storage" }));
+  }
+  async repositoryReadiness(input: RepositoryReadinessInput, signal?: AbortSignal) {
+    const decoded = Schema.decodeUnknownSync(RepositoryReadinessInput, {
+      onExcessProperty: "error",
+    })(input);
+    try {
+      return Schema.decodeUnknownSync(RepositoryReadiness)(
+        await this.inspect({ name: "repository.readiness", input: decoded }, signal),
+      );
+    } catch (error) {
+      if (!(error instanceof VectisError) || error.code !== "inspection_failed") throw error;
+      // Older services reject unknown queries with the same code as inspection failures.
+      let capabilities;
+      try {
+        capabilities = Schema.decodeUnknownSync(
+          Schema.Struct({ capabilities: Schema.Array(Schema.Struct({ name: Schema.String })) }),
+        )(await this.inspect({ name: "capabilities" }, signal));
+      } catch {
+        throw error;
+      }
+      if (!capabilities.capabilities.some(({ name }) => name === "repository.readiness"))
+        throw new VectisError(
+          "unknown_query",
+          "Repository readiness is unavailable on this machine.",
+          "Update this machine's Vectis service to see readiness checks.",
+        );
+      throw error;
+    }
   }
   async doctor() {
     return Schema.decodeUnknownSync(Diagnostics)(await this.inspect({ name: "doctor" }));

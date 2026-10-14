@@ -1,3 +1,4 @@
+import { RepositoryReadiness, RepositoryReadinessInput } from "../../protocol/src/readiness.js";
 import { JobLogs, JobLogRequest, Jobs } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { GitHubAccounts, MachineRepositories } from "../../protocol/src/repositories.js";
@@ -89,6 +90,22 @@ export class VectisClient {
   }
   async repositories() {
     return Schema.decodeUnknownSync(MachineRepositories)(await this.request("/v1/repositories"));
+  }
+  async repositoryReadiness(input: RepositoryReadinessInput, signal?: AbortSignal) {
+    const decoded = Schema.decodeUnknownSync(RepositoryReadinessInput, {
+      onExcessProperty: "error",
+    })(input);
+    const params = new URLSearchParams(
+      "bindingId" in decoded
+        ? { bindingId: decoded.bindingId }
+        : {
+            repositoryName: decoded.repositoryName,
+            ...(decoded.environmentId ? { environmentId: decoded.environmentId } : {}),
+          },
+    );
+    return Schema.decodeUnknownSync(RepositoryReadiness)(
+      await this.request(`/v1/repositories/readiness?${params}`, undefined, signal, 40000),
+    );
   }
   async doctor() {
     return Schema.decodeUnknownSync(Diagnostics)(await this.request("/v1/doctor"));

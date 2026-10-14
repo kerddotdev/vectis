@@ -2,6 +2,10 @@ import { ConvexError } from "convex/values";
 import type { FunctionReturnType } from "convex/server";
 import { isDeepStrictEqual } from "node:util";
 import { environmentRevision } from "./environment-revision.js";
+import {
+  CloudRepositoryReadiness,
+  type RepositoryReadinessInput,
+} from "../../protocol/src/readiness.js";
 import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
 import type { RepositoryAccess } from "../../protocol/src/repository-access.js";
 import { MachineRepositories, type RepositoryConnection } from "../../protocol/src/repositories.js";
@@ -44,13 +48,31 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
                 "repository_admin_required",
                 "github_app_not_installed",
                 "machine_revoked",
+                "cloud_unconfigured",
+                "cloud_unavailable",
+                "github_account_missing",
+                "github_app_unavailable",
+                "machine_unauthorized",
+                "binding_limit",
+                "invalid_repository_binding",
+                "repository_access_denied",
+                "installation_changed",
+                "setup_required",
+                "environment_unavailable",
               ]),
-              message: Schema.String,
-              nextStep: Schema.String,
+              message: Schema.optional(Schema.String),
+              nextStep: Schema.optional(Schema.String),
             }),
           )(error.data)
         )
-          reject(new VectisError(error.data.code, error.data.message, error.data.nextStep));
+          reject(
+            new VectisError(
+              error.data.code,
+              error.data.message ?? `Repository access was refused: ${error.data.code}.`,
+              error.data.nextStep ??
+                "Check repository readiness and resolve the reported prerequisite, then retry.",
+            ),
+          );
         else if (
           error instanceof ConvexError &&
           Schema.is(
@@ -382,6 +404,15 @@ export function startCloudRelay(
       );
       return Schema.decodeUnknownSync(MigrationPublication)(result);
     },
+    async repositoryReadiness(input: RepositoryReadinessInput) {
+      requireConnection();
+      return Schema.decodeUnknownSync(CloudRepositoryReadiness)(
+        await interruptible(
+          cloud.action(api.githubRepositories.readiness, { input }),
+          AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]),
+        ),
+      );
+    },
     async githubAccounts() {
       requireConnection();
       return interruptible(
@@ -402,7 +433,14 @@ export function startCloudRelay(
             : { repositoryOwner: input.repositoryOwner }),
         }),
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
-      );
+      ).catch((error: unknown) => {
+        if (error instanceof VectisError) throw error;
+        throw new VectisError(
+          "repository_connection_unconfirmed",
+          "Repository connection could not be confirmed.",
+          "List repository connections before retrying; then check readiness for the account, environment and GitHub App access.",
+        );
+      });
     },
     async disconnectRepository(bindingId: string) {
       requireConnection();

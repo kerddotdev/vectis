@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
 import { setTimeout as delay } from "node:timers/promises";
 import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { parseArgs } from "node:util";
@@ -60,6 +61,7 @@ async function main() {
       actors: { type: "string" },
       approval: { type: "string" },
       account: { type: "string" },
+      binding: { type: "string" },
       owner: { type: "string" },
       name: { type: "string" },
       "disk-gib": { type: "string" },
@@ -76,7 +78,6 @@ async function main() {
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
       map: { type: "string", multiple: true },
-      binding: { type: "string" },
       follow: { type: "boolean" },
       lines: { type: "string" },
       limit: { type: "string" },
@@ -144,6 +145,8 @@ Cloud and GitHub
   machine configure --max-runners <N>  Set concurrent runner limit (1-16, default 5)
 
 Repositories and jobs
+  repository readiness <owner/name> [--environment <id>]  Check readiness before connecting
+  repository readiness --binding <id>                     Check an existing binding
   repository list               List repositories connected to this machine, with their runs-on label
   repository connect <name>     Connect with --account <id> and --environment <id>, optional --owner <org>
   repository enable-auto <id>   Start runners automatically for matching queued jobs
@@ -468,6 +471,23 @@ Documentation: https://vectis.kerd.dev/docs
   }
   if (command === "job" && subcommand === "list" && id) {
     output(await api.jobs(id));
+    return;
+  }
+  if (command === "repository" && subcommand === "readiness") {
+    if ((values.binding && (id || values.environment)) || (!values.binding && !id))
+      throw new VectisError(
+        "invalid_arguments",
+        "Use repository readiness <owner/name> [--environment <id>] or repository readiness --binding <id>.",
+      );
+    const input = Schema.decodeUnknownSync(RepositoryReadinessInput)(
+      values.binding
+        ? { bindingId: values.binding }
+        : {
+            repositoryName: id,
+            ...(values.environment ? { environmentId: values.environment } : {}),
+          },
+    );
+    output(await api.repositoryReadiness(input));
     return;
   }
   if (command === "job" && subcommand === "logs") {

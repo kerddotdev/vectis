@@ -367,3 +367,62 @@ test("private fork policy is required and rechecked for runner admission", async
     false,
   );
 });
+
+test("readiness reports transient admin lookup failures as unknown while still evaluating public policy", async () => {
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 99, type: "Organization" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) return Response.json({ token: "read-only" });
+    if (url.endsWith("/permission")) return new Response(null, { status: 503 });
+    if (url.endsWith("/fork-pr-contributor-approval"))
+      return Response.json({ approval_policy: "first_time_contributors" });
+    return Response.json({ id: 123, private: false, owner: { id: 99 } });
+  });
+  const client = new GitHubAppClient(app);
+  const checks = await client.repositoryReadiness({ ...input, githubLogin: "test-owner" });
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: "github.admin",
+      status: "unknown",
+      code: "github_unavailable",
+      nextStep: expect.any(String),
+    }),
+  );
+  expect(checks).toContainEqual(
+    expect.objectContaining({
+      id: "github.approval",
+      status: "blocked",
+      code: "public_runner_approval_required",
+    }),
+  );
+});
+
+test("connect and readiness share repository authority checks and preserve their denial code", async () => {
+  vi.stubGlobal("fetch", async (url: string) => {
+    if (url.endsWith("/installation"))
+      return Response.json({
+        id: 10,
+        app_id: 42,
+        account: { id: 7, type: "User" },
+        suspended_at: null,
+      });
+    if (url.endsWith("/access_tokens")) return Response.json({ token: "scoped" });
+    return Response.json({ id: 999, private: true, owner: { id: 7 } });
+  });
+  const client = new GitHubAppClient(app);
+  await expect(client.repositoryToken(input)).rejects.toMatchObject({
+    code: "repository_access_denied",
+  });
+  expect(await client.repositoryReadiness(input)).toContainEqual(
+    expect.objectContaining({
+      id: "github.app",
+      status: "blocked",
+      code: "repository_access_denied",
+    }),
+  );
+});

@@ -53,6 +53,7 @@ async function fixture() {
     });
     return { machineId, accountId, foreignId };
   });
+  let installed = true;
   let repositoryPrivate = true;
   let ownerType = "User";
   let ownerId = 7;
@@ -60,7 +61,8 @@ async function fixture() {
   let permissionUserId = 7;
   let approvalPolicy = "first_time_contributors";
   let beforeRepository: (() => Promise<void>) | undefined;
-  const fetch = vi.fn(async (url: string) => {
+  const fetch = vi.fn(async (url: string, _init?: RequestInit) => {
+    if (url.endsWith("/installation") && !installed) return new Response(null, { status: 404 });
     if (url.endsWith("/installation"))
       return Response.json({
         id: 3,
@@ -88,6 +90,9 @@ async function fixture() {
     accountId,
     foreignId,
     fetch,
+    setInstalled: (value: boolean) => {
+      installed = value;
+    },
     setOrganization: (role: string, userId = 7) => {
       ownerType = "Organization";
       ownerId = 99;
@@ -182,4 +187,142 @@ test("organization bindings retain a separate repository owner and reject non-ad
     repositoryOwner: "test-org",
     accountId,
   });
+});
+
+test("readiness verifies a ready binding without saving bindings or requesting write tokens", async () => {
+  const { device, accountId, t, fetch } = await fixture();
+  const bindingId = await device.action(api.githubRepositories.connectMachine, {
+    accountId,
+    repositoryName: "sandbox",
+    environmentId: "windows",
+  });
+  await device.mutation(api.repositoryBindings.setAutomatic, { bindingId, enabled: true });
+  const before = await t.run((ctx) => ctx.db.query("repositoryBindings").collect());
+  fetch.mockClear();
+  const report = await device.action(api.githubRepositories.readiness, { input: { bindingId } });
+  expect(report.environmentId).toBe("windows");
+  expect(report.checks.every((check) => check.status === "ok")).toBe(true);
+  const named = await device.action(api.githubRepositories.readiness, {
+    input: { repositoryName: "owner/sandbox" },
+  });
+  expect(named).toEqual(report);
+  expect(await t.run((ctx) => ctx.db.query("repositoryBindings").collect())).toEqual(before);
+  for (const [, init] of fetch.mock.calls) {
+    if (init?.body)
+      expect(JSON.parse(String(init.body)).permissions).toEqual({
+        administration: "read",
+        metadata: "read",
+      });
+  }
+});
+
+test.each([
+  "github_app_not_installed",
+  "repository_admin_required",
+  "public_runner_approval_required",
+])("readiness and connect report the same %s refusal", async (code) => {
+  const { device, accountId, setInstalled, setOrganization, setPublicPolicy, t } = await fixture();
+  if (code === "github_app_not_installed") setInstalled(false);
+  if (code === "repository_admin_required") setOrganization("write");
+  if (code === "public_runner_approval_required") setPublicPolicy("first_time_contributors");
+  const report = await device.action(api.githubRepositories.readiness, {
+    input: { repositoryName: "owner/sandbox", environmentId: "windows" },
+  });
+  expect(report.checks).toContainEqual(
+    expect.objectContaining({ status: "blocked", code, nextStep: expect.any(String) }),
+  );
+  await expect(
+    device.action(api.githubRepositories.connectMachine, {
+      accountId,
+      repositoryName: "sandbox",
+      environmentId: "windows",
+    }),
+  ).rejects.toThrow(code);
+  expect(await t.run((ctx) => ctx.db.query("repositoryBindings").collect())).toEqual([]);
+  if (code === "github_app_not_installed")
+    expect(
+      report.checks.filter((check) => check.status === "unknown").map((check) => check.id),
+    ).toEqual(["github.admin", "github.approval"]);
+});
+
+test("an admin refusal does not prevent reading an independent public approval policy", async () => {
+  const { device, setOrganization, setPublicPolicy } = await fixture();
+  setOrganization("write");
+  setPublicPolicy("first_time_contributors");
+  const report = await device.action(api.githubRepositories.readiness, {
+    input: { repositoryName: "test-org/sandbox", environmentId: "windows" },
+  });
+  expect(
+    report.checks.filter((check) => check.status === "blocked").map((check) => check.code),
+  ).toEqual(["repository_admin_required", "public_runner_approval_required"]);
+  expect(report.checks.at(-1)).toMatchObject({ status: "attention", code: "binding_missing" });
+});
+
+test("readiness rejects another owner's binding before making any GitHub request", async () => {
+  const { device, t, machineId, foreignId, fetch } = await fixture();
+  const bindingId = await t.run((ctx) =>
+    ctx.db.insert("repositoryBindings", {
+      owner: "stranger",
+      machineId,
+      accountId: foreignId,
+      repositoryId: 2,
+      repositoryName: "secret",
+      installationId: 3,
+      environmentId: "windows",
+      enabled: true,
+      verifiedAt: 1,
+    }),
+  );
+  await expect(
+    device.action(api.githubRepositories.readiness, { input: { bindingId } }),
+  ).rejects.toThrow("repository_access_denied");
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test("readiness reports missing identity and changed installations without writing state", async () => {
+  const { device, t, accountId, fetch } = await fixture();
+  const bindingId = await device.action(api.githubRepositories.connectMachine, {
+    accountId,
+    repositoryName: "sandbox",
+    environmentId: "windows",
+  });
+  await t.run((ctx) => ctx.db.patch("repositoryBindings", bindingId, { installationId: 4 }));
+  expect(
+    (await device.action(api.githubRepositories.readiness, { input: { bindingId } })).checks,
+  ).toContainEqual(expect.objectContaining({ code: "installation_changed", status: "blocked" }));
+  await t.run((ctx) => ctx.db.delete("githubAccounts", accountId));
+  fetch.mockClear();
+  expect(
+    (await device.action(api.githubRepositories.readiness, { input: { bindingId } })).checks[0],
+  ).toMatchObject({ code: "github_account_missing", status: "blocked" });
+  expect(
+    (
+      await device.action(api.githubRepositories.readiness, {
+        input: { repositoryName: "owner/sandbox" },
+      })
+    ).checks[0],
+  ).toMatchObject({ status: "blocked", code: "github_account_missing" });
+  expect(fetch).not.toHaveBeenCalled();
+});
+
+test("revocation and account unlinking during GitHub reads cannot produce ready checks", async () => {
+  const { device, t, machineId, accountId, setBeforeRepository } = await fixture();
+  setBeforeRepository(async () => {
+    await t.run((ctx) => ctx.db.patch("machines", machineId, { credentialVersion: 1 }));
+  });
+  await expect(
+    device.action(api.githubRepositories.readiness, { input: { repositoryName: "owner/sandbox" } }),
+  ).rejects.toThrow("machine_revoked");
+  await t.run((ctx) => ctx.db.patch("machines", machineId, { credentialVersion: 0 }));
+  setBeforeRepository(async () => {
+    await t.run((ctx) => ctx.db.delete("githubAccounts", accountId));
+  });
+  const changed = await device.action(api.githubRepositories.readiness, {
+    input: { repositoryName: "owner/sandbox" },
+  });
+  expect(
+    changed.checks.every(
+      (check) => check.status === "unknown" && check.code === "readiness_changed",
+    ),
+  ).toBe(true);
 });

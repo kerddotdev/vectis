@@ -100,133 +100,6 @@ test.each([
   },
 );
 
-test.each(["rosetta", "off"])(
-  "environment configure parses --x64 %s through the shared command",
-  async (x64) => {
-    const home = await mkdtemp(join(tmpdir(), "vectis-cli-x64-"));
-    const server = await startService({ home });
-    const submit = vi.spyOn(server.service, "submit");
-    const argv = process.argv;
-    const exitCode = process.exitCode;
-    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    try {
-      vi.resetModules();
-      process.argv = [
-        process.execPath,
-        "vectis",
-        "--home",
-        home,
-        "environment",
-        "configure",
-        "linux",
-        "--x64",
-        x64,
-        "--key",
-        "x64",
-        "--json",
-      ];
-      await import("./main.js");
-      await vi.waitFor(() =>
-        expect(submit).toHaveBeenCalledWith("x64", {
-          type: "environment.configure",
-          id: "linux",
-          x64,
-        }),
-      );
-      await vi.waitFor(() => expect(output).toHaveBeenCalled());
-    } finally {
-      process.argv = argv;
-      process.exitCode = exitCode;
-      output.mockRestore();
-      submit.mockRestore();
-      await server.close();
-      await rm(home, { recursive: true, force: true });
-    }
-  },
-);
-
-test.each([
-  { subcommand: "configure", egress: "internet_only" },
-  { subcommand: "configure", egress: "open" },
-  { subcommand: "configure", egress: "invalid" },
-  { subcommand: "start", egress: "internet_only" },
-])(
-  "environment $subcommand validates --egress $egress and lists effective state",
-  async ({ subcommand, egress }) => {
-    const home = await mkdtemp(join(tmpdir(), "vectis-cli-egress-"));
-    const server = await startService({ home });
-    const submit = vi.spyOn(server.service, "submit");
-    const argv = process.argv;
-    const exitCode = process.exitCode;
-    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    try {
-      const basePath = join(home, "base.img");
-      await writeFile(basePath, "synthetic image");
-      server.store.put("environment", "windows", {
-        id: "windows",
-        name: "Windows",
-        os: "windows",
-        state: "ready",
-        cpu: 1,
-        memoryMiB: 512,
-        basePath,
-      });
-      vi.resetModules();
-      process.argv = [
-        process.execPath,
-        "vectis",
-        "--home",
-        home,
-        "environment",
-        subcommand,
-        "windows",
-        "--egress",
-        egress,
-        "--key",
-        "egress",
-        "--json",
-      ];
-      await import("./main.js");
-      await vi.waitFor(() => expect(output).toHaveBeenCalled());
-      if (egress === "invalid" || subcommand === "start") {
-        expect(submit).not.toHaveBeenCalled();
-        expect(output).toHaveBeenCalledWith(
-          expect.stringContaining(
-            `"code":"${subcommand === "start" ? "invalid_arguments" : "invalid_request"}"`,
-          ),
-        );
-        return;
-      }
-      expect(submit).toHaveBeenCalledWith("egress", {
-        type: "environment.configure",
-        id: "windows",
-        egress,
-      });
-      expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"succeeded"'));
-      for (const commands of [["status"], ["environment", "list"]]) {
-        output.mockClear();
-        vi.resetModules();
-        process.argv = [process.execPath, "vectis", "--home", home, ...commands, "--json"];
-        await import("./main.js");
-        await vi.waitFor(() =>
-          expect(output).toHaveBeenCalledWith(
-            expect.stringContaining(
-              `"network":{"egress":"${egress}","enforcement":"${egress === "open" ? "not_enforced" : "enforced"}"}`,
-            ),
-          ),
-        );
-      }
-    } finally {
-      process.argv = argv;
-      process.exitCode = exitCode;
-      output.mockRestore();
-      submit.mockRestore();
-      await server.close();
-      await rm(home, { recursive: true, force: true });
-    }
-  },
-);
-
 test.each([false, true])("job logs read every retained page, with follow=%s", async (follow) => {
   const home = await mkdtemp(join(tmpdir(), "vectis-cli-job-logs-"));
   const server = await startService({ home });
@@ -414,3 +287,175 @@ test.each([false, true])(
     }
   },
 );
+
+test.each(["rosetta", "off"])(
+  "environment configure parses --x64 %s through the shared command",
+  async (x64) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cli-x64-"));
+    const server = await startService({ home });
+    const submit = vi.spyOn(server.service, "submit");
+    const argv = process.argv;
+    const exitCode = process.exitCode;
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      vi.resetModules();
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "environment",
+        "configure",
+        "linux",
+        "--x64",
+        x64,
+        "--key",
+        "x64",
+        "--json",
+      ];
+      await import("./main.js");
+      await vi.waitFor(() =>
+        expect(submit).toHaveBeenCalledWith("x64", {
+          type: "environment.configure",
+          id: "linux",
+          x64,
+        }),
+      );
+      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+    } finally {
+      process.argv = argv;
+      process.exitCode = exitCode;
+      output.mockRestore();
+      submit.mockRestore();
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each([
+  { subcommand: "configure", egress: "internet_only" },
+  { subcommand: "configure", egress: "open" },
+  { subcommand: "configure", egress: "invalid" },
+  { subcommand: "start", egress: "internet_only" },
+])(
+  "environment $subcommand validates --egress $egress and lists effective state",
+  async ({ subcommand, egress }) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cli-egress-"));
+    const server = await startService({ home });
+    const submit = vi.spyOn(server.service, "submit");
+    const argv = process.argv;
+    const exitCode = process.exitCode;
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      const basePath = join(home, "base.img");
+      await writeFile(basePath, "synthetic image");
+      server.store.put("environment", "windows", {
+        id: "windows",
+        name: "Windows",
+        os: "windows",
+        state: "ready",
+        cpu: 1,
+        memoryMiB: 512,
+        basePath,
+      });
+      vi.resetModules();
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "environment",
+        subcommand,
+        "windows",
+        "--egress",
+        egress,
+        "--key",
+        "egress",
+        "--json",
+      ];
+      await import("./main.js");
+      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+      if (egress === "invalid" || subcommand === "start") {
+        expect(submit).not.toHaveBeenCalled();
+        expect(output).toHaveBeenCalledWith(
+          expect.stringContaining(
+            `"code":"${subcommand === "start" ? "invalid_arguments" : "invalid_request"}"`,
+          ),
+        );
+        return;
+      }
+      expect(submit).toHaveBeenCalledWith("egress", {
+        type: "environment.configure",
+        id: "windows",
+        egress,
+      });
+      expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"succeeded"'));
+      for (const commands of [["status"], ["environment", "list"]]) {
+        output.mockClear();
+        vi.resetModules();
+        process.argv = [process.execPath, "vectis", "--home", home, ...commands, "--json"];
+        await import("./main.js");
+        await vi.waitFor(() =>
+          expect(output).toHaveBeenCalledWith(
+            expect.stringContaining(
+              `"network":{"egress":"${egress}","enforcement":"${egress === "open" ? "not_enforced" : "enforced"}"}`,
+            ),
+          ),
+        );
+      }
+    } finally {
+      process.argv = argv;
+      process.exitCode = exitCode;
+      output.mockRestore();
+      submit.mockRestore();
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test("repository readiness prints JSON for named repositories and binding inspections without submitting operations", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-cli-readiness-"));
+  const server = await startService({ home });
+  const argv = process.argv;
+  const exitCode = process.exitCode;
+  const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  try {
+    for (const args of [
+      ["owner/repo", "--environment", "linux"],
+      ["--binding", "binding"],
+    ]) {
+      output.mockClear();
+      vi.resetModules();
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "repository",
+        "readiness",
+        ...args,
+        "--json",
+      ];
+      await import("./main.js");
+      await vi.waitFor(() =>
+        expect(output).toHaveBeenCalledWith(expect.stringContaining('"ready":false')),
+      );
+      const value = output.mock.calls[0]?.[0];
+      if (typeof value !== "string") throw new Error("Expected JSON output.");
+      expect(JSON.parse(value)).toMatchObject({
+        checks: expect.arrayContaining([
+          expect.objectContaining({ code: "cloud_unconfigured", nextStep: expect.any(String) }),
+        ]),
+      });
+    }
+    expect(server.service.snapshot().operations).toEqual([]);
+  } finally {
+    process.argv = argv;
+    process.exitCode = exitCode;
+    output.mockRestore();
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});

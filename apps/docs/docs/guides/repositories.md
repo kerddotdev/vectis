@@ -9,7 +9,7 @@ A connection ties one GitHub repository to one environment on one Mac. A reposit
 
 - The Mac is [connected to your account](/docs/get-started/quickstart#2-connect-this-mac-to-your-account).
 - Your GitHub account is linked, and the Vectis GitHub App is installed on the repository's owner with access to the repository.
-- The environment exists on that Mac. It does not have to be ready yet, but jobs only run once it is.
+- The environment exists on that Mac. App and CLI connections require it to be ready; web connections can be created before setup finishes.
 
 ## Connect
 
@@ -21,9 +21,12 @@ A connection ties one GitHub repository to one environment on one Mac. A reposit
 
 ```sh
 vectis github accounts --json
+vectis repository readiness <owner>/<repository> --environment <environment-id> --json
 vectis repository connect <repository> --account <account-id> --environment <environment-id> [--owner <organization>] --wait
 vectis repository list --json
 ```
+
+Readiness returns ordered checks with a status, an optional error code, a next step and a symbolic fix target. `ready` means no check is blocked or unknown. A missing connection or disabled automatic runners needs attention but does not block connecting. Readiness never connects a repository, changes GitHub policy or enables runners.
 
 `repository list` shows each connection's ID (the binding ID used by other commands) and its `runsOn` label. Connecting the same repository and environment again reuses the connection.
 

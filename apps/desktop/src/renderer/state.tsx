@@ -36,6 +36,7 @@ const reads: ReadonlySet<DesktopAction> = new Set([
   "jobs",
   "job.logs",
   "repositories",
+  "repository.readiness",
   "github.accounts",
   "doctor",
   "storage",

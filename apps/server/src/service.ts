@@ -1,3 +1,9 @@
+import { repositoryReadiness } from "./repository-readiness.js";
+import type {
+  CloudRepositoryReadiness,
+  RepositoryReadiness,
+  RepositoryReadinessInput,
+} from "../../../packages/protocol/src/readiness.js";
 import { environmentNetwork } from "../../../packages/runner/src/environment-network.js";
 import { inspect } from "node:util";
 import { redact } from "../../../packages/client/src/redact.js";
@@ -109,6 +115,12 @@ export class Service {
       runnerCapacity: runnerCapacity(snapshot, { cpus: cpus().length, memoryBytes: totalmem() }),
       ...(repositories === undefined ? {} : { repositories }),
     };
+  }
+  repositoryReadiness(
+    input: RepositoryReadinessInput,
+    readCloud: (input: RepositoryReadinessInput) => Promise<CloudRepositoryReadiness>,
+  ): Promise<RepositoryReadiness> {
+    return repositoryReadiness(input, () => this.store.snapshot().environments, readCloud);
   }
   async initialize() {
     await recoverWindowsInstallations(this.store);
@@ -365,8 +377,11 @@ export class Service {
           );
           if (environment?.state !== "ready")
             throw new VectisError(
-              "setup_required",
-              "Prepare the local environment before connecting a repository.",
+              environment ? "setup_required" : "environment_unavailable",
+              environment
+                ? "Prepare the local environment before connecting a repository."
+                : "The selected environment is unavailable on this machine.",
+              "Select a local environment and complete its preparation before connecting the repository.",
             );
           const broker = this.runnerConnection();
           const abort = new AbortController();
@@ -388,8 +403,8 @@ export class Service {
               });
             })
             .catch((error: unknown) => {
-              // Nothing in the service continues a refused connection: the person fixes the cause
-              // on GitHub and connects again, so this is a failure, not a paused operation.
+              // Refused and unconfirmed attempts have no resumable local work. Keep uncertain cloud
+              // effects unconfirmed so the caller inspects bindings before retrying.
               this.store.update(operation, {
                 status: "failed",
                 message:
