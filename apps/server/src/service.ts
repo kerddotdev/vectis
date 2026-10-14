@@ -48,6 +48,9 @@ import { retainActivities } from "./activity-retention.js";
 import { observeRunnerJobs, watchRunnerJobs } from "./runner-job-observations.js";
 import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
 
+import type { RepositoryAccess } from "../../../packages/protocol/src/repository-access.js";
+import { jobAccess, restrictiveAccess } from "../../../packages/github/src/access-policy.js";
+
 export class Service {
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
@@ -65,6 +68,7 @@ export class Service {
       connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
       disconnectRepository(bindingId: string): Promise<void>;
       setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+      setAccess(bindingId: string, access: RepositoryAccess): Promise<void>;
       scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
       refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
     } = () => {
@@ -396,6 +400,18 @@ export class Service {
           result = { bindingId: command.bindingId, connected: false };
           break;
         }
+        case "repository.access": {
+          const access = {
+            actors:
+              command.actors === "any"
+                ? ("any" as const)
+                : { ids: [...new Set(command.actors.ids)] },
+            approval: command.approval,
+          };
+          await this.runnerConnection().setAccess(command.bindingId, access);
+          result = { bindingId: command.bindingId, access };
+          break;
+        }
         case "repository.automatic": {
           await this.runnerConnection().setAutomatic(command.bindingId, command.enabled);
           result = { bindingId: command.bindingId, automatic: command.enabled };
@@ -464,12 +480,21 @@ export class Service {
           const abort = new AbortController();
           let startId: string | undefined;
           const demandJobId = command.jobId;
+          if (demandJobId === undefined && restrictiveAccess(binding.access))
+            throw new VectisError(
+              "job_required",
+              "Start a specific job under this repository access policy.",
+            );
           const done = runRunnerTask(
             command.bindingId,
             operation.id,
             environment,
             {
               broker,
+              request: {
+                ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
+                ...(command.automatic ? { automatic: true } : {}),
+              },
               ...(demandJobId === undefined
                 ? {}
                 : {
@@ -499,6 +524,20 @@ export class Service {
                         throw new VectisError(
                           "runner_labels_mismatch",
                           "The GitHub job requires different runner capabilities.",
+                        );
+                      const current = (await broker.repositories()).find(
+                        (item) => item.id === command.bindingId,
+                      );
+                      if (!current)
+                        throw new VectisError(
+                          "repository_missing",
+                          "This repository binding is unavailable.",
+                        );
+                      const access = jobAccess(current.access, job);
+                      if (access && (access !== "approval_required" || command.automatic))
+                        throw new VectisError(
+                          access,
+                          "This job is refused by the repository access policy.",
                         );
                       return true;
                     },

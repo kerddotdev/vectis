@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel.js";
 import { decodeCommand } from "../packages/protocol/src/index.js";
 import { matchesRunnerLabels } from "../packages/github/src/runner-labels.js";
+import { jobAccess } from "../packages/github/src/access-policy.js";
 import { presence } from "./presence.js";
 
 export const forRepository = internalMutation({
@@ -75,7 +76,11 @@ export async function scheduleRunnerDemand(
             .eq("status", "queued"),
         )
         .take(50)
-    ).filter((job) => matchesRunnerLabels(job.labels, environment.os, environment.id));
+    ).filter(
+      (job) =>
+        jobAccess(binding.access, job) === undefined &&
+        matchesRunnerLabels(job.labels, environment.os, environment.id),
+    );
     if (!jobs.length) continue;
     const account = await ctx.db.get("githubAccounts", binding.accountId);
     if (account?.owner !== target.owner) continue;

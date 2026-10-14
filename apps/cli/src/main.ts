@@ -53,6 +53,8 @@ async function main() {
       cpu: { type: "string" },
       "max-runners": { type: "string" },
       "job-id": { type: "string" },
+      actors: { type: "string" },
+      approval: { type: "string" },
       account: { type: "string" },
       owner: { type: "string" },
       name: { type: "string" },
@@ -143,6 +145,8 @@ Repositories and jobs
   repository disconnect <id>    Stop future runners without interrupting running jobs
   runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
   runner reconcile <operation-id>  Clean up an interrupted runner after verifying its VM stopped
+  repository access <binding-id> --actors any|<id,id,...> --approval automatic|required
+                               Actor IDs are numeric GitHub user IDs: gh api users/<login> --jq .id
   job list <binding-id>         Read recent GitHub job states for a connected repository
   job scan <binding-id>         Discover missing jobs through the GitHub API
   job refresh <binding-id> <job-id>  Recover one job state directly from GitHub
@@ -517,7 +521,25 @@ Documentation: https://vectis.kerd.dev/docs
       bindingId: id,
       enabled: subcommand === "enable-auto",
     });
-  else if (command === "migration" && subcommand === "analyze" && id)
+  else if (command === "repository" && subcommand === "access" && id) {
+    if (
+      !values.actors ||
+      (values.actors !== "any" && !/^[1-9][0-9]*(,[1-9][0-9]*)*$/.test(values.actors))
+    )
+      throw new VectisError(
+        "invalid_repository_access",
+        "Use any or comma-separated numeric GitHub user IDs.",
+      );
+    request = decodeCommand({
+      type: "repository.access",
+      bindingId: id,
+      actors:
+        values.actors === "any"
+          ? "any"
+          : { ids: [...new Set(values.actors.split(",").map(Number))] },
+      approval: values.approval,
+    });
+  } else if (command === "migration" && subcommand === "analyze" && id)
     request = decodeCommand({ type: "migration.analyze", bindingId: id });
   else if (command === "migration" && subcommand === "preview" && id)
     request = decodeCommand({

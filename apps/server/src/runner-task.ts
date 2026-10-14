@@ -16,6 +16,7 @@ import {
 interface Controls {
   broker: RunnerBroker;
   needed?: () => Promise<boolean>;
+  request?: { jobId?: number; automatic?: boolean };
   start(): Promise<Instance>;
   stop(): Promise<void>;
   progress(value: RunnerProgress): void;
@@ -76,7 +77,25 @@ export async function runRunnerTask(
       );
     update({ stage: "registering" });
     registrationUncertain = true;
-    const grant = await controls.broker.prepareRunner(bindingId, key, signal);
+    const grant = await controls.broker
+      .prepareRunner(bindingId, key, signal, controls.request)
+      .catch((error: unknown) => {
+        if (
+          error instanceof VectisError &&
+          [
+            "actor_not_allowed",
+            "actor_unknown",
+            "approval_required",
+            "job_required",
+            "job_not_queued",
+            "automatic_disabled",
+            "repository_access_changed",
+            "runner_labels_mismatch",
+          ].includes(error.code)
+        )
+          registrationUncertain = false;
+        throw error;
+      });
     if (grant.state === "ready") secret = grant.encodedConfig;
     update({ leaseId: grant.id });
     registrationUncertain = false;

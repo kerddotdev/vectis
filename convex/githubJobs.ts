@@ -1,7 +1,9 @@
 "use node";
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
-import { action } from "./_generated/server.js";
+import { readRunActors, withRunActors } from "../packages/github/src/run-actors.js";
+import { githubJob } from "./githubValidators.js";
+import { action, internalAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
 import { GitHubAppClient } from "../packages/github/src/app-client.js";
 import { scanRepositoryJobs } from "../packages/github/src/job-scan.js";
@@ -33,11 +35,25 @@ export const refresh = action({
       await client.request(access.token, `${access.path}/actions/jobs/${args.jobId}`),
     );
     if (job.id !== args.jobId) throw new ConvexError({ code: "job_identity_mismatch" });
+    const restrictive = await ctx.runQuery(internal.jobs.restrictiveAuthority, {
+      installationId: access.installationId,
+      repositoryId: access.repositoryId,
+    });
+    const enriched = restrictive
+      ? withRunActors(
+          job,
+          await readRunActors(
+            (path) => client.request(access.token, access.path + path),
+            access.repositoryId,
+            job.run_id,
+          ),
+        )
+      : job;
     return ctx.runMutation(internal.jobs.save, {
       bindingId: args.bindingId,
       installationId: access.installationId,
       repositoryId: access.repositoryId,
-      job: { ...job, labels: [...job.labels] },
+      job: { ...enriched, labels: [...enriched.labels] },
     });
   },
 });
@@ -61,6 +77,10 @@ export const scan = action({
     });
     if (access.installationId !== authority.binding.installationId)
       throw new ConvexError({ code: "installation_changed" });
+    const restrictive = await ctx.runQuery(internal.jobs.restrictiveAuthority, {
+      installationId: access.installationId,
+      repositoryId: access.repositoryId,
+    });
     const known = await ctx.runQuery(internal.jobs.pendingRuns, args);
     const result = await scanRepositoryJobs(
       (path) => client.request(access.token, access.path + path),
@@ -73,8 +93,42 @@ export const scan = action({
         });
       },
       known.runIds,
+      80,
+      restrictive ? access.repositoryId : undefined,
     );
     await ctx.runQuery(internal.jobs.pendingRuns, args);
     return { ...result, complete: result.complete && known.complete };
+  },
+});
+
+export const enrichWebhook = internalAction({
+  args: { installationId: v.number(), repositoryId: v.number(), job: githubJob },
+  handler: async (ctx, args) => {
+    const authority = await ctx.runQuery(internal.jobs.restrictiveAuthority, {
+      installationId: args.installationId,
+      repositoryId: args.repositoryId,
+    });
+    if (!authority) return;
+    const client = new GitHubAppClient(authority.app);
+    const access = await client.repositoryToken({
+      owner: authority.binding.repositoryOwner ?? authority.account.login,
+      repo: authority.binding.repositoryName,
+      repositoryId: args.repositoryId,
+      githubUserId: authority.account.githubId,
+      githubLogin: authority.account.login,
+      purpose: "jobs",
+    });
+    if (access.installationId !== args.installationId)
+      throw new ConvexError({ code: "installation_changed" });
+    const actors = await readRunActors(
+      (path) => client.request(access.token, access.path + path),
+      args.repositoryId,
+      args.job.run_id,
+    );
+    const job = withRunActors(args.job, actors);
+    await ctx.runMutation(internal.jobs.saveWebhookActors, {
+      ...args,
+      job: { ...job, labels: [...job.labels] },
+    });
   },
 });

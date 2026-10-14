@@ -31,6 +31,7 @@ function fixture() {
       id: "lease",
       runnerId: 12,
       encodedConfig: "c2VjcmV0",
+      access: { repositoryId: 2, actors: "any" as const, approval: "automatic" as const },
       environmentId: "test",
       os: "linux" as const,
     })),

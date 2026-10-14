@@ -299,3 +299,56 @@ test.each([false, true])(
     }
   },
 );
+
+test("repository access commands replay locally with the same idempotency key", async () => {
+  const t = convexTest(schema, modules);
+  const owner = t.withIdentity(identity("access-owner"));
+  const machineId = await owner.mutation(api.machines.enroll, {
+    localId: "access-host",
+    name: "Access host",
+  });
+  const device = t.withIdentity({
+    issuer: "https://machines.test",
+    subject: machineId,
+    credentialVersion: 0,
+  });
+  const command = {
+    type: "repository.access" as const,
+    bindingId: "binding",
+    actors: { ids: [7, 8] },
+    approval: "required" as const,
+  };
+  const id = await owner.mutation(api.operations.submit, {
+    machineId,
+    key: "access",
+    commandJson: JSON.stringify(command),
+  });
+  const acknowledge = (args: Acknowledgement) => device.mutation(api.operations.acknowledge, args);
+  const submit = vi.fn(async () => ({
+    id: "local-access",
+    key: `remote:${id}`,
+    status: "succeeded" as const,
+    command: "repository.access" as const,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    message: "Updated",
+  }));
+  const local = {
+    submit,
+    status: async () => {
+      throw new Error("Unexpected status read");
+    },
+  };
+  const pending = async () => {
+    const [operation] = await device.query(api.operations.pending, {});
+    if (!operation) throw new Error("Missing remote operation");
+    return operation;
+  };
+  const signal = AbortSignal.timeout(1000);
+  await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+  expect(submit).not.toHaveBeenCalled();
+  await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+  expect(submit).toHaveBeenCalledWith(command, `remote:${id}`, signal);
+  await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+  expect((await owner.query(api.operations.get, { id })).phase).toBe("succeeded");
+});

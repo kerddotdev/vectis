@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { installation, verifiedUser } from "./githubValidators.js";
+import { installation, verifiedUser, repositoryAccess, runnerAccess } from "./githubValidators.js";
 
 export const environmentSummary = v.object({
   revision: v.optional(v.string()),
@@ -93,6 +93,7 @@ export default defineSchema({
     environmentId: v.string(),
     enabled: v.boolean(),
     automatic: v.optional(v.boolean()),
+    access: v.optional(repositoryAccess),
     // Legacy; jobScans holds scan times so scans do not rewrite the binding.
     lastJobScanAt: v.optional(v.number()),
     verifiedAt: v.number(),
@@ -101,6 +102,7 @@ export default defineSchema({
     .index("by_machine", ["machineId"])
     .index("by_machine_automatic", ["machineId", "enabled", "automatic"])
     .index("by_target", ["machineId", "repositoryId", "environmentId"])
+    .index("by_repository", ["installationId", "repositoryId", "enabled"])
     .index("by_automatic_repository", ["installationId", "repositoryId", "enabled", "automatic"]),
   jobScans: defineTable({
     bindingId: v.id("repositoryBindings"),
@@ -125,6 +127,9 @@ export default defineSchema({
     runnerId: v.optional(v.number()),
     encodedConfig: v.optional(v.string()),
     configExpiresAt: v.optional(v.number()),
+    access: v.optional(runnerAccess),
+    jobId: v.optional(v.number()),
+    automatic: v.optional(v.boolean()),
   })
     .index("by_machine_key", ["machineId", "key"])
     .index("by_machine_phase", ["machineId", "phase"])
@@ -170,6 +175,9 @@ export default defineSchema({
     repositoryId: v.number(),
     jobId: v.number(),
     runId: v.number(),
+    runAttempt: v.optional(v.number()),
+    actorId: v.optional(v.number()),
+    triggeringActorId: v.optional(v.number()),
     name: v.string(),
     htmlUrl: v.optional(v.string()),
     workflowName: v.optional(v.string()),

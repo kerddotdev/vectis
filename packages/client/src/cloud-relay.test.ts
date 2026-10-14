@@ -384,3 +384,52 @@ test("a mismatched identity sends no heartbeat", async () => {
   await vi.advanceTimersByTimeAsync(4000);
   expect(transport.mutation).not.toHaveBeenCalled();
 });
+
+test("access settings use the authenticated binding mutation and policy changes invalidate old job lists", async () => {
+  const { relay, repositories, subscription } = await fixture();
+  transport.auth.changed?.(true);
+  repositories.deliver([binding("binding1")]);
+  subscription("jobs:latest", "binding1").deliver([job]);
+  listJobs([job]);
+  expect(await relay.jobs("binding1")).toEqual([job]);
+  await relay.setAccess("binding1", { actors: { ids: [7] }, approval: "required" });
+  expect(
+    transport.mutation.mock.calls.some(
+      ([mutation, args]) =>
+        getFunctionName(mutation) === "repositoryBindings:setAccess" &&
+        isDeepStrictEqual(args, {
+          bindingId: "binding1",
+          actors: { ids: [7] },
+          approval: "required",
+        }),
+    ),
+  ).toBe(true);
+  repositories.deliver([
+    { ...binding("binding1"), access: { actors: { ids: [7] }, approval: "required" } },
+  ]);
+  listJobs([{ ...job, access: "actor_unknown" }]);
+  expect(await relay.jobs("binding1")).toMatchObject([{ access: "actor_unknown" }]);
+});
+
+test("a list fetched under an old access policy is not cached after the policy changes", async () => {
+  const { relay, repositories, subscription } = await fixture();
+  transport.auth.changed?.(true);
+  repositories.deliver([binding("binding1")]);
+  subscription("jobs:latest", "binding1").deliver([job]);
+  let finish: (value: unknown) => void = () => {};
+  listJobs(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const pending = relay.jobs("binding1");
+  repositories.deliver([
+    { ...binding("binding1"), access: { actors: "any", approval: "required" } },
+  ]);
+  finish([job]);
+  await pending;
+  const lists = listJobs([{ ...job, access: "approval_required" }]);
+  expect(await relay.jobs("binding1")).toMatchObject([{ access: "approval_required" }]);
+  expect(lists()).toHaveLength(2);
+});

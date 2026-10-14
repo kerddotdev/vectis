@@ -5,6 +5,7 @@ import schema from "../../convex/schema.js";
 import { api, internal } from "../../convex/_generated/api.js";
 import { decodeCommand } from "../../packages/protocol/src/index.js";
 const modules = {
+  "../../convex/jobs.ts": () => import("../../convex/jobs.js"),
   "../../convex/runnerDemand.ts": () => import("../../convex/runnerDemand.js"),
   "../../convex/http.ts": () => import("../../convex/http.js"),
   "../../convex/githubWebhook.ts": () => import("../../convex/githubWebhook.js"),
@@ -689,4 +690,72 @@ test("job scans wait for a configured GitHub App and leave bindings untouched", 
   await heartbeat(0);
   expect(await scanOperations()).toHaveLength(1);
   expect(await bindings()).toEqual(before);
+});
+
+test.each([
+  {
+    actors: "any" as const,
+    approval: "required" as const,
+    actorId: 7,
+    triggeringActorId: 7,
+    access: "approval_required",
+  },
+  {
+    actors: { ids: [7] },
+    approval: "automatic" as const,
+    actorId: 8,
+    triggeringActorId: 7,
+    access: "actor_not_allowed",
+  },
+  {
+    actors: { ids: [7] },
+    approval: "automatic" as const,
+    actorId: 7,
+    triggeringActorId: 8,
+    access: "actor_not_allowed",
+  },
+  {
+    actors: { ids: [7] },
+    approval: "automatic" as const,
+    actorId: undefined,
+    triggeringActorId: undefined,
+    access: "actor_unknown",
+  },
+])(
+  "restrictive policy leaves $access demand visible without consuming capacity",
+  async ({ actors, approval, actorId, triggeringActorId, access }) => {
+    const { t, hosts, jobId, heartbeat, operations } = await fixture();
+    const host = hosts[0];
+    if (!host) throw new Error("Missing host");
+    await t.run(async (ctx) => {
+      await ctx.db.patch("repositoryBindings", host.bindingId, { access: { actors, approval } });
+      await ctx.db.patch("githubJobs", jobId, { actorId, triggeringActorId, runAttempt: 1 });
+    });
+    await heartbeat(0, false, true, 1);
+    expect(await operations()).toHaveLength(0);
+    const device = t.withIdentity({
+      issuer: "https://machine.test",
+      subject: host.machineId,
+      credentialVersion: 0,
+    });
+    expect(await device.query(api.jobs.list, { bindingId: host.bindingId })).toMatchObject([
+      { access },
+    ]);
+    await heartbeat(1, false, true, 1);
+    expect(await operations()).toHaveLength(1);
+  },
+);
+
+test("an allowed actor and triggering actor receive automatic capacity", async () => {
+  const { t, hosts, jobId, heartbeat, operations } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  await t.run(async (ctx) => {
+    await ctx.db.patch("repositoryBindings", host.bindingId, {
+      access: { actors: { ids: [7, 8] }, approval: "automatic" },
+    });
+    await ctx.db.patch("githubJobs", jobId, { actorId: 7, triggeringActorId: 8, runAttempt: 1 });
+  });
+  await heartbeat(0, false, true, 1);
+  expect(await operations()).toHaveLength(1);
 });
