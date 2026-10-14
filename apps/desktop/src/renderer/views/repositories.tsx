@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Schema } from "effect";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { EllipsisIcon, PlayIcon, PlusIcon } from "lucide-react";
 import {
   RepositoryReadiness,
@@ -81,7 +81,13 @@ export function Repositories() {
   const linked = !!machineId || (!!snapshot?.cloud && snapshot.cloud.state !== "unconfigured");
   const repositories = snapshot?.repositories ?? null;
   const [starting, setStarting] = useState<string | null>(null);
+  const { connect } = useSearch({ from: "/repositories" });
   const [connecting, setConnecting] = useState(false);
+  useEffect(() => {
+    if (!connect) return;
+    if (linked) setConnecting(true);
+    void navigate({ to: "/repositories", search: {}, replace: true });
+  }, [connect, linked]);
   async function startRunner(bindingId: string) {
     setStarting(bindingId);
     try {

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { EllipsisIcon, PlayIcon, PlusIcon } from "lucide-react";
 import type { Environment } from "../../../../../packages/protocol/src/index.js";
 import { osNames } from "@vectis/design/os-icons";
@@ -40,6 +41,13 @@ import { PrepareEnvironment, RegisterEnvironment } from "./prepare-environment";
 export function Environments() {
   const { snapshot, machineId } = useStateApi();
   const [adding, setAdding] = useState(false);
+  const { add } = useSearch({ from: "/environments" });
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!add) return;
+    setAdding(true);
+    void navigate({ to: "/environments", search: {}, replace: true });
+  }, [add]);
   return (
     <Page
       title="Environments"
