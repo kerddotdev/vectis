@@ -188,3 +188,39 @@ test("a remotely replayed idle drain preserves its cancelled outcome and local r
     query: { name: "operation", id: "local1" },
   });
 });
+
+test.each(["machine_offline", "claim_timeout"])(
+  "a request expired before claim exposes %s without querying the host",
+  async (code) => {
+    const { request, client } = fixture();
+    const message =
+      code === "machine_offline"
+        ? "The machine went offline before it claimed this runner request."
+        : "The machine did not claim this runner request within ten minutes.";
+    request.mockResolvedValueOnce({
+      ...record,
+      commandJson: JSON.stringify({
+        type: "runner.run",
+        bindingId: "binding",
+        jobId: 4,
+        automatic: true,
+      }),
+      phase: "cancelled",
+      resultJson: JSON.stringify({
+        status: "cancelled",
+        code,
+        message,
+        resultAvailableLocally: false,
+      }),
+    });
+    expect(await client.operation("remote1")).toMatchObject({
+      status: "cancelled",
+      message,
+      result: { remotePhase: "cancelled", code, resultAvailableLocally: false },
+    });
+    expect(request).toHaveBeenCalledExactlyOnceWith(
+      { type: "operation.get", id: "remote1" },
+      undefined,
+    );
+  },
+);

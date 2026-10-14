@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import { cancelForOwner } from "../../convex/operations.js";
 import schema from "../../convex/schema.js";
-import { api } from "../../convex/_generated/api.js";
+import { api, internal } from "../../convex/_generated/api.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +15,7 @@ import {
 } from "../../packages/client/src/remote-operation.js";
 
 const modules = {
+  "../../convex/runnerDemand.ts": () => import("../../convex/runnerDemand.js"),
   "../../convex/credentials.ts": () => import("../../convex/credentials.js"),
   "../../convex/machineTokens.ts": () => import("../../convex/machineTokens.js"),
   "../../convex/http.ts": () => import("../../convex/http.js"),
@@ -299,3 +300,72 @@ test.each([false, true])(
     }
   },
 );
+
+test("a host waking after expiry rejects its stale claim without submitting local work", async () => {
+  const t = convexTest(schema, modules);
+  const owner = t.withIdentity(identity("expiry-owner"));
+  const home = await mkdtemp(join(tmpdir(), "vectis-expired-relay-"));
+  const server = await startService({ home });
+  try {
+    const local = new VectisClient(server.connection);
+    const submit = vi.spyOn(local, "submit");
+    const before = await local.status();
+    const machineId = await owner.mutation(api.machines.enroll, {
+      localId: before.machine.id,
+      name: "Expiry test",
+    });
+    const device = t.withIdentity({
+      issuer: "https://machines.test",
+      subject: machineId,
+      credentialVersion: 0,
+    });
+    const id = await owner.mutation(api.operations.submit, {
+      machineId,
+      key: "expired-runner",
+      commandJson: JSON.stringify({
+        type: "runner.run",
+        bindingId: "binding",
+        jobId: 4,
+        automatic: true,
+      }),
+    });
+    const [stale] = await device.query(api.operations.pending, {});
+    if (!stale) throw new Error("Missing pending operation");
+    await t.run((ctx) => ctx.db.patch("operations", id, { createdAt: Date.now() - 120000 }));
+    await t.mutation(internal.runnerDemand.expireUnclaimed, { operationId: id });
+    const expired = await owner.query(api.operations.get, { id });
+    expect(expired.phase).toBe("cancelled");
+    await expect(
+      device.mutation(api.operations.acknowledge, { id, phase: "claimed" }),
+    ).rejects.toMatchObject({ data: { code: "operation_cancelled" } });
+    const acknowledge = vi.fn((args: Acknowledgement) =>
+      device.mutation(api.operations.acknowledge, args),
+    );
+    const signal = new AbortController().signal;
+    await advanceRemoteOperation(stale, local, acknowledge, signal);
+    expect(acknowledge).toHaveBeenCalledOnce();
+    await advanceRemoteOperation(expired, local, acknowledge, signal);
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(submit).not.toHaveBeenCalled();
+    const after = await local.status();
+    expect(after.operations).toEqual(before.operations);
+    expect(after.instances).toEqual(before.instances);
+    expect(await device.query(api.operations.pending, {})).toEqual([]);
+    expect(await owner.query(api.operations.get, { id })).toEqual(expired);
+    const failure = new Error("Cloud unavailable");
+    await expect(
+      advanceRemoteOperation(
+        stale,
+        local,
+        async () => {
+          throw failure;
+        },
+        signal,
+      ),
+    ).rejects.toBe(failure);
+    expect(submit).not.toHaveBeenCalled();
+  } finally {
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
