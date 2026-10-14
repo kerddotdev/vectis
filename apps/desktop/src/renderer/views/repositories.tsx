@@ -1,11 +1,17 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Schema } from "effect";
 import { useNavigate } from "@tanstack/react-router";
 import { EllipsisIcon, PlayIcon, PlusIcon } from "lucide-react";
+import {
+  RepositoryReadiness,
+  type ReadinessCheck,
+} from "../../../../../packages/protocol/src/readiness.js";
 import type { MachineRepositories } from "../../../../../packages/protocol/src/repositories.js";
 import { GitHubIcon } from "@/components/github-icon";
 import { Hint, Reason } from "@/components/hint";
 import { EmptyState, ExpandableRow, List, Mono, Page, Section } from "@/components/layout";
 import { OsIcon } from "@/components/os-icon";
+import { ReadinessIndicator, ReadinessList } from "@/components/readiness";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -22,11 +28,52 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Switch } from "@/components/ui/switch";
-import { useStateApi } from "@/state";
+import { summarizeReadiness } from "@/lib/readiness";
+import { request, useStateApi } from "@/state";
 import { ConnectRepository } from "./connect-repository";
 import { RepositoryJobs } from "./repository-jobs";
 
 type Binding = MachineRepositories[number];
+
+// Every check asks GitHub through the cloud, so results are shared across visits for a while and
+// bindings are checked one at a time.
+const readinessCache = new Map<string, { at: number; checks: readonly ReadinessCheck[] }>();
+const readinessAge = 120_000;
+
+function useBindingReadiness(bindingIds: readonly string[]) {
+  const { machineId } = useStateApi();
+  const scope = machineId ?? "local";
+  const [, setVersion] = useState(0);
+  const ids = bindingIds.join(",");
+  useEffect(() => {
+    let stopped = false;
+    void (async () => {
+      for (const bindingId of bindingIds) {
+        if (stopped) return;
+        const key = `${scope}:${bindingId}`;
+        const cached = readinessCache.get(key);
+        if (cached && Date.now() - cached.at < readinessAge) continue;
+        try {
+          const { checks } = Schema.decodeUnknownSync(RepositoryReadiness)(
+            await request("repository.readiness", { bindingId }, machineId),
+          );
+          // The automatic switch sits next to the binding, so its state is not a problem to report.
+          readinessCache.set(key, {
+            at: Date.now(),
+            checks: checks.filter((check) => check.code !== "automatic_disabled"),
+          });
+          if (!stopped) setVersion((value) => value + 1);
+        } catch {
+          readinessCache.delete(key);
+        }
+      }
+    })();
+    return () => {
+      stopped = true;
+    };
+  }, [scope, ids]);
+  return (bindingId: string) => readinessCache.get(`${scope}:${bindingId}`)?.checks;
+}
 
 export function Repositories() {
   const { submit, snapshot, machineId } = useStateApi();
@@ -51,6 +98,7 @@ export function Repositories() {
   const groups = [...grouped.values()].sort((left, right) =>
     (left[0]?.repositoryName ?? "").localeCompare(right[0]?.repositoryName ?? ""),
   );
+  const readiness = useBindingReadiness((repositories ?? []).map((binding) => binding.id));
   return (
     <Page
       title="Repositories"
@@ -91,6 +139,9 @@ export function Repositories() {
               const first = bindings[0];
               if (!first) return null;
               const automatic = bindings.filter((binding) => binding.automatic).length;
+              const status = summarizeReadiness(
+                bindings.flatMap((binding) => readiness(binding.id) ?? []),
+              ).status;
               return (
                 <ExpandableRow
                   key={first.repositoryId}
@@ -100,6 +151,11 @@ export function Repositories() {
                     </span>
                   }
                   title={first.repositoryName}
+                  aside={
+                    <span className="text-xs">
+                      <ReadinessIndicator status={status} />
+                    </span>
+                  }
                   summary={
                     <>
                       {bindings.length} {bindings.length === 1 ? "environment" : "environments"}
@@ -121,6 +177,7 @@ export function Repositories() {
                         const environment = snapshot?.environments.find(
                           (item) => item.id === binding.environmentId,
                         );
+                        const checks = readiness(binding.id);
                         return (
                           <div
                             key={binding.id}
@@ -209,6 +266,12 @@ export function Repositories() {
                                 </DropdownMenuItem>
                               </DropdownMenuContent>
                             </DropdownMenu>
+                            {checks && summarizeReadiness(checks).status !== "ok" && (
+                              <ReadinessList
+                                checks={checks}
+                                className="basis-full rounded-lg ring-1 ring-border ring-inset"
+                              />
+                            )}
                           </div>
                         );
                       })}
@@ -222,7 +285,7 @@ export function Repositories() {
         )}
       </Section>
       <Dialog open={connecting} onOpenChange={setConnecting}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="max-h-[calc(100vh-4rem)] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Connect a repository</DialogTitle>
             <DialogDescription>

@@ -1,7 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Schema } from "effect";
+import { RepositoryReadiness } from "../../../../../packages/protocol/src/readiness.js";
 import { GitHubAccounts } from "../../../../../packages/protocol/src/repositories.js";
+import { Reason } from "@/components/hint";
 import { Notice } from "@/components/layout";
+import { ReadinessList } from "@/components/readiness";
 import { Button } from "@/components/ui/button";
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -12,7 +15,62 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useStateApi } from "@/state";
+import { summarizeReadiness } from "@/lib/readiness";
+import { cn } from "@/lib/utils";
+import { request, useStateApi } from "@/state";
+
+const fullName = /^[A-Za-z0-9-]+\/(?!\.{1,2}$)[A-Za-z0-9_.-]+$/;
+
+function useReadiness(repositoryName: string, environmentId: string) {
+  const { machineId } = useStateApi();
+  const key =
+    fullName.test(repositoryName) && environmentId ? `${repositoryName}:${environmentId}` : "";
+  const [focus, setFocus] = useState(0);
+  const [result, setResult] = useState<{
+    key: string;
+    token: string;
+    readiness?: RepositoryReadiness;
+    error?: string;
+  }>();
+  const latest = useRef("");
+  const token = `${machineId ?? ""}:${key}#${focus}`;
+  useEffect(() => {
+    const again = () => setFocus((value) => value + 1);
+    window.addEventListener("focus", again);
+    return () => window.removeEventListener("focus", again);
+  }, []);
+  useEffect(() => {
+    latest.current = token;
+    if (!key) return;
+    const timer = setTimeout(() => {
+      request("repository.readiness", { repositoryName, environmentId }, machineId)
+        .then((value) => {
+          const readiness = Schema.decodeUnknownSync(RepositoryReadiness)(value);
+          if (latest.current === token) setResult({ key, token, readiness });
+        })
+        .catch((issue: unknown) => {
+          if (latest.current === token)
+            setResult({
+              key,
+              token,
+              error: issue instanceof Error ? issue.message : "The request failed.",
+            });
+        });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [token]);
+  const current = key && result?.key === key ? result : undefined;
+  // Connecting creates the binding, so its absence is expected here rather than a problem.
+  const checks = current?.readiness?.checks.filter(
+    (check) => !(check.id === "repository.binding" && check.code === "binding_missing"),
+  );
+  return {
+    checking: !!key && result?.token !== token,
+    checks,
+    error: current?.error,
+    blocking: checks && summarizeReadiness(checks).blocking,
+  };
+}
 
 export function ConnectRepository({ onDone }: { onDone: () => void }) {
   const { snapshot, perform, submit } = useStateApi();
@@ -35,6 +93,11 @@ export function ConnectRepository({ onDone }: { onDone: () => void }) {
   }, []);
   const environments =
     snapshot?.environments.filter((environment) => environment.state === "ready") ?? [];
+  const owner = repositoryOwner || accounts?.find((account) => account.id === accountId)?.login;
+  const readiness = useReadiness(
+    accountId && owner && repositoryName ? `${owner}/${repositoryName}` : "",
+    environmentId,
+  );
   return (
     <form
       className="flex flex-col gap-5"
@@ -125,10 +188,35 @@ export function ConnectRepository({ onDone }: { onDone: () => void }) {
           </Field>
         </FieldGroup>
         {message && <Notice>{message}</Notice>}
+        {readiness.error ? (
+          <Notice tone="attention" title="Readiness could not be checked">
+            {readiness.error}
+          </Notice>
+        ) : readiness.checks ? (
+          <ReadinessList
+            checks={readiness.checks}
+            className={cn(
+              "rounded-xl ring-1 ring-border ring-inset transition-opacity duration-150",
+              readiness.checking && "opacity-60",
+            )}
+          />
+        ) : (
+          readiness.checking && (
+            <p className="text-xs text-muted-foreground" role="status">
+              Checking whether this repository can run here
+            </p>
+          )
+        )}
         <div className="flex justify-end">
-          <Button type="submit" disabled={!accountId || !environmentId}>
-            Connect repository
-          </Button>
+          <Reason
+            reason={
+              readiness.blocking && (readiness.blocking.nextStep ?? readiness.blocking.message)
+            }
+          >
+            <Button type="submit" disabled={!accountId || !environmentId || !!readiness.blocking}>
+              Connect repository
+            </Button>
+          </Reason>
         </div>
       </fieldset>
     </form>
