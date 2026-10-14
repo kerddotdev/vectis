@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { EllipsisIcon, PlayIcon, PlusIcon } from "lucide-react";
-import type { Environment } from "../../../../../packages/protocol/src/index.js";
+import type { Egress } from "../../../../../packages/protocol/src/index.js";
 import { osNames } from "@vectis/design/os-icons";
 import {
   Details,
@@ -16,8 +16,15 @@ import {
 import { Reason, Resources } from "@/components/hint";
 import { OsTile } from "@/components/os-icon";
 import { formatMemory } from "@/lib/format";
+import {
+  canRestrictNetwork,
+  initialDraft,
+  networkChanges,
+  networkDisplay,
+  type EnvironmentView,
+} from "@/lib/environment-network";
 import { PathField } from "@/components/path-field";
-import { StatusBadge } from "@/components/status";
+import { StatusBadge, StatusText } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,8 +39,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStateApi } from "@/state";
 import { PrepareEnvironment, RegisterEnvironment } from "./prepare-environment";
@@ -99,7 +114,8 @@ export function Environments() {
   );
 }
 
-function EnvironmentRow({ environment }: { environment: Environment }) {
+function EnvironmentRow({ environment }: { environment: EnvironmentView }) {
+  const network = networkDisplay(environment);
   const { submit, snapshot } = useStateApi();
   const [configuring, setConfiguring] = useState(false);
   const running = snapshot?.instances.filter(
@@ -167,6 +183,11 @@ function EnvironmentRow({ environment }: { environment: Environment }) {
           ["Guest", osNames[environment.os]],
           ["CPU cores", environment.cpu],
           ["Memory", `${formatMemory(environment.memoryMiB)} (${environment.memoryMiB} MiB)`],
+          ["Network", network && <StatusText key="network" {...network} />],
+          [
+            "x86_64 tools",
+            environment.os === "linux" && (environment.x64 === "rosetta" ? "Rosetta on" : "Off"),
+          ],
           ["Environment ID", <Mono key="id">{environment.id}</Mono>],
           ["Base image", <Mono key="base">{environment.basePath}</Mono>],
           [
@@ -188,12 +209,17 @@ function EnvironmentRow({ environment }: { environment: Environment }) {
   );
 }
 
+const egressItems: ReadonlyArray<{ value: Egress; label: string }> = [
+  { value: "internet_only", label: "Internet only (recommended)" },
+  { value: "open", label: "Open network access" },
+];
+
 function ConfigureEnvironment({
   environment,
   open,
   onOpenChange,
 }: {
-  environment: Environment;
+  environment: EnvironmentView;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -201,6 +227,8 @@ function ConfigureEnvironment({
   const [cpu, setCpu] = useState(environment.cpu);
   const [memoryMiB, setMemory] = useState(environment.memoryMiB);
   const [storagePath, setStorage] = useState(environment.storagePath ?? "");
+  const [draft, setDraft] = useState(() => initialDraft(environment));
+  const network = networkDisplay(environment);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -218,6 +246,7 @@ function ConfigureEnvironment({
               cpu,
               memoryMiB,
               ...(storagePath ? { storagePath } : {}),
+              ...networkChanges(environment, draft),
             }).then((value) => value !== undefined && onOpenChange(false));
           }}
         >
@@ -254,6 +283,66 @@ function ConfigureEnvironment({
               onChange={setStorage}
               placeholder="Service default"
             />
+            {environment.os === "linux" && (
+              <Field orientation="horizontal">
+                <div className="flex flex-1 flex-col gap-1">
+                  <FieldLabel htmlFor={`${environment.id}-rosetta`}>
+                    Run x86_64 Linux tools with Rosetta
+                  </FieldLabel>
+                  <FieldDescription>
+                    Lets jobs run x86_64 binaries and linux/amd64 containers. The runner stays
+                    ARM64. Requires Rosetta on this Mac and a freshly prepared image.
+                  </FieldDescription>
+                </div>
+                <Switch
+                  id={`${environment.id}-rosetta`}
+                  checked={draft.rosetta}
+                  onCheckedChange={(rosetta) => setDraft({ ...draft, rosetta })}
+                />
+              </Field>
+            )}
+            {canRestrictNetwork(environment.os) ? (
+              <Field>
+                <FieldLabel htmlFor={`${environment.id}-egress`}>Network</FieldLabel>
+                <Select
+                  value={draft.egress}
+                  onValueChange={(egress: Egress | null) =>
+                    egress && setDraft({ ...draft, egress })
+                  }
+                  items={egressItems}
+                >
+                  <SelectTrigger id={`${environment.id}-egress`} className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {egressItems.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FieldDescription>
+                  Internet only blocks the host and local network from the guest.
+                </FieldDescription>
+                {draft.egress === "open" && (
+                  <p className="text-xs text-attention">
+                    Jobs in this environment can reach this Mac and your local network.
+                  </p>
+                )}
+              </Field>
+            ) : (
+              <Field>
+                <div className="flex items-center justify-between gap-3 text-sm font-medium">
+                  Network
+                  {network && <StatusBadge {...network} />}
+                </div>
+                <FieldDescription>
+                  Apple Virtualization cannot restrict guest network access yet. Jobs can reach this
+                  Mac and your local network.
+                </FieldDescription>
+              </Field>
+            )}
           </FieldGroup>
           <div className="flex justify-end">
             <Button type="submit">Save for future VMs</Button>

@@ -1,4 +1,5 @@
 import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
+import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import electronUpdater from "electron-updater";
@@ -196,6 +197,13 @@ else {
             case "jobs": {
               const bindingId = Schema.decodeUnknownSync(Schema.NonEmptyString)(input);
               data = await (await client()).jobs(bindingId);
+              break;
+            }
+            case "job.logs": {
+              const request = Schema.decodeUnknownSync(JobLogRequest, {
+                onExcessProperty: "error",
+              })(input);
+              data = await (await client()).jobLogs(request);
               break;
             }
             case "github.accounts":

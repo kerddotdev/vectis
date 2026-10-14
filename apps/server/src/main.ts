@@ -2,6 +2,7 @@ import { Effect } from "effect";
 import { startService } from "./http.js";
 import { resolveHome } from "../../../packages/client/src/deployment.js";
 
+process.umask(0o077);
 const home = resolveHome();
 const program = Effect.scoped(
   Effect.gen(function* () {

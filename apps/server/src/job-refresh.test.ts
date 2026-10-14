@@ -19,14 +19,21 @@ test("job refresh does not block machine control and retries reuse its durable o
     publishMigration: vi.fn(async () => {
       throw new Error("unused");
     }),
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},
+    setAccess: async () => {},
     setAutomatic: async () => {},
     repositories: async () => [],
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: async () => {},
   }));
   try {
@@ -73,10 +80,14 @@ test("disabling automatic admission cancels a queued demand before guest startup
     publishMigration: vi.fn(async () => {
       throw new Error("unused");
     }),
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs: vi.fn(async () => ({ runs: 0, jobs: 0, complete: true })),
     refreshJob,
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},
+    setAccess: async () => {},
     setAutomatic: async () => {},
     repositories: async () => [
       {
@@ -87,8 +98,11 @@ test("disabling automatic admission cancels a queued demand before guest startup
         automatic: false,
       },
     ],
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: async () => {},
   }));
   store.put("environment", "mac", {
@@ -132,6 +146,9 @@ test("incomplete repository scans require attention instead of claiming full rec
     publishMigration: vi.fn(async () => {
       throw new Error("unused");
     }),
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs,
     refreshJob: async () => ({
       jobId: 1,
@@ -147,9 +164,13 @@ test("incomplete repository scans require attention instead of claiming full rec
     repositories: async () => [],
     connectRepository: async () => "binding",
     disconnectRepository: async () => {},
+    setAccess: async () => {},
     setAutomatic: async () => {},
-    findRunner: async () => null,
+    reconcileRunner: async () => {
+      throw new Error("unused");
+    },
     prepareRunner: async () => ({ state: "released", id: "unused" }),
+    runnerStatus: async () => ({ busy: false, status: "online" as const }),
     releaseRunner: async () => {},
   }));
   try {
@@ -166,3 +187,95 @@ test("incomplete repository scans require attention instead of claiming full rec
     store.close();
   }
 });
+
+test.each([
+  { actorId: 8, triggeringActorId: 7, automatic: false, code: "actor_not_allowed" },
+  { actorId: 7, triggeringActorId: 8, automatic: false, code: "actor_not_allowed" },
+  { actorId: 7, triggeringActorId: undefined, automatic: false, code: "actor_unknown" },
+  { actorId: 7, triggeringActorId: 7, automatic: true, code: "approval_required" },
+])(
+  "$code is refused before the local service starts capacity",
+  async ({ actorId, triggeringActorId, automatic, code }) => {
+    const store = new Store(":memory:");
+    const runtime = new VmRuntime({ home: "/unused-isolated-home" });
+    const start = vi.spyOn(runtime, "start");
+    const service = new Service(store, runtime, () => ({
+      analyzeMigration: async () => {
+        throw new Error("unused");
+      },
+      publishMigration: async () => {
+        throw new Error("unused");
+      },
+      scanJobs: async () => ({ runs: 0, jobs: 0, complete: true }),
+      refreshJob: async () => ({
+        jobId: 4,
+        runId: 5,
+        runAttempt: 1,
+        actorId,
+        triggeringActorId,
+        name: "Build",
+        status: "queued",
+        conclusion: null,
+        labels: ["vectis-mac"],
+        runnerId: null,
+        runnerName: null,
+        updatedAt: 1,
+      }),
+      connectRepository: async () => "binding",
+      disconnectRepository: async () => {},
+      setAccess: async () => {},
+      setAutomatic: async () => {},
+      repositories: async () => [
+        {
+          id: "binding",
+          repositoryId: 2,
+          repositoryName: "test/repo",
+          environmentId: "mac",
+          automatic: true,
+          access: { actors: { ids: [7] }, approval: "required" },
+        },
+      ],
+      reconcileRunner: async () => {
+        throw new Error("Must not reconcile a runner");
+      },
+      jobLogs: async () => {
+        throw new Error("Must not read job logs");
+      },
+      prepareRunner: async () => {
+        throw new Error("Must not register a runner");
+      },
+      releaseRunner: async () => {},
+      runnerStatus: async () => ({ busy: false, status: "online" as const }),
+    }));
+    store.put("environment", "mac", {
+      id: "mac",
+      name: "Mac",
+      os: "macos",
+      state: "ready",
+      cpu: 2,
+      memoryMiB: 4096,
+      basePath: "/unused/base",
+    });
+    try {
+      const operation = service.submit("denied", {
+        type: "runner.run",
+        bindingId: "binding",
+        jobId: 4,
+        ...(automatic ? { automatic: true } : {}),
+      });
+      await service.drain();
+      await vi.waitFor(() =>
+        expect(store.snapshot().operations.find((item) => item.id === operation.id)).toMatchObject({
+          status: "failed",
+          result: { code },
+        }),
+      );
+      expect(start).not.toHaveBeenCalled();
+      expect(store.snapshot().instances).toHaveLength(0);
+    } finally {
+      await service.close();
+      store.close();
+      start.mockRestore();
+    }
+  },
+);

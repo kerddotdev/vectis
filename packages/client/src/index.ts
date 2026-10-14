@@ -1,5 +1,5 @@
 import { RepositoryReadiness, RepositoryReadinessInput } from "../../protocol/src/readiness.js";
-import { Jobs } from "../../protocol/src/jobs.js";
+import { JobLogs, JobLogRequest, Jobs } from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { GitHubAccounts, MachineRepositories } from "../../protocol/src/repositories.js";
 import { Diagnostics } from "../../protocol/src/diagnostics.js";
@@ -72,6 +72,17 @@ export class VectisClient {
   async jobs(bindingId: string) {
     return Schema.decodeUnknownSync(Jobs)(
       await this.request(`/v1/jobs?bindingId=${encodeURIComponent(bindingId)}`),
+    );
+  }
+  async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
+    const request = Schema.decodeUnknownSync(JobLogRequest, { onExcessProperty: "error" })(input);
+    const params = new URLSearchParams({
+      bindingId: request.bindingId,
+      jobId: String(request.jobId),
+    });
+    if (request.after !== undefined) params.set("after", String(request.after));
+    return Schema.decodeUnknownSync(JobLogs)(
+      await this.request(`/v1/jobs/logs?${params}`, undefined, signal, 60000),
     );
   }
   async githubAccounts() {

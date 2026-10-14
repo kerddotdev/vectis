@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { Command, Identifier } from "./index.js";
 import { RepositoryReadinessInput } from "./readiness.js";
+import { JobLogRequest } from "./jobs.js";
 import { LogRequest } from "./logs.js";
 
 export const ControllerApproval = Schema.Struct({
@@ -25,6 +26,7 @@ export const LocalQuery = Schema.Union([
   }),
   Schema.Struct({ name: Schema.Literal("repository.readiness"), input: RepositoryReadinessInput }),
   Schema.Struct({ name: Schema.Literal("jobs"), bindingId: Identifier }),
+  Schema.Struct({ name: Schema.Literal("job.logs"), ...JobLogRequest.fields }),
   Schema.Struct({ name: Schema.Literal("operation"), id: Identifier }),
   Schema.Struct({ name: Schema.Literal("logs"), ...LogRequest.fields }),
 ]);

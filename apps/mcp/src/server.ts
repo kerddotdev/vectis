@@ -23,6 +23,7 @@ import type { LaunchAgent } from "../../../packages/client/src/launch-agent.js";
 import type { VectisClient } from "../../../packages/client/src/index.js";
 import { buildInfo } from "../../../packages/client/src/build.js";
 import { cloudDeployment } from "../../../packages/client/src/deployment.js";
+import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { LogRequest } from "../../../packages/protocol/src/logs.js";
 
 const commandSchema = Schema.toJsonSchemaDocument(Request);
@@ -31,6 +32,7 @@ const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
 const jobInput = Schema.Struct({ bindingId: Identifier });
 const readinessSchema = Schema.toJsonSchemaDocument(RepositoryReadinessInput);
+const jobLogSchema = Schema.toJsonSchemaDocument(JobLogRequest);
 const jobSchema = Schema.toJsonSchemaDocument(jobInput);
 const operationInput = Schema.Struct({ id: Identifier });
 const operationSchema = Schema.toJsonSchemaDocument(operationInput);
@@ -58,6 +60,13 @@ const tools = [
     description:
       "Read the latest 100 GitHub job records for a connected repository binding. GitHub conclusions are separate from local runner lifecycle status.",
     inputSchema: { ...jobSchema.schema, $defs: jobSchema.definitions },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "vectis_job_logs",
+    description:
+      "Read a GitHub job log on demand in UTF-8 chunks from its last 4 MiB. Pass next back as after (an absolute byte offset) to continue. Poll until complete; running jobs may not have logs yet. truncated means earlier content was skipped. GitHub masking is preserved.",
+    inputSchema: { ...jobLogSchema.schema, $defs: jobLogSchema.definitions },
     annotations: { readOnlyHint: true },
   },
   {
@@ -180,6 +189,7 @@ export function createMcpServer(
       | "repositoryReadiness"
       | "githubAccounts"
       | "jobs"
+      | "jobLogs"
       | "submit"
       | "wait"
       | "shutdown"
@@ -287,6 +297,13 @@ export function createMcpServer(
             request.params.arguments,
           );
           result = await (await connect()).jobs(input.bindingId);
+          break;
+        }
+        case "vectis_job_logs": {
+          const input = Schema.decodeUnknownSync(JobLogRequest, { onExcessProperty: "error" })(
+            request.params.arguments,
+          );
+          result = await (await connect()).jobLogs(input);
           break;
         }
         case "vectis_github_accounts":

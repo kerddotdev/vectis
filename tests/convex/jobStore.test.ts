@@ -88,3 +88,15 @@ test("identical API and webhook observations do not rewrite the row", async () =
   await t.run((ctx) => storeJob(ctx, { ...completed, labels: [...completed.labels] }, 4, 5));
   expect(await t.run((ctx) => ctx.db.get("githubJobs", id))).toEqual(before);
 });
+
+test("actor attestations do not carry over to another run attempt", async () => {
+  const t = convexTest(schema, modules);
+  const id = await t.run((ctx) =>
+    storeJob(ctx, { ...completed, run_attempt: 1, actor_id: 7, triggering_actor_id: 8 }, 4, 5),
+  );
+  await t.run((ctx) => storeJob(ctx, { ...completed, run_attempt: 2 }, 4, 5));
+  const job = await t.run((ctx) => ctx.db.get("githubJobs", id));
+  expect(job).toMatchObject({ runAttempt: 2 });
+  expect(job).not.toHaveProperty("actorId");
+  expect(job).not.toHaveProperty("triggeringActorId");
+});

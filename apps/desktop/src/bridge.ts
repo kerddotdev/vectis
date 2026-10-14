@@ -12,6 +12,7 @@ export type DesktopAction =
   | "repository.readiness"
   | "github.accounts"
   | "jobs"
+  | "job.logs"
   | "command"
   | "command.settle"
   | "service.install"
