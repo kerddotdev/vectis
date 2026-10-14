@@ -3,7 +3,7 @@ import { runRunnerTask } from "./runner-task.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
-import { VectisError } from "../../../packages/protocol/src/index.js";
+import { VectisError, type Environment } from "../../../packages/protocol/src/index.js";
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
 vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../../packages/runner/src/guest.js")>()),
@@ -12,7 +12,10 @@ vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
 vi.mock("../../../packages/runner/src/guest-diagnostics.js", () => ({
   collectRunnerDiagnostics: vi.fn(async () => "collected"),
 }));
-afterEach(() => vi.resetAllMocks());
+afterEach(() => {
+  vi.resetAllMocks();
+  vi.useRealTimers();
+});
 const environment = {
   id: "test",
   name: "Test",
@@ -22,7 +25,7 @@ const environment = {
   cpu: 1,
   memoryMiB: 512,
 };
-function fixture() {
+function fixture(os: Environment["os"] = "linux") {
   const events: string[] = [];
   const broker = {
     findRunner: vi.fn(async () => null),
@@ -33,7 +36,7 @@ function fixture() {
       encodedConfig: "c2VjcmV0",
       access: { repositoryId: 2, actors: "any" as const, approval: "automatic" as const },
       environmentId: "test",
-      os: "linux" as const,
+      os,
     })),
     releaseRunner: vi.fn(async () => {
       events.push("release");
@@ -284,3 +287,164 @@ test.each([0, 1])(
     expect(events).toEqual(["stop", "release"]);
   },
 );
+
+function heldListener() {
+  const state: { signal?: AbortSignal; finish?: () => void } = {};
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockImplementationOnce(async (_connection, _script, options) => {
+      state.signal = options.signal;
+      return new Promise((resolve, reject) => {
+        const cancel = () => reject(new VectisError("guest_cancelled", "Listening aborted."));
+        options.signal.addEventListener("abort", cancel, { once: true });
+        state.finish = () => {
+          options.signal.removeEventListener("abort", cancel);
+          resolve({ exitCode: 0, stdout: "", stderr: "", truncated: false });
+        };
+      });
+    });
+  return state;
+}
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s marker backstop aborts listening and stops the VM before releasing the runner",
+  async (os) => {
+    vi.useFakeTimers();
+    const { controls, events } = fixture(os);
+    const state = heldListener();
+    vi.mocked(executeGuest).mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\nactor not allowed\n",
+      stderr: "",
+      truncated: false,
+    });
+    const result = runRunnerTask(
+      "binding",
+      "key",
+      { ...environment, os },
+      controls,
+      new AbortController().signal,
+    );
+    await vi.advanceTimersByTimeAsync(9999);
+    expect(executeGuest).toHaveBeenCalledTimes(2);
+    expect(state.signal?.aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(result).resolves.toMatchObject({
+      status: "failed",
+      code: "runner_assignment_rejected",
+      message: "Vectis refused the assigned GitHub job: actor not allowed.",
+    });
+    expect(state.signal?.aborted).toBe(true);
+    expect(events).toEqual(["stop", "release"]);
+    expect(executeGuest).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.stringContaining("assignment-rejected"),
+      expect.objectContaining({ shell: os === "windows" ? "powershell" : "bash" }),
+    );
+    expect(vi.getTimerCount()).toBe(0);
+    expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
+  },
+);
+
+test("transient marker check errors leave listening active and the next check can reject", async () => {
+  vi.useFakeTimers();
+  const { controls, events } = fixture();
+  const state = heldListener();
+  vi.mocked(executeGuest)
+    .mockRejectedValueOnce(new GuestUnavailableError("SSH connection reset"))
+    .mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\nrepository id mismatch\n",
+      stderr: "",
+      truncated: false,
+    });
+  const result = runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    new AbortController().signal,
+  );
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(state.signal?.aborted).toBe(false);
+  expect(events).toEqual([]);
+  await vi.advanceTimersByTimeAsync(10000);
+  await expect(result).resolves.toMatchObject({
+    status: "failed",
+    code: "runner_assignment_rejected",
+    message: expect.stringContaining("repository id mismatch"),
+  });
+  expect(events).toEqual(["stop", "release"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a listener that exits before the first poll still reads the rejection reason", async () => {
+  const { controls, events } = fixture();
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({ exitCode: 1, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\nrun approval mismatch\n",
+      stderr: "",
+      truncated: false,
+    });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({
+    status: "failed",
+    code: "runner_assignment_rejected",
+    message: expect.stringContaining("run approval mismatch"),
+  });
+  expect(events).toEqual(["stop", "release"]);
+});
+
+test("cancellation stops an in-flight marker check and releases all monitoring timers", async () => {
+  vi.useFakeTimers();
+  const { controls, events } = fixture();
+  heldListener();
+  let probeSignal: AbortSignal | undefined;
+  vi.mocked(executeGuest).mockImplementationOnce(async (_connection, _script, options) => {
+    probeSignal = options.signal;
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener(
+        "abort",
+        () => reject(new GuestUnavailableError("SSH aborted")),
+        { once: true },
+      );
+    });
+  });
+  const abort = new AbortController();
+  const result = runRunnerTask("binding", "key", environment, controls, abort.signal);
+  await vi.advanceTimersByTimeAsync(19000);
+  expect(executeGuest).toHaveBeenCalledTimes(3);
+  expect(probeSignal?.aborted).toBe(false);
+  abort.abort();
+  await expect(result).resolves.toMatchObject({ status: "cancelled" });
+  expect(probeSignal?.aborted).toBe(true);
+  expect(events).toEqual(["stop", "release"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("a witnessed policy rejection stays failed if cancellation arrives during cleanup", async () => {
+  const { controls } = fixture();
+  const abort = new AbortController();
+  controls.stop.mockImplementation(async () => {
+    abort.abort();
+  });
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: "VECTIS_RUNNER_ASSIGNMENT_REJECTED\nactor not allowed\n",
+      stderr: "",
+      truncated: false,
+    });
+  const result = await runRunnerTask("binding", "key", environment, controls, abort.signal);
+  expect(result).toMatchObject({ status: "failed", code: "runner_assignment_rejected" });
+});

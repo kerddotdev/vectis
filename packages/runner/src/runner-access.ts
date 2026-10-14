@@ -1,8 +1,25 @@
 import { Schema } from "effect";
 import { RunnerAccess } from "../../protocol/src/repository-access.js";
-import { VectisError } from "../../protocol/src/index.js";
+import { VectisError, type Environment } from "../../protocol/src/index.js";
 
 export const assignmentRejectedMarker = "VECTIS_RUNNER_ASSIGNMENT_REJECTED";
+export const assignmentRejectedPath = "vectis-actions-runner/_vectis/assignment-rejected";
+
+export function assignmentRejectedScript(os: Environment["os"]) {
+  if (os === "windows")
+    return `$marker = Join-Path $env:USERPROFILE '${assignmentRejectedPath}'
+if (Test-Path -LiteralPath $marker -PathType Leaf) {
+  Write-Output '${assignmentRejectedMarker}'
+  Get-Content -LiteralPath $marker
+}
+`;
+  return `marker="$HOME/${assignmentRejectedPath}"
+if test -f "$marker"; then
+  printf '${assignmentRejectedMarker}\\n'
+  cat "$marker"
+fi
+`;
+}
 
 export function renderRunnerPolicy(input: unknown) {
   const access = Schema.decodeUnknownSync(RunnerAccess)(input);
@@ -23,15 +40,50 @@ runAttempt=${access.approvedRun?.runAttempt ?? ""}
 
 export function bashJobStartedHook() {
   return `#!/bin/bash
+block_forever() {
+  trap '' HUP INT TERM
+  while :; do sleep 3600; done
+}
+refuse() {
+  trap - ERR EXIT
+  trap '' HUP INT TERM PIPE
+  set +eu
+  printf '::error::Vectis refused this job: %s\\n' "$1" || block_forever
+  printf '${assignmentRejectedMarker}\\n' || block_forever
+  printf '%s\\n' "$1" > "$HOME/${assignmentRejectedPath}.tmp" || block_forever
+  mv -f "$HOME/${assignmentRejectedPath}.tmp" "$HOME/${assignmentRejectedPath}" || block_forever
+  ancestor=$$
+  worker=
+  listener=
+  for ((depth=0; depth<64; depth++)); do
+    if [[ -r "/proc/$ancestor/stat" ]]; then
+      IFS= read -r stat < "/proc/$ancestor/stat" || block_forever
+      name="\${stat#*(}"
+      name="\${name%%)*}"
+      read -r state parent rest <<< "\${stat##*) }" || block_forever
+    else
+      parent=$(ps -o ppid= -p "$ancestor") || block_forever
+      name=$(ps -o comm= -p "$ancestor") || block_forever
+      name="\${name##*/}"
+    fi
+    parent="\${parent//[[:space:]]/}"
+    [[ "$parent" =~ ^[0-9]+$ && "$parent" -gt 1 && "$parent" != "$ancestor" ]] || block_forever
+    if [[ -z "$worker" && "$name" == Runner.Worker ]]; then
+      worker=$ancestor
+    elif [[ -n "$worker" && "$name" == Runner.Listener ]]; then
+      listener=$ancestor
+      break
+    fi
+    ancestor=$parent
+  done
+  [[ -n "$worker" && -n "$listener" ]] || block_forever
+  kill -KILL "$worker" || block_forever
+  kill -KILL "$listener" || block_forever
+  block_forever
+}
+trap 'refuse "policy verification failed"' ERR EXIT
 set -eu
 policy_dir="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
-refuse() {
-  printf '::error::Vectis refused this job: %s\\n' "$1"
-  printf '${assignmentRejectedMarker}\\n'
-  printf '${assignmentRejectedMarker}\\n' > "$policy_dir/rejected"
-  exit 1
-}
-trap 'refuse "policy verification failed"' ERR
 source "$policy_dir/policy"
 [[ "\${GITHUB_REPOSITORY_ID:-}" == "$repositoryId" ]] || refuse "repository id mismatch"
 if [[ "$approval" == required ]]; then
@@ -64,16 +116,42 @@ VECTIS_PYTHON
   [[ "$sender" =~ ^[1-9][0-9]*$ ]] || refuse "triggering actor id unavailable"
   [[ ",$actors," == *",$sender,"* ]] || refuse "triggering actor not allowed"
 fi
+trap - EXIT
 `;
 }
 
 export function powershellJobStartedHook() {
   return `$ErrorActionPreference = 'Stop'
+function Wait-Forever {
+  while ($true) { Start-Sleep -Seconds 3600 }
+}
 function Refuse([string]$reason) {
-  Write-Output "::error::Vectis refused this job: $reason"
-  Write-Output '${assignmentRejectedMarker}'
-  Set-Content -LiteralPath (Join-Path $PSScriptRoot 'rejected') -Value '${assignmentRejectedMarker}'
-  exit 1
+  try {
+    [Console]::Out.WriteLine("::error::Vectis refused this job: $reason")
+    [Console]::Out.WriteLine('${assignmentRejectedMarker}')
+    Set-Content -LiteralPath (Join-Path $env:USERPROFILE '${assignmentRejectedPath}.tmp') -Value $reason
+    Move-Item -LiteralPath (Join-Path $env:USERPROFILE '${assignmentRejectedPath}.tmp') -Destination (Join-Path $env:USERPROFILE '${assignmentRejectedPath}') -Force
+    [Console]::Out.Flush()
+    [Console]::Error.Flush()
+    $ancestor = $PID
+    $worker = $null
+    $listener = $null
+    for ($depth = 0; $depth -lt 64; $depth++) {
+      $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ancestor"
+      if (!$process -or $process.ParentProcessId -le 1 -or $process.ParentProcessId -eq $ancestor) { Wait-Forever }
+      if (!$worker -and $process.Name -ceq 'Runner.Worker.exe') {
+        $worker = $ancestor
+      } elseif ($worker -and $process.Name -ceq 'Runner.Listener.exe') {
+        $listener = $ancestor
+        break
+      }
+      $ancestor = $process.ParentProcessId
+    }
+    if (!$worker -or !$listener) { Wait-Forever }
+    Stop-Process -Id $worker -Force -ErrorAction Stop
+    Stop-Process -Id $listener -Force -ErrorAction Stop
+  } catch { Wait-Forever }
+  Wait-Forever
 }
 try {
   $policy = ConvertFrom-StringData (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'policy') -Raw)
