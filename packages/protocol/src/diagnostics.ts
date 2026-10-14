@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { ReadinessCheck } from "./readiness.js";
 export const Diagnostics = Schema.Struct({
   source: Schema.Literals(["service", "shell"]),
   host: Schema.Struct({
@@ -16,5 +17,6 @@ export const Diagnostics = Schema.Struct({
     keychainHelper: Schema.Boolean,
   }),
   home: Schema.String,
+  checks: Schema.optional(Schema.Array(ReadinessCheck)),
 });
 export type Diagnostics = typeof Diagnostics.Type;

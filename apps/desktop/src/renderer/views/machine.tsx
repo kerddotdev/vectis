@@ -17,6 +17,7 @@ import {
   StatCard,
 } from "@/components/layout";
 import { OsTile } from "@/components/os-icon";
+import { ReadinessList } from "@/components/readiness";
 import { StatusBadge } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import {
@@ -225,29 +226,15 @@ const architectures: Record<string, string> = {
   x64: "Intel (x86-64)",
 };
 
-const components = [
-  {
-    key: "appleHelper",
-    name: "Apple Virtualization Helper",
-    purpose: "Runs macOS and Ubuntu guests with Apple's Virtualization framework.",
-  },
-  {
-    key: "keychainHelper",
-    name: "Keychain Helper",
-    purpose: "Stores machine and sign-in credentials in the macOS Keychain.",
-  },
-  { key: "qemu", name: "QEMU", purpose: "Runs Windows guests." },
-  {
-    key: "qemuImg",
-    name: "QEMU Disk Tool",
-    purpose: "Creates disk images for Windows guests.",
-  },
-  {
-    key: "swtpm",
-    name: "Software TPM",
-    purpose: "Provides the TPM that Windows 11 requires.",
-  },
-] as const;
+const checkTitles: Partial<Record<string, string>> = {
+  host: "Host",
+  "runtime.appleHelper": "Apple Virtualization Helper",
+  "runtime.keychainHelper": "Keychain Helper",
+  "runtime.qemu": "QEMU",
+  "runtime.qemuImg": "QEMU Disk Tool",
+  "runtime.swtpm": "Software TPM",
+  home: "Service data",
+};
 
 const CommandLine = Schema.Struct({
   directory: Schema.String,
@@ -355,7 +342,9 @@ export function Diagnostics() {
     "doctor",
     Schema.decodeUnknownSync(DiagnosticsReport),
   );
-  const missing = report ? components.filter(({ key }) => !report.configured[key]).length : 0;
+  const runtimeMissing = report?.checks?.some(
+    (check) => check.id.startsWith("runtime.") && check.status !== "ok",
+  );
   return (
     <Page
       title="Diagnostics"
@@ -384,52 +373,62 @@ export function Diagnostics() {
         !error && <EmptyState>Checking this machine</EmptyState>
       ) : (
         <>
+          {report.checks ? (
+            <Section id="runtime" title="Checks">
+              <List>
+                <ReadinessList checks={report.checks} titles={checkTitles} />
+              </List>
+              {runtimeMissing && (
+                <Button variant="link" className="self-start px-0" onClick={() => setHelp(true)}>
+                  How to configure missing components
+                </Button>
+              )}
+            </Section>
+          ) : (
+            <Section id="runtime" title="Runtime components">
+              <p className="text-xs text-muted-foreground">
+                Update this machine's Vectis service to see detailed checks.
+              </p>
+              <List>
+                {Object.entries(report.configured).map(([key, configured]) => (
+                  <Row
+                    key={key}
+                    title={checkTitles[`runtime.${key}`] ?? key}
+                    trailing={
+                      <StatusBadge
+                        tone={configured ? "success" : "idle"}
+                        label={configured ? "Configured" : "Not configured"}
+                      />
+                    }
+                  />
+                ))}
+              </List>
+              {Object.values(report.configured).some((configured) => !configured) && (
+                <Button variant="link" className="self-start px-0" onClick={() => setHelp(true)}>
+                  How to configure missing components
+                </Button>
+              )}
+            </Section>
+          )}
           <Section title="Host">
             <List>
               <Row
                 title={`${platforms[report.host.platform] ?? report.host.platform} on ${architectures[report.host.arch] ?? report.host.arch}`}
                 detail={`${report.host.cpus} CPU cores · ${formatMemory(report.host.memoryMiB)} memory`}
                 trailing={
-                  <StatusBadge
-                    tone={report.supportedHost ? "success" : "unsupported"}
-                    label={report.supportedHost ? "Supported" : "Unsupported"}
-                  />
+                  !report.checks && (
+                    <StatusBadge
+                      tone={report.supportedHost ? "success" : "unsupported"}
+                      label={report.supportedHost ? "Supported" : "Unsupported"}
+                    />
+                  )
                 }
               />
             </List>
           </Section>
-          <Section
-            title="Runtime components"
-            description={
-              missing
-                ? `${missing} of ${components.length} components are not configured. Guests that need them cannot start.`
-                : "All components are configured. Each is checked again before a VM starts."
-            }
-          >
-            <List>
-              {components.map(({ key, name, purpose }) => (
-                <Row
-                  key={key}
-                  title={name}
-                  detail={purpose}
-                  trailing={
-                    <StatusBadge
-                      tone={report.configured[key] ? "success" : "idle"}
-                      label={report.configured[key] ? "Configured" : "Not configured"}
-                    />
-                  }
-                />
-              ))}
-            </List>
-            {missing > 0 && (
-              <Button variant="link" className="self-start px-0" onClick={() => setHelp(true)}>
-                How to configure missing components
-              </Button>
-            )}
-          </Section>
           <ServiceLogSection />
           {!machineId && <CommandLineTools />}
-          <Section title="Service data">
+          <Section id="home" title="Service data">
             <Details items={[["State directory", <Mono key="home">{report.home}</Mono>]]} />
           </Section>
         </>
@@ -448,8 +447,8 @@ export function Diagnostics() {
           >
             <p>
               <span className="font-medium text-foreground">In the Vectis app</span>, every
-              component ships inside the app and is configured automatically. If one shows Not
-              configured, choose Use this app's runtime from the service menu in Overview.
+              component ships inside the app and is configured automatically. If a check reports one
+              as missing, choose Use this app's runtime from the service menu in Overview.
             </p>
             <p>
               <span className="font-medium text-foreground">When running from source</span>, build

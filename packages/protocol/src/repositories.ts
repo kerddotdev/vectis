@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { RepositoryAccess } from "./repository-access.js";
 import { Identifier } from "./identifier.js";
 export const MachineRepositories = Schema.Array(
   Schema.Struct({
@@ -8,6 +9,7 @@ export const MachineRepositories = Schema.Array(
     environmentId: Identifier,
     runsOn: Schema.optional(Schema.String),
     automatic: Schema.optional(Schema.Boolean),
+    access: Schema.optional(RepositoryAccess),
   }),
 );
 export type MachineRepositories = typeof MachineRepositories.Type;

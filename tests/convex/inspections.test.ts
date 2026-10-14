@@ -54,7 +54,12 @@ test("remote inspections require an online owned host, bounded responses and an 
       digest,
       requestJson: JSON.stringify(request),
     });
-  const request = { type: "query.submit", machineId, key: "stable", query: { name: "status" } };
+  const request = {
+    type: "query.submit",
+    machineId,
+    key: "stable",
+    query: { name: "job.logs", bindingId: "binding", jobId: 4, after: 100 },
+  };
   await expect(call(request)).rejects.toThrow();
   expect(await call({ type: "machines.list" })).toMatchObject([
     { id: machineId, lastSeenAt: null, online: false },
@@ -68,6 +73,7 @@ test("remote inspections require an online owned host, bounded responses and an 
   await expect(call({ ...request, machineId: otherId })).rejects.toThrow();
   const [pending] = await host.query(api.inspections.pending, {});
   if (!pending) throw new Error("Expected inspection");
+  expect(JSON.parse(pending.queryJson)).toEqual(request.query);
   expect(await otherHost.query(api.inspections.pending, {})).toEqual([]);
   await expect(
     otherHost.mutation(api.inspections.respond, { id: pending.id, responseJson: "{}" }),
@@ -75,6 +81,12 @@ test("remote inspections require an online owned host, bounded responses and an 
   await expect(
     host.mutation(api.inspections.respond, { id: pending.id, responseJson: "x".repeat(262145) }),
   ).rejects.toThrow();
+  await expect(
+    host.mutation(api.inspections.respond, {
+      id: pending.id,
+      responseJson: "\u00e9".repeat(140000),
+    }),
+  ).rejects.toThrow(/query_result_too_large/);
   await host.mutation(api.inspections.respond, {
     id: pending.id,
     responseJson: '{"ok":true,"result":{}}',

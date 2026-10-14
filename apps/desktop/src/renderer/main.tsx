@@ -33,8 +33,22 @@ const routeTree = rootRoute.addChildren([
       id: typeof search.id === "string" ? search.id : undefined,
     }),
   }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/environments", component: Environments }),
-  createRoute({ getParentRoute: () => rootRoute, path: "/repositories", component: Repositories }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/environments",
+    component: Environments,
+    validateSearch: (search: Record<string, unknown>) => ({
+      add: search.add === true ? true : undefined,
+    }),
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/repositories",
+    component: Repositories,
+    validateSearch: (search: Record<string, unknown>) => ({
+      connect: search.connect === true ? true : undefined,
+    }),
+  }),
   createRoute({ getParentRoute: () => rootRoute, path: "/connections", component: Connections }),
   createRoute({ getParentRoute: () => rootRoute, path: "/storage", component: Storage }),
   createRoute({ getParentRoute: () => rootRoute, path: "/diagnostics", component: Diagnostics }),

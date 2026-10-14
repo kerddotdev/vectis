@@ -22,6 +22,7 @@ const environment = {
   sshUser: "vectis",
   sshKeyPath: "/test/key",
   knownHostsPath: "/test/known_hosts",
+  sshHostKeyMode: "instance" as const,
 };
 const instance = {
   id: "instance",
@@ -30,7 +31,20 @@ const instance = {
   pid: 1,
   createdAt: new Date().toISOString(),
   macAddress: "02:00:00:00:00:01",
+  knownHostsPath: "/test/instance-known-hosts",
 };
+test("Linux runners cannot fall back to a shared environment host key", async () => {
+  const { sshHostKeyMode: _mode, ...legacy } = environment;
+  await expect(readyGuest(legacy, instance, AbortSignal.timeout(1000))).rejects.toMatchObject({
+    code: "setup_required",
+  });
+  const { knownHostsPath: _pin, ...unpinned } = instance;
+  await expect(readyGuest(environment, unpinned, AbortSignal.timeout(1000))).rejects.toMatchObject({
+    code: "setup_required",
+  });
+  expect(waitForGuestAddress).not.toHaveBeenCalled();
+  expect(executeGuest).not.toHaveBeenCalled();
+});
 test("rejects incompatible architecture, malformed output and clock skew", () => {
   verifyGuestReadiness("aarch64 1000", 1000000);
   verifyGuestReadiness("Arm64 1000\r\n", 1000000);
@@ -39,7 +53,7 @@ test("rejects incompatible architecture, malformed output and clock skew", () =>
   expect(() => verifyGuestReadiness("arm64 1000 unexpected", 1000000)).toThrow("ARM64");
   expect(() => verifyGuestReadiness("arm64 1070", 1000000)).toThrow("clock");
 });
-test("uses the owned MAC address and pinned environment identity instead of configured host overrides", async () => {
+test("uses the owned MAC address and pinned instance identity instead of configured host overrides", async () => {
   vi.mocked(waitForGuestAddress).mockResolvedValue("192.168.64.8");
   vi.mocked(executeGuest).mockResolvedValue({
     exitCode: 0,
@@ -48,7 +62,13 @@ test("uses the owned MAC address and pinned environment identity instead of conf
     truncated: false,
   });
   const connection = await readyGuest(environment, instance, AbortSignal.timeout(1000));
-  expect(connection).toMatchObject({ host: "192.168.64.8", port: 22, hostKeyAlias: "test" });
+  expect(vi.mocked(executeGuest).mock.calls[0]?.[1]).not.toContain("binfmt_misc");
+  expect(connection).toMatchObject({
+    host: "192.168.64.8",
+    port: 22,
+    hostKeyAlias: "instance",
+    knownHostsFile: "/test/instance-known-hosts",
+  });
   expect(waitForGuestAddress).toHaveBeenCalledWith(instance.macAddress, expect.any(AbortSignal));
 });
 test("rejects foreign instances and Windows forwarding that is not loopback", async () => {
@@ -67,4 +87,30 @@ test("rejects foreign instances and Windows forwarding that is not loopback", as
     ),
   ).rejects.toMatchObject({ code: "guest_address_unavailable" });
   expect(executeGuest).not.toHaveBeenCalled();
+});
+
+test.each([0, 78, 1])("Rosetta readiness handles guest exit %s honestly", async (exitCode) => {
+  vi.mocked(waitForGuestAddress).mockResolvedValue("192.168.64.8");
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode,
+    stdout: `aarch64 ${Math.floor(Date.now() / 1000)}`,
+    stderr: "",
+    truncated: false,
+  });
+  const result = readyGuest(
+    { ...environment, x64: "rosetta" },
+    instance,
+    AbortSignal.timeout(1000),
+  );
+  if (exitCode === 0) await expect(result).resolves.toMatchObject({ hostKeyAlias: instance.id });
+  else
+    await expect(result).rejects.toMatchObject({
+      code: exitCode === 78 ? "rosetta_guest_unprepared" : "guest_readiness_failed",
+      ...(exitCode === 78 ? { nextStep: "Prepare the Linux environment again" } : {}),
+    });
+  expect(executeGuest).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.stringContaining("test -e /proc/sys/fs/binfmt_misc/rosetta"),
+    expect.anything(),
+  );
 });

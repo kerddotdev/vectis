@@ -5,12 +5,14 @@ import { List, Page, Row, Section } from "@/components/layout";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { formatMemory } from "@/lib/format";
+import { notify } from "@/lib/notify";
+import { getNotificationsEnabled, setNotificationsEnabled } from "@/lib/notification-preferences";
 import { useStateApi } from "@/state";
 
 const limits = { min: 1, max: 16 } as const;
 
 export function Settings() {
-  const { snapshot, submit } = useStateApi();
+  const { snapshot, submit, machineId } = useStateApi();
   const saved = snapshot?.machine.maxRunners ?? defaultMaxRunners;
   const [value, setValue] = useState(saved);
   const [saving, setSaving] = useState(false);
@@ -98,6 +100,50 @@ export function Settings() {
           />
         </List>
       </Section>
+      {!machineId && <NotificationsSection />}
     </Page>
+  );
+}
+
+function NotificationsSection() {
+  const [enabled, setEnabled] = useState<boolean>();
+  useEffect(() => {
+    let current = true;
+    getNotificationsEnabled().then(
+      (value) => current && setEnabled(value),
+      (issue: unknown) =>
+        notify.error(issue instanceof Error ? issue.message : "The request failed."),
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
+  const change = async (next: boolean) => {
+    const previous = enabled;
+    setEnabled(next);
+    try {
+      setEnabled(await setNotificationsEnabled(next));
+    } catch (issue) {
+      setEnabled(previous);
+      notify.error(issue instanceof Error ? issue.message : "The request failed.");
+    }
+  };
+  return (
+    <Section title="Notifications">
+      <List>
+        <Row
+          title="Notify me when Vectis needs me or work fails"
+          detail="Shows a macOS notification while Vectis is open in the background. Notifications stop when you quit the app."
+          trailing={
+            <Switch
+              checked={enabled ?? false}
+              disabled={enabled === undefined}
+              aria-label="Notify me when Vectis needs me or work fails"
+              onCheckedChange={(next) => void change(next)}
+            />
+          }
+        />
+      </List>
+    </Section>
   );
 }

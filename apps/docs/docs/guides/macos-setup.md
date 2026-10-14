@@ -51,6 +51,12 @@ vectis environment finish-macos-setup <setup-id> --wait --json
 
 Vectis registers the environment only after the same verified setup session has stopped. Reopening its console requires another verification before finishing. A registered environment still needs repository linking and a real Actions verification job. Each runner checks guest readiness again before GitHub registration.
 
+## Network access
+
+Apple Virtualization NAT does not enforce egress filtering. The guest can reach the internet, the host and the local network. Status reports `network: { egress: "open", enforcement: "not_enforced" }`, including for existing environments without an explicit setting.
+
+`vectis environment configure <id> --egress open --json` is accepted. Requesting `internet_only` fails with `egress_unsupported`: "Apple Virtualization NAT cannot restrict guest network access yet; this environment can reach the host and local network." Windows environments support enforced internet-only egress. Inspect effective state with `vectis status --json`, `vectis environment list --json` or MCP `vectis_status`; MCP uses the same configuration command.
+
 ## What the guest contains
 
 A macOS guest is whatever you install in its setup console. Vectis restores Apple's image, enrolls SSH and verifies the guest; it cannot install Xcode for you, because Apple does not permit redistributing it and it needs an Apple ID and tens of gigabytes.
