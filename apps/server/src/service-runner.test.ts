@@ -55,7 +55,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         name: "Build",
         workflowName: "CI",
         htmlUrl: "https://github.com/test/repo/actions/runs/2/job/1",
-        runnerId: null,
+        runnerId: 0,
         runnerName: null,
         updatedAt: 1,
         labels: ["vectis-test"],
