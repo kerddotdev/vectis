@@ -11,7 +11,9 @@ To see how Vectis would rewrite one workflow file without connecting anything, m
 vectis migration preview .github/workflows/test.yml --map ubuntu-24.04-arm=vectis-ubuntu --wait --json
 ```
 
-The result contains `changed`, the proposed YAML as `source`, and `findings` for jobs it left alone. Nothing is written.
+The result contains `changed`, the proposed YAML as `source`, and `findings` for jobs it left alone. Only selected label scalars change; quoting, comments, whitespace and line endings remain intact. Scalars that cannot be safely replaced require manual review. Nothing is written.
+
+The optional `jobs` summary lists each job with `job`, `changed`, `reasons` for retained runner selections, and static `needs` dependencies. A matrix job can have `changed: true` while some selections stay unchanged. Dynamic or aliased dependencies omit `needs`; an empty array means no dependencies. Workflow-level rejections may omit the summary. Repository analysis includes the same summary in each workflow file.
 
 ## Migrate a connected repository
 

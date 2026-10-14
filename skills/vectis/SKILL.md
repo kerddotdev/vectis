@@ -95,4 +95,5 @@ A job that stays queued usually has one of these causes. Check them in order:
 
 - `vectis migration preview <workflow-file> --map <from>=<vectis-label>` rewrites `runs-on` locally without writing files.
 - `vectis migration analyze <binding-id> --wait --json` prepares a preview for a connected repository; review every change and finding with the user. `migration publish <preview-id>` opens a pull request after a successful runner on the same environment, and never merges.
+- Migration changes only selected label scalars, preserving quoting and all surrounding source formatting. Unsafe scalar forms require manual review. Optional per-file `jobs` summaries report changed jobs, reasons for retained selections and static `needs` edges.
 - Migration only moves ARM64-compatible jobs. It leaves x64 labels, reusable workflows, dynamic matrices and privileged triggers alone.
