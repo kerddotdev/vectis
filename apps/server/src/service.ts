@@ -1,3 +1,5 @@
+import { inspect } from "node:util";
+import { redact } from "../../../packages/client/src/redact.js";
 import { startMacGuestAccess, completedMacEnvironment } from "./macos-access-task.js";
 import { discardMacInstallation } from "./macos-discard.js";
 import {
@@ -115,7 +117,7 @@ export class Service {
           try {
             sweep();
           } catch (error) {
-            console.error("Activity retention failed:", error);
+            console.error("Activity retention failed:", redact(inspect(error)));
           }
         },
         60 * 60 * 1000,

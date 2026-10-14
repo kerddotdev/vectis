@@ -1,3 +1,4 @@
+import { redact } from "../../client/src/redact.js";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, copyFile, mkdir, readFile, rm, stat, statfs, writeFile } from "node:fs/promises";
@@ -209,8 +210,10 @@ export async function installWindowsGuest(
   child.stdin.on("error", () => {});
   child.on("error", () => {});
   let diagnostic = "";
+  let diagnosticTruncated = false;
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
+    diagnosticTruncated ||= diagnostic.length + chunk.length > 65536;
     diagnostic = (diagnostic + chunk).slice(-65536);
   });
   const exited = new AbortController();
@@ -349,7 +352,13 @@ export async function installWindowsGuest(
       ]);
     } finally {
       timer.abort();
-      await writeFile(join(directory, "preparation.log"), diagnostic, { mode: 0o600 });
+      const newline = diagnostic.indexOf("\n");
+      const complete = diagnosticTruncated
+        ? newline < 0
+          ? ""
+          : diagnostic.slice(newline + 1)
+        : diagnostic;
+      await writeFile(join(directory, "preparation.log"), redact(complete), { mode: 0o600 });
     }
   }
 }

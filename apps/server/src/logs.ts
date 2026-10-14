@@ -1,3 +1,4 @@
+import { redact } from "../../../packages/client/src/redact.js";
 import { open } from "node:fs/promises";
 import { join } from "node:path";
 import type { ServiceLog } from "../../../packages/protocol/src/logs.js";
@@ -19,7 +20,9 @@ export async function readServiceLog(home: string, lines: number): Promise<Servi
     const buffer = Buffer.alloc(size - start);
     await file.read(buffer, 0, buffer.length, start);
     const text = buffer.toString("utf8");
-    const all = (start > 0 ? text.slice(text.indexOf("\n") + 1) : text).split("\n");
+    const newline = text.indexOf("\n");
+    const tail = start > 0 ? (newline < 0 ? "" : text.slice(newline + 1)) : text;
+    const all = redact(tail).split("\n");
     if (all.at(-1) === "") all.pop();
     return { lines: all.slice(-lines), truncated: start > 0 || all.length > lines };
   } finally {

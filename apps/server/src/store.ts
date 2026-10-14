@@ -1,3 +1,4 @@
+import { redact } from "../../../packages/client/src/redact.js";
 import { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
@@ -14,11 +15,27 @@ import {
 import { deriveActivity, type ActivityLink } from "./activities.js";
 import { migrateStore } from "./store-migrations.js";
 
+function redactOperation(operation: Operation): Operation {
+  return {
+    ...operation,
+    message: redact(operation.message),
+    ...(operation.result === undefined
+      ? {}
+      : {
+          result: JSON.parse(
+            JSON.stringify(operation.result, (_key, value: unknown) =>
+              typeof value === "string" ? redact(value) : value,
+            ),
+          ),
+        }),
+  };
+}
+
 const decodeOperation = Schema.decodeUnknownSync(Operation);
 function readOperation(body: unknown): Operation[] {
   if (typeof body !== "string") return [];
   try {
-    return [decodeOperation(JSON.parse(body))];
+    return [redactOperation(decodeOperation(JSON.parse(body)))];
   } catch {
     return [];
   }
@@ -62,7 +79,11 @@ export class Store {
       .prepare(
         "INSERT INTO records(kind,id,body) VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",
       )
-      .run(kind, id, JSON.stringify(body));
+      .run(
+        kind,
+        id,
+        JSON.stringify(kind === "operation" ? redactOperation(decodeOperation(body)) : body),
+      );
     this.touch();
   }
   remove(kind: string, id: string) {
@@ -161,7 +182,7 @@ export class Store {
             "This request key was used for a different command.",
             "Use the original command or a new request key.",
           );
-        const operation = Schema.decodeUnknownSync(Operation)(record);
+        const operation = redactOperation(decodeOperation(record));
         this.db.exec("COMMIT");
         return { operation, fresh: false };
       }
@@ -192,11 +213,11 @@ export class Store {
   }
   update(operation: Operation, patch: Partial<Operation>): Operation {
     const current = this.get("operation", operation.id);
-    const next = {
+    const next = redactOperation({
       ...(current === undefined ? operation : Schema.decodeUnknownSync(Operation)(current)),
       ...patch,
       updatedAt: new Date().toISOString(),
-    };
+    });
     if (current !== undefined) this.put("operation", next.id, next);
     return next;
   }
