@@ -5,6 +5,7 @@ export const MigrationJob = Schema.Struct({
   changed: Schema.Boolean,
   reasons: Schema.Array(Schema.String),
   needs: Schema.optional(Schema.Array(Schema.String)),
+  targets: Schema.optional(Schema.Array(Schema.String)),
 });
 export type MigrationJob = typeof MigrationJob.Type;
 

@@ -198,10 +198,34 @@ test("job summaries survive preview persistence and decoding alongside legacy pr
   const retained = await device.query(internal.migrationPreviews.owned, { previewId });
   const decoded = Schema.decodeUnknownSync(RepositoryMigration)(JSON.parse(retained.reportJson));
   expect(decoded.files[0]?.jobs).toEqual(preview.jobs);
+  expect(decoded.files[0]?.jobs?.[0]?.targets).toEqual(["vectis-mac"]);
   expect(decoded.files[0]?.after).toBe(before.replace("macos-26", "vectis-mac"));
   const decodeAnalysis = Schema.decodeUnknownSync(MigrationAnalysis);
   expect(decodeAnalysis({ previewId, verified: false, ...decoded }).files[0]?.jobs).toEqual(
     preview.jobs,
   );
   expect(decodeAnalysis({ previewId, verified: false, ...report }).files[0]?.jobs).toBeUndefined();
+});
+
+test("retains legacy job summaries without targets", async () => {
+  const { device, bindingId } = await fixture();
+  const legacy = {
+    ...report,
+    files: report.files.map((file) => ({
+      ...file,
+      jobs: [{ job: "build", changed: true, reasons: [], needs: [] }],
+    })),
+  };
+  const previewId = await device.mutation(internal.migrationPreviews.save, {
+    bindingId,
+    reportJson: JSON.stringify(legacy),
+  });
+  const retained = await device.query(internal.migrationPreviews.owned, { previewId });
+  const decoded = Schema.decodeUnknownSync(MigrationAnalysis)({
+    previewId,
+    verified: false,
+    ...JSON.parse(retained.reportJson),
+  });
+  expect(decoded.files[0]?.jobs).toEqual(legacy.files[0]?.jobs);
+  expect(decoded.files[0]?.jobs?.[0]?.targets).toBeUndefined();
 });

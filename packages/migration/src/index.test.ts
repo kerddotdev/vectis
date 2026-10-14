@@ -6,6 +6,7 @@ test("preserves comments and unrelated jobs, with idempotent migration", () => {
     "# CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-24.04-arm # native\n    steps:\n      - run: echo hello\n  other:\n    runs-on: ubuntu-latest\n";
   const result = previewMigration(source, targets);
   expect(result.changed).toBe(true);
+  expect(result.jobs?.[0]?.targets).toEqual(["vectis-linux-arm64"]);
   expect(result.source).toContain("# CI");
   expect(result.source).toContain("# native");
   expect(result.source).toContain("runs-on: ubuntu-latest");
@@ -148,7 +149,9 @@ ${extra}  safe:
     job: "review",
     reason: expect.stringContaining("cannot be safely replaced"),
   });
-  expect(preview.jobs).toContainEqual(expect.objectContaining({ job: "review", changed: false }));
+  expect(preview.jobs).toContainEqual(
+    expect.objectContaining({ job: "review", changed: false, targets: [] }),
+  );
 });
 
 test.each([
@@ -191,28 +194,32 @@ jobs:
 `;
   const preview = previewMigration(source, targets);
   expect(preview.jobs).toEqual([
-    { job: "build", changed: true, needs: [], reasons: [] },
+    { job: "build", changed: true, needs: [], reasons: [], targets: ["vectis-linux-arm64"] },
     {
       job: "tests",
       changed: true,
+      targets: ["vectis-linux-arm64"],
       needs: ["build"],
       reasons: ["No migration target configured for windows-latest."],
     },
     {
       job: "hosted",
       changed: false,
+      targets: [],
       needs: ["build", "tests"],
       reasons: ["No migration target configured for ubuntu-latest."],
     },
     {
       job: "reusable",
       changed: false,
+      targets: [],
       needs: ["hosted"],
       reasons: ["Reusable workflow requires review in its owning repository."],
     },
     {
       job: "dynamic",
       changed: false,
+      targets: [],
       reasons: ["Dynamic runner expression requires manual review."],
     },
   ]);
@@ -243,8 +250,45 @@ jobs:
     ),
   );
   expect(preview.jobs).toEqual([
-    { job: "shared", changed: false, needs: [], reasons: ["Anchored job requires manual review."] },
-    { job: "alias", changed: false, reasons: ["Non-mapping job requires manual review."] },
-    { job: "safe", changed: true, needs: [], reasons: [] },
+    {
+      job: "shared",
+      changed: false,
+      needs: [],
+      reasons: ["Anchored job requires manual review."],
+      targets: [],
+    },
+    {
+      job: "alias",
+      changed: false,
+      reasons: ["Non-mapping job requires manual review."],
+      targets: [],
+    },
+    { job: "safe", changed: true, needs: [], reasons: [], targets: ["vectis-linux-arm64"] },
   ]);
+});
+
+test("exposes targets for scalar runners in flow-style jobs", () => {
+  const source = "on: push\njobs: { build: { runs-on: ubuntu-24.04-arm } }\n";
+  const preview = previewMigration(source, targets);
+  expect(preview.source).toBe(source.replace("ubuntu-24.04-arm", "vectis-linux-arm64"));
+  expect(preview.jobs?.[0]?.targets).toEqual(["vectis-linux-arm64"]);
+});
+
+test("deduplicates targets across static matrix replacements", () => {
+  const source = `on: push
+jobs:
+  test:
+    runs-on: \${{ matrix.os }}
+    strategy:
+      matrix: { os: [ubuntu-24.04-arm, ubuntu-22.04-arm, macos-26, ubuntu-24.04-arm, windows-latest] }
+`;
+  const preview = previewMigration(source, [
+    ...targets,
+    { from: "ubuntu-22.04-arm", to: "vectis-linux-arm64" },
+    { from: "macos-26", to: "vectis-macos" },
+  ]);
+  expect(preview.source).toContain(
+    "os: [vectis-linux-arm64, vectis-linux-arm64, vectis-macos, vectis-linux-arm64, windows-latest]",
+  );
+  expect(preview.jobs?.[0]?.targets).toEqual(["vectis-linux-arm64", "vectis-macos"]);
 });
