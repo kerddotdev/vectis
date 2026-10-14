@@ -19,7 +19,7 @@ Use **Environments > Prepare a guest image**, with **Ubuntu 24.04 ARM64** select
 
 The service downloads a pinned official Ubuntu QCOW2 image, checks its exact size and SHA-256, converts it to a bootable raw disk, and performs guest configuration locally. The source revision is recorded beside the completed image. Installed package versions are available inside the guest at `/etc/vectis/toolchain-versions.txt`. No host home directory, Docker socket or GitHub App key is shared with the guest.
 
-Each disposable instance receives its own SSH host key through private, read-only setup media. Images prepared with a shared SSH host key must be prepared again before starting runners; Vectis reports `action_required` for those images. Prepare a new environment and reconnect its repositories before removing the old one.
+Each disposable instance receives its own SSH host key through private, read-only setup media. Images prepared with a shared SSH host key must be prepared again before starting runners; Vectis reports `action_required` for those images. To keep the same environment ID, and with it the `vectis-<id>` runner label and existing repository connections, remove the old environment and prepare the new image under that ID. Removing an environment keeps its image files on disk.
 
 ## Network access
 
