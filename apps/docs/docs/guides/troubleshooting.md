@@ -8,7 +8,7 @@ description: What to check when a job keeps waiting, a VM does not start, or an 
 Check these in order. The first one that fails is usually the answer.
 
 1. **Is the Mac available?** `vectis status --json` shows `machine.paused` and `cloud.state`. A paused Mac, a Mac whose cloud connection is not `connected`, or a Mac that is asleep takes no new jobs. Resume it with `vectis resume`.
-2. **Is the Mac busy?** A Mac runs one automatic runner at a time and none while an environment is being prepared. The job starts after the current VM is gone.
+2. **Is the Mac busy?** A Mac runs up to its **Concurrent VMs** setting at once (5 by default; change it with `vectis machine configure --max-runners <N>`), as long as all VMs together fit within the host's CPU cores and 75% of its memory. It starts none while an environment is being prepared or an interrupted instance is unresolved. The job starts when a slot and resources are free. See [Limits and boundaries](/docs/guides/limits).
 3. **Are automatic runners on?** Without them nobody starts a runner. Turn on **Automatic** for the connection, or start one with `vectis runner run`.
 4. **Do the labels match?** The workflow's `runs-on` must contain the connection's `runsOn` label and nothing besides `self-hosted`, the OS label and `ARM64`. See [the label rules](/docs/guides/repositories#choose-the-runs-on-label).
 5. **Is the environment ready?** `vectis status --json` lists environments with their `state`.
