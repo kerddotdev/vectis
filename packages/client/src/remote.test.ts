@@ -150,3 +150,38 @@ test("remote capability discovery uses a fresh inspection and completed operatio
     result: { verified: true },
   });
 });
+
+test("job logs use a controller LocalQuery and carry the cursor and coded errors", async () => {
+  const { request, client } = fixture();
+  const result = {
+    text: "failure\n",
+    next: 108,
+    status: "completed",
+    complete: true,
+    truncated: false,
+  };
+  request
+    .mockResolvedValueOnce({ queryId: "query1" })
+    .mockResolvedValueOnce({ pending: false, responseJson: JSON.stringify({ ok: true, result }) });
+  expect(await client.jobLogs({ bindingId: "binding1", jobId: 4, after: 100 })).toEqual(result);
+  expect(request.mock.calls[0]?.[0]).toMatchObject({
+    type: "query.submit",
+    machineId: "machine1",
+    query: { name: "job.logs", bindingId: "binding1", jobId: 4, after: 100 },
+  });
+  request.mockResolvedValueOnce({ queryId: "query2" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({
+      ok: false,
+      code: "repository_access_denied",
+      message: "Denied.",
+      nextStep: "Check the binding.",
+    }),
+  });
+  await expect(client.jobLogs({ bindingId: "other", jobId: 4 })).rejects.toMatchObject({
+    code: "repository_access_denied",
+  });
+  request.mockClear();
+  await expect(client.jobLogs({ bindingId: "binding1", jobId: 4, after: -1 })).rejects.toThrow();
+  expect(request).not.toHaveBeenCalled();
+});

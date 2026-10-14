@@ -398,6 +398,12 @@ export const capabilities = [
     description: "Read the latest 100 GitHub job records for an authorized repository binding.",
   },
   {
+    name: "job.logs",
+    kind: "query",
+    description:
+      "Read GitHub job logs on demand, passing next as the absolute byte cursor after to continue.",
+  },
+  {
     name: "runner.reconcile",
     kind: "command",
     activity: "continuation",

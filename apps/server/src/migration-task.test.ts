@@ -17,6 +17,9 @@ test("uncertain publication remains actionable and does not block or duplicate m
     analyzeMigration: async () => {
       throw new Error("unused");
     },
+    jobLogs: async () => {
+      throw new Error("Unexpected job log read.");
+    },
     scanJobs: async () => ({ runs: 0, jobs: 0, complete: true }),
     refreshJob: async () => ({
       jobId: 1,

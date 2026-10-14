@@ -2,8 +2,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import { ConvexError } from "convex/values";
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { afterEach, expect, test, vi } from "vitest";
+import { api } from "../../../convex/_generated/api.js";
 import { Store } from "../../../apps/server/src/store.js";
 import { VectisClient } from "./index.js";
 import { startCloudRelay } from "./cloud-relay.js";
@@ -40,6 +42,10 @@ const transport = vi.hoisted(() => {
     mutation: vi.fn(
       async (_mutation: FunctionReference<"mutation">, _args: Record<string, unknown>) => null,
     ),
+    action:
+      vi.fn<
+        (action: FunctionReference<"action">, args: Record<string, unknown>) => Promise<unknown>
+      >(),
     connectionState: vi.fn(() => ({ isWebSocketConnected: true })),
     disconnect: vi.fn(),
     close: vi.fn(async () => {}),
@@ -50,6 +56,7 @@ vi.mock("convex/browser", () => ({
     onUpdate = transport.onUpdate;
     query = transport.query;
     mutation = transport.mutation;
+    action = transport.action;
     close = transport.close;
     client = {
       connectionState: transport.connectionState,
@@ -383,4 +390,29 @@ test("a mismatched identity sends no heartbeat", async () => {
   transport.auth.changed?.(true);
   await vi.advanceTimersByTimeAsync(4000);
   expect(transport.mutation).not.toHaveBeenCalled();
+});
+
+test("job log relay forwards cursors to the action, decodes results and preserves coded failures", async () => {
+  const { relay } = await fixture();
+  const input = { bindingId: "binding1", jobId: 4, after: 10 };
+  await expect(relay.jobLogs(input)).rejects.toMatchObject({ code: "cloud_unavailable" });
+  expect(transport.action).not.toHaveBeenCalled();
+  transport.auth.changed?.(true);
+  const result = {
+    text: "failure",
+    next: 17,
+    status: "completed",
+    complete: true,
+    truncated: false,
+  };
+  transport.action.mockResolvedValueOnce(result);
+  expect(await relay.jobLogs(input)).toEqual(result);
+  expect(getFunctionName(transport.action.mock.calls[0]?.[0] ?? api.githubJobs.logs)).toBe(
+    "githubJobs:logs",
+  );
+  expect(transport.action.mock.calls[0]?.[1]).toEqual(input);
+  transport.action.mockRejectedValueOnce(new ConvexError({ code: "repository_access_denied" }));
+  await expect(relay.jobLogs(input)).rejects.toMatchObject({ code: "repository_access_denied" });
+  transport.action.mockResolvedValueOnce({ ...result, next: "17" });
+  await expect(relay.jobLogs(input)).rejects.toThrow();
 });

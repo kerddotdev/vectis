@@ -3,7 +3,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { createMcpServer } from "./server.js";
 import { startService } from "../../server/src/http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
@@ -138,6 +138,54 @@ test("remote MCP sessions expose their target and cannot invoke local service ma
     });
     expect((await api.status()).machine).toBeDefined();
   } finally {
+    await client.close();
+    await server.close();
+    await service.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("MCP job logs forwards the byte cursor and rejects invalid requests", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mcp-job-logs-"));
+  const service = await startService({ home });
+  const api = new VectisClient(service.connection);
+  const read = vi.spyOn(service.service, "jobLogs").mockResolvedValue({
+    text: "failure\n",
+    next: 18,
+    status: "completed",
+    complete: true,
+    truncated: false,
+  });
+  const server = createMcpServer(async () => api);
+  const client = new Client({ name: "test-job-logs", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const tool = (await client.listTools()).tools.find((tool) => tool.name === "vectis_job_logs");
+    expect(tool?.annotations?.readOnlyHint).toBe(true);
+    expect(tool?.description).toContain("next back as after");
+    expect(
+      await client.callTool({
+        name: "vectis_job_logs",
+        arguments: { bindingId: "binding1", jobId: 4, after: 10 },
+      }),
+    ).toMatchObject({
+      structuredContent: { result: { text: "failure\n", next: 18, complete: true } },
+    });
+    expect(read).toHaveBeenCalledWith(
+      { bindingId: "binding1", jobId: 4, after: 10 },
+      expect.any(AbortSignal),
+    );
+    expect(
+      await client.callTool({
+        name: "vectis_job_logs",
+        arguments: { bindingId: "binding1", jobId: 4, after: -1 },
+      }),
+    ).toMatchObject({ isError: true });
+    expect(read).toHaveBeenCalledOnce();
+  } finally {
+    read.mockRestore();
     await client.close();
     await server.close();
     await service.close();

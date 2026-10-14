@@ -47,6 +47,21 @@ vectis job scan <binding-id> --wait             # find queued and running jobs V
 vectis job refresh <binding-id> <job-id> --wait # reread one job from GitHub
 ```
 
+## Read a job's log
+
+Read a failed job directly through Vectis, using its GitHub job ID and repository binding:
+
+```sh
+vectis job logs <job-id> --binding <binding-id>
+vectis job logs <job-id> --binding <binding-id> --follow
+```
+
+The first command prints the retained log. `--follow` polls every 2 seconds until the job has completed and its available log has been read. Stop following with Ctrl-C. GitHub may only publish logs after the job finishes. Add `--machine <machine-id>` for a remote host; `--json` prints one response per chunk.
+
+Agents can use MCP `vectis_job_logs` with `{bindingId, jobId, after?}`. Pass the returned `next` as `after` to read the next chunk. Both cursors are absolute, nonnegative integer byte offsets in GitHub's UTF-8 log. The response includes `text`, `next`, the observed job `status`, `complete` and `truncated`. `complete` is true only when the job is completed and the cursor reaches the end. `truncated` means earlier unread bytes fell outside the retained window and were skipped.
+
+Logs are fetched from GitHub on demand without storing log archives. Remote reads use temporary inspection responses that expire after 60 seconds. Vectis retains the last 4 MiB per read, uses UTF-8 safe chunks of at most 32 KiB, and preserves GitHub's masking. Downloads use HTTP Range when supported; otherwise they stream the file with a 64 MiB download limit and retain only its tail. GitHub access, expired logs or the download limit can prevent a read.
+
 ## Cancel
 
 Cancel a runner from its operation in **Overview**, or:

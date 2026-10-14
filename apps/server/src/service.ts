@@ -21,7 +21,13 @@ import type {
 } from "../../../packages/protocol/src/migrations.js";
 import { matchesRunnerLabels } from "../../../packages/github/src/runner-labels.js";
 import { setTimeout as delay } from "node:timers/promises";
-import type { JobRefresh, JobScan, JobObservations } from "../../../packages/protocol/src/jobs.js";
+import type {
+  JobLogRequest,
+  JobLogs,
+  JobRefresh,
+  JobScan,
+  JobObservations,
+} from "../../../packages/protocol/src/jobs.js";
 import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
 import type {
   MachineRepositories,
@@ -65,6 +71,7 @@ export class Service {
       connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
       disconnectRepository(bindingId: string): Promise<void>;
       setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+      jobLogs(input: JobLogRequest, signal?: AbortSignal): Promise<JobLogs>;
       scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
       refreshJob(bindingId: string, jobId: number, signal: AbortSignal): Promise<JobRefresh>;
     } = () => {
@@ -76,6 +83,9 @@ export class Service {
   ) {
     store.recover();
     this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
+  }
+  async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
+    return this.runnerConnection().jobLogs(input, signal);
   }
   observeJobs(observations: JobObservations) {
     observeRunnerJobs(this.store, observations);

@@ -4,7 +4,13 @@ import { isDeepStrictEqual } from "node:util";
 import { environmentRevision } from "./environment-revision.js";
 import { MigrationAnalysis, MigrationPublication } from "../../protocol/src/migrations.js";
 import { MachineRepositories, type RepositoryConnection } from "../../protocol/src/repositories.js";
-import { JobRefresh, JobScan, JobObservations } from "../../protocol/src/jobs.js";
+import {
+  JobLogs,
+  JobLogRequest,
+  JobRefresh,
+  JobScan,
+  JobObservations,
+} from "../../protocol/src/jobs.js";
 import { Schema } from "effect";
 import { RunnerGrant, RunnerLease } from "../../protocol/src/runners.js";
 import { ConvexClient } from "convex/browser";
@@ -390,6 +396,43 @@ export function startCloudRelay(
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
       );
       return Schema.decodeUnknownSync(JobRefresh)(result);
+    },
+    async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
+      signal?.throwIfAborted();
+      requireConnection();
+      try {
+        return Schema.decodeUnknownSync(JobLogs)(
+          await interruptible(
+            cloud.action(api.githubJobs.logs, {
+              bindingId: input.bindingId,
+              jobId: input.jobId,
+              ...(input.after === undefined ? {} : { after: input.after }),
+            }),
+            AbortSignal.any([
+              ...(signal ? [signal] : []),
+              abort.signal,
+              AbortSignal.timeout(60000),
+            ]),
+          ),
+        );
+      } catch (error) {
+        if (
+          error instanceof ConvexError &&
+          Schema.is(
+            Schema.Struct({
+              code: Schema.String,
+              message: Schema.optional(Schema.String),
+              nextStep: Schema.optional(Schema.String),
+            }),
+          )(error.data)
+        )
+          throw new VectisError(
+            error.data.code,
+            error.data.message ?? "Job logs could not be read.",
+            error.data.nextStep,
+          );
+        throw error;
+      }
     },
     async jobs(bindingId: string) {
       requireConnection();

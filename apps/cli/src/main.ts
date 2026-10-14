@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { setTimeout as delay } from "node:timers/promises";
+import { JobLogRequest } from "../../../packages/protocol/src/jobs.js";
 import { parseArgs } from "node:util";
 import { readFile, mkdir, open } from "node:fs/promises";
 import { spawn } from "node:child_process";
@@ -70,6 +72,8 @@ async function main() {
       "memory-mib": { type: "string" },
       "storage-path": { type: "string" },
       map: { type: "string", multiple: true },
+      binding: { type: "string" },
+      follow: { type: "boolean" },
       lines: { type: "string" },
       limit: { type: "string" },
       kind: { type: "string" },
@@ -144,6 +148,7 @@ Repositories and jobs
   runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
   runner reconcile <operation-id>  Clean up an interrupted runner after verifying its VM stopped
   job list <binding-id>         Read recent GitHub job states for a connected repository
+  job logs <job-id> --binding <id> [--follow]  Read the retained log; follow polls every 2 seconds
   job scan <binding-id>         Discover missing jobs through the GitHub API
   job refresh <binding-id> <job-id>  Recover one job state directly from GitHub
 
@@ -451,6 +456,41 @@ Documentation: https://vectis.kerd.dev/docs
   }
   if (command === "job" && subcommand === "list" && id) {
     output(await api.jobs(id));
+    return;
+  }
+  if (command === "job" && subcommand === "logs") {
+    const input = { bindingId: values.binding, jobId: Number(id) };
+    if (!Schema.is(JobLogRequest)(input))
+      throw new VectisError(
+        "invalid_argument",
+        "Use job logs <job-id> --binding <binding-id> with a positive whole job ID.",
+      );
+    const abort = new AbortController();
+    const stop = () => abort.abort();
+    process.once("SIGINT", stop);
+    process.once("SIGTERM", stop);
+    let after: number | undefined;
+    try {
+      while (!abort.signal.aborted) {
+        const log = await api.jobLogs(
+          { ...input, ...(after === undefined ? {} : { after }) },
+          abort.signal,
+        );
+        if (values.json) output(log);
+        else process.stdout.write(log.text);
+        if (log.truncated)
+          process.stderr.write("Earlier job log content was skipped (4 MiB retained window).\n");
+        after = log.next;
+        if (log.complete) break;
+        if (!log.text && !values.follow) break;
+        if (values.follow) await delay(2000, undefined, { signal: abort.signal });
+      }
+    } catch (error) {
+      if (!abort.signal.aborted) throw error;
+    } finally {
+      process.removeListener("SIGINT", stop);
+      process.removeListener("SIGTERM", stop);
+    }
     return;
   }
   if (command === "repository" && subcommand === "list") {
