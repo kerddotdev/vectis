@@ -8,12 +8,16 @@ import { useWindowChrome } from "./window-chrome";
 
 export function AppShell() {
   const { collapsed, fullscreen } = useWindowChrome();
-  const { machineId } = useStateApi();
+  const { machineId, selectMachine } = useStateApi();
   const navigate = useNavigate();
   useEffect(
     () =>
       window.vectis?.onWindowEvent((event) => {
-        if (event.startsWith("navigate:")) void navigate({ to: event.slice("navigate:".length) });
+        if (event.startsWith("navigate:/activities?id=")) {
+          selectMachine(undefined);
+          window.location.hash = event.slice("navigate:".length);
+        } else if (event.startsWith("navigate:"))
+          void navigate({ to: event.slice("navigate:".length) });
       }),
     [],
   );

@@ -29,6 +29,7 @@ export async function request(action: DesktopAction, input?: unknown, machineId?
 // Reads never change anything, so they never need the views to look again.
 const reads: ReadonlySet<DesktopAction> = new Set([
   "status",
+  "notifications.get",
   "jobs",
   "repositories",
   "github.accounts",
