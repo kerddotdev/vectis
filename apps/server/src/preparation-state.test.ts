@@ -55,3 +55,38 @@ test.each(["preparation", "macInstallation", "windowsInstallation"])(
     }
   },
 );
+
+test.each([
+  ["preparation", "prepared"],
+  ["macInstallation", "registered"],
+  ["windowsInstallation", "prepared"],
+])("a completed %s frees its identifier once the environment is removed", async (kind, phase) => {
+  const store = new Store(":memory:");
+  const service = new Service(store, new VmRuntime({ home: "/isolated-vectis-test" }));
+  const configuration = {
+    id: "ubuntu",
+    name: "Ubuntu",
+    cpu: 2,
+    memoryMiB: 4096,
+    diskGiB: 64,
+    imageDirectory: "/isolated-vectis-test",
+    storagePath: "/isolated-vectis-test",
+  };
+  store.put(kind, "setup", {
+    id: "setup",
+    attemptId: "attempt",
+    directory: "/isolated-vectis-test",
+    configuration,
+    phase,
+  });
+  try {
+    const linux = service.submit("linux", { type: "environment.prepare-linux", ...configuration });
+    await service.drain();
+    expect(store.get("operation", linux.id)).not.toMatchObject({
+      result: { code: "environment_exists" },
+    });
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
