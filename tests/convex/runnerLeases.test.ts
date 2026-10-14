@@ -371,3 +371,149 @@ test.each([404, 403, 500])(
     else await expect(device.action(api.githubRunners.status, { id: grant.id })).rejects.toThrow();
   },
 );
+
+test("access settings enforce machine, binding and account ownership and deduplicate actor IDs", async () => {
+  const { t, device, bindingId, machineId } = await fixture();
+  await device.mutation(api.repositoryBindings.setAccess, {
+    bindingId,
+    actors: { ids: [7, 7, 8] },
+    approval: "required",
+  });
+  expect(await device.query(api.repositoryBindings.forMachine, {})).toMatchObject([
+    { access: { actors: { ids: [7, 8] }, approval: "required" } },
+  ]);
+  for (const ids of [
+    [0],
+    [-1],
+    [1.5],
+    [Number.MAX_SAFE_INTEGER + 1],
+    Array.from({ length: 101 }, (_, i) => i + 1),
+  ])
+    await expect(
+      device.mutation(api.repositoryBindings.setAccess, {
+        bindingId,
+        actors: { ids },
+        approval: "automatic",
+      }),
+    ).rejects.toThrow("invalid_repository_access");
+  const foreignId = await t.run((ctx) =>
+    ctx.db.insert("machines", { owner: "other", localId: "other", name: "Other", createdAt: 1 }),
+  );
+  const foreign = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: foreignId,
+    credentialVersion: 0,
+  });
+  await expect(
+    foreign.mutation(api.repositoryBindings.setAccess, {
+      bindingId,
+      actors: "any",
+      approval: "automatic",
+    }),
+  ).rejects.toThrow("repository_access_denied");
+  await t.run(async (ctx) => {
+    const binding = await ctx.db.get("repositoryBindings", bindingId);
+    if (!binding) throw new Error("Missing binding");
+    await ctx.db.patch("githubAccounts", binding.accountId, { owner: "other" });
+  });
+  await expect(
+    device.mutation(api.repositoryBindings.setAccess, {
+      bindingId,
+      actors: "any",
+      approval: "automatic",
+    }),
+  ).rejects.toThrow("repository_access_denied");
+  expect(await t.run((ctx) => ctx.db.get("machines", machineId))).not.toBeNull();
+});
+
+async function approvalFixture() {
+  const fixtureResult = await fixture();
+  const { t, bindingId } = fixtureResult;
+  const jobDocumentId = await t.run(async (ctx) => {
+    await ctx.db.patch("repositoryBindings", bindingId, {
+      access: { actors: { ids: [7] }, approval: "required" },
+      automatic: true,
+    });
+    return ctx.db.insert("githubJobs", {
+      installationId: 81,
+      repositoryId: 600,
+      jobId: 4,
+      runId: 5,
+      runAttempt: 2,
+      actorId: 7,
+      triggeringActorId: 7,
+      name: "Build",
+      status: "queued",
+      conclusion: null,
+      labels: ["vectis-mac"],
+      runnerId: null,
+      runnerName: null,
+      updatedAt: 1,
+    });
+  });
+  return { ...fixtureResult, jobDocumentId };
+}
+
+test("manual job start approves precisely its run attempt and an automatic start cannot approve it", async () => {
+  const { device, bindingId, fetch } = await approvalFixture();
+  await expect(
+    device.action(api.githubRunners.prepare, {
+      bindingId,
+      key: "automatic",
+      jobId: 4,
+      automatic: true,
+    }),
+  ).rejects.toThrow("approval_required");
+  await expect(
+    device.action(api.githubRunners.prepare, { bindingId, key: "no-job" }),
+  ).rejects.toThrow("job_required");
+  expect(fetch).not.toHaveBeenCalled();
+  expect(
+    await device.action(api.githubRunners.prepare, { bindingId, key: "manual", jobId: 4 }),
+  ).toMatchObject({
+    state: "ready",
+    access: {
+      repositoryId: 600,
+      actors: { ids: [7] },
+      approval: "required",
+      approvedRun: { runId: 5, runAttempt: 2 },
+    },
+  });
+});
+
+test.each(["actor", "triggering", "unknown"])(
+  "manual approval still refuses a %s actor",
+  async (which) => {
+    const { device, bindingId, t, jobDocumentId, fetch } = await approvalFixture();
+    await t.run((ctx) =>
+      ctx.db.patch(
+        "githubJobs",
+        jobDocumentId,
+        which === "actor"
+          ? { actorId: 8 }
+          : which === "triggering"
+            ? { triggeringActorId: 8 }
+            : { triggeringActorId: undefined },
+      ),
+    );
+    await expect(
+      device.action(api.githubRunners.prepare, { bindingId, key: "manual", jobId: 4 }),
+    ).rejects.toThrow(which === "unknown" ? "actor_unknown" : "actor_not_allowed");
+    expect(fetch).not.toHaveBeenCalled();
+    expect(await t.run((ctx) => ctx.db.query("runnerLeases").collect())).toHaveLength(0);
+  },
+);
+
+test("policy changes during JIT registration cannot return an outdated ready grant", async () => {
+  const { device, bindingId, t, onRegistration } = await approvalFixture();
+  onRegistration(() =>
+    t.run((ctx) =>
+      ctx.db.patch("repositoryBindings", bindingId, {
+        access: { actors: { ids: [8] }, approval: "required" },
+      }),
+    ),
+  );
+  expect(
+    await device.action(api.githubRunners.prepare, { bindingId, key: "changed", jobId: 4 }),
+  ).toMatchObject({ state: "action_required" });
+});

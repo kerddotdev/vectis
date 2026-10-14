@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { RepositoryAccess } from "./repository-access.js";
 import { Identifier } from "./identifier.js";
 import { MachineRepositories, RepositoryConnection } from "./repositories.js";
 
@@ -206,6 +207,11 @@ export const Command = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("repository.connect"), ...RepositoryConnection.fields }),
   Schema.Struct({
+    type: Schema.Literal("repository.access"),
+    bindingId: Identifier,
+    ...RepositoryAccess.fields,
+  }),
+  Schema.Struct({
     type: Schema.Literal("repository.automatic"),
     bindingId: Identifier,
     enabled: Schema.Boolean,
@@ -374,6 +380,13 @@ export const capabilities = [
     activity: "intent",
     description:
       "Connect a prepared environment to a repository after verifying current GitHub App access.",
+  },
+  {
+    name: "repository.access",
+    kind: "command",
+    activity: "setting",
+    description:
+      "Set which numeric GitHub actor IDs may use this binding and whether manual host approval is required.",
   },
   {
     name: "repository.automatic",

@@ -1,4 +1,5 @@
 "use node";
+import { runnerRequest } from "./runnerLeases.js";
 import { repositoryAccess } from "./githubAccess.js";
 import { runnerLabels } from "../packages/github/src/runner-labels.js";
 import { ConvexError, v } from "convex/values";
@@ -18,13 +19,15 @@ const Registration = Schema.Struct({ runner: Runner, encoded_jit_config: Schema.
 const Pool = Schema.Struct({ total_count: Schema.Int, runners: Schema.Array(Runner) });
 
 export const prepare = action({
-  args: { bindingId: v.string(), key: v.string() },
+  args: { bindingId: v.string(), key: v.string(), ...runnerRequest },
   handler: async (ctx, args): Promise<RunnerGrant> => {
     if (!args.key.trim() || args.key.length > 200)
       throw new ConvexError({ code: "invalid_runner_request" });
     const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
       bindingId: args.bindingId,
       preparing: true,
+      ...(args.jobId === undefined ? {} : { jobId: args.jobId }),
+      ...(args.automatic === undefined ? {} : { automatic: args.automatic }),
     });
     const client = new GitHubAppClient(authority.app);
     const access = await repositoryAccess(client, {
@@ -54,6 +57,7 @@ export const prepare = action({
           encodedConfig: lease.encodedConfig,
           environmentId: lease.environmentId,
           os: lease.os,
+          ...(lease.access ? { access: lease.access } : {}),
         };
       if (lease.phase === "released") return { state: "released", id: lease._id };
       if (lease.phase === "preparing" && Date.now() - lease.updatedAt < 60000)
@@ -86,6 +90,7 @@ export const prepare = action({
         encodedConfig: registration.encoded_jit_config,
         environmentId: lease.environmentId,
         os: lease.os,
+        ...(lease.access ? { access: lease.access } : {}),
       };
     } catch {
       await ctx.runMutation(internal.runnerLeases.attention, {

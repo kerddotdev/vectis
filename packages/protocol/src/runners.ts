@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { RunnerAccess } from "./repository-access.js";
 import { GuestOS, Identifier } from "./index.js";
 
 export const RunnerGrant = Schema.Union([
@@ -9,6 +10,7 @@ export const RunnerGrant = Schema.Union([
     encodedConfig: Schema.NonEmptyString,
     environmentId: Identifier,
     os: GuestOS,
+    access: Schema.optional(RunnerAccess),
   }),
   Schema.Struct({
     state: Schema.Literals(["pending", "action_required", "released"]),
@@ -27,7 +29,12 @@ export interface RunnerBroker {
     request: { bindingId: string; environmentId: string; key: string },
     signal: AbortSignal,
   ): Promise<RunnerLease>;
-  prepareRunner(bindingId: string, key: string, signal: AbortSignal): Promise<RunnerGrant>;
+  prepareRunner(
+    bindingId: string,
+    key: string,
+    signal: AbortSignal,
+    request?: { jobId?: number; automatic?: boolean },
+  ): Promise<RunnerGrant>;
   releaseRunner(id: string, signal: AbortSignal): Promise<void>;
   runnerStatus(leaseId: string, signal: AbortSignal): Promise<RunnerStatus>;
 }

@@ -13,12 +13,18 @@ import {
   runnerStartScript,
 } from "../../../packages/runner/src/runner-release.js";
 
+import {
+  assignmentRejectedMarker,
+  assignmentRejectedScript,
+} from "../../../packages/runner/src/runner-access.js";
+
 const idleTimeoutMs = 10 * 60 * 1000;
 const pollIntervalMs = 30000;
 
 interface Controls {
   broker: RunnerBroker;
   needed?: (signal: AbortSignal) => Promise<boolean>;
+  request?: { jobId?: number; automatic?: boolean };
   now?: () => number;
   pollIntervalMs?: number;
   idleTimeoutMs?: number;
@@ -82,7 +88,25 @@ export async function runRunnerTask(
       );
     update({ stage: "registering" });
     registrationUncertain = true;
-    const grant = await controls.broker.prepareRunner(bindingId, key, signal);
+    const grant = await controls.broker
+      .prepareRunner(bindingId, key, signal, controls.request)
+      .catch((error: unknown) => {
+        if (
+          error instanceof VectisError &&
+          [
+            "actor_not_allowed",
+            "actor_unknown",
+            "approval_required",
+            "job_required",
+            "job_not_queued",
+            "automatic_disabled",
+            "repository_access_changed",
+            "runner_labels_mismatch",
+          ].includes(error.code)
+        )
+          registrationUncertain = false;
+        throw error;
+      });
     if (grant.state === "ready") secret = grant.encodedConfig;
     update({ leaseId: grant.id });
     registrationUncertain = false;
@@ -96,18 +120,20 @@ export async function runRunnerTask(
         "runner_identity_mismatch",
         "The runner grant targets another environment.",
       );
+    if (!grant.access)
+      throw new VectisError(
+        "runner_policy_missing",
+        "The runner grant has no repository assignment policy.",
+      );
     update({ runnerId: grant.runnerId, stage: "listening" });
     const listening = new AbortController();
-    const listeningSignal = AbortSignal.any([
-      signal,
-      listening.signal,
-      AbortSignal.timeout(6 * 60 * 60 * 1000),
-    ]);
+    const listeningSignal = AbortSignal.any([signal, listening.signal]);
     const watcher = watchIdleRunner(grant.id, controls, listening, listeningSignal);
-    const execution = await executeGuest(
+    const execution = await executeRunnerListener(
       connection,
-      runnerStartScript(environment.os, grant.encodedConfig),
-      { shell, signal: listeningSignal },
+      environment.os,
+      runnerStartScript(environment.os, grant.encodedConfig, grant.access),
+      listeningSignal,
     )
       .catch((error: unknown) => {
         if (!signal.aborted && listening.signal.reason instanceof VectisError)
@@ -195,7 +221,10 @@ export async function runRunnerTask(
     return { status: "cancelled" as const, progress, message: failure.message, code: failure.code };
   if (failure instanceof VectisError && failure.code === "job_not_queued")
     return { status: "cancelled" as const, progress, message: failure.message };
-  if (signal.aborted)
+  if (
+    signal.aborted &&
+    !(failure instanceof VectisError && failure.code === "runner_assignment_rejected")
+  )
     return { status: "cancelled" as const, progress, message: "Runner cancelled and cleaned up." };
   if (failure)
     return {
@@ -209,6 +238,69 @@ export async function runRunnerTask(
     progress,
     message: "Runner lifecycle completed and cleaned up. Check GitHub for the job result.",
   };
+}
+
+function assignmentRejection(output: string) {
+  const lines = output.split(/\r?\n/);
+  const marker = lines.indexOf(assignmentRejectedMarker);
+  if (marker === -1) return undefined;
+  const reason = lines[marker + 1]?.trim() || "binding access policy";
+  return new VectisError(
+    "runner_assignment_rejected",
+    `Vectis refused the assigned GitHub job: ${reason}.`,
+  );
+}
+
+async function executeRunnerListener(
+  connection: GuestConnection,
+  os: Environment["os"],
+  script: string,
+  signal: AbortSignal,
+) {
+  const listening = new AbortController();
+  const monitoring = new AbortController();
+  const shell = os === "windows" ? "powershell" : "bash";
+  let rejection: VectisError | undefined;
+  let checking: Promise<void> | undefined;
+  const check = async (checkSignal: AbortSignal) => {
+    try {
+      const result = await executeGuest(connection, assignmentRejectedScript(os), {
+        shell,
+        signal: AbortSignal.any([checkSignal, AbortSignal.timeout(10000)]),
+      });
+      rejection ??= assignmentRejection(result.stdout);
+      if (rejection) listening.abort();
+    } catch {
+      // A transient guest connection failure is not evidence of policy rejection.
+    }
+  };
+  const timer = setInterval(() => {
+    if (checking || rejection) return;
+    checking = check(AbortSignal.any([signal, monitoring.signal])).finally(() => {
+      checking = undefined;
+    });
+  }, 10000);
+  const outcome = await executeGuest(connection, script, {
+    shell,
+    signal: AbortSignal.any([signal, listening.signal, AbortSignal.timeout(6 * 60 * 60 * 1000)]),
+  })
+    .then(
+      (execution) => ({ execution }),
+      (error: unknown) => ({ error }),
+    )
+    .finally(async () => {
+      clearInterval(timer);
+      monitoring.abort();
+      await checking;
+    });
+  if (!rejection && !signal.aborted) await check(signal);
+  if ("execution" in outcome) {
+    rejection ??= assignmentRejection(outcome.execution.stdout);
+    rejection ??= assignmentRejection(outcome.execution.stderr);
+  }
+  if (rejection) throw rejection;
+  if ("error" in outcome) throw outcome.error;
+  return outcome.execution;
 }
 
 async function watchIdleRunner(

@@ -34,6 +34,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
     const broker = {
       connectRepository: vi.fn(async () => "binding"),
       disconnectRepository: async () => {},
+      setAccess: async () => {},
       setAutomatic: vi.fn(async () => {}),
       analyzeMigration: vi.fn(async () => {
         throw new Error("unused");
@@ -68,6 +69,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
         environmentId: "test",
         os: "linux" as const,
         encodedConfig: "c2VjcmV0",
+        access: { repositoryId: 2, actors: "any" as const, approval: "automatic" as const },
       })),
       runnerStatus: async () => ({ busy: false, status: "online" as const }),
       releaseRunner: vi.fn(async () => {

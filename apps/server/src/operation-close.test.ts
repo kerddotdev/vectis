@@ -21,6 +21,7 @@ async function fixture() {
   const broker = {
     connectRepository: vi.fn(async () => "binding"),
     disconnectRepository: async () => {},
+    setAccess: async () => {},
     setAutomatic: vi.fn(async () => {}),
     analyzeMigration: vi.fn(async () => {
       throw new Error("unused");
