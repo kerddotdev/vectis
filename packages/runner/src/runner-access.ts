@@ -55,7 +55,9 @@ refuse() {
   ancestor=$$
   worker=
   listener=
-  for ((depth=0; depth<64; depth++)); do
+  # The runner starts the hook directly, so its Worker is a near ancestor and the Listener is the
+  # Worker's parent. A bounded walk can never reach an unrelated runner further up the tree.
+  for ((depth=0; depth<5; depth++)); do
     if [[ -r "/proc/$ancestor/stat" ]]; then
       IFS= read -r stat < "/proc/$ancestor/stat" || block_forever
       name="\${stat#*(}"
@@ -68,9 +70,10 @@ refuse() {
     fi
     parent="\${parent//[[:space:]]/}"
     [[ "$parent" =~ ^[0-9]+$ && "$parent" -gt 1 && "$parent" != "$ancestor" ]] || block_forever
-    if [[ -z "$worker" && "$name" == Runner.Worker ]]; then
-      worker=$ancestor
-    elif [[ -n "$worker" && "$name" == Runner.Listener ]]; then
+    if [[ -z "$worker" ]]; then
+      [[ "$name" == Runner.Worker ]] && worker=$ancestor
+    else
+      [[ "$name" == Runner.Listener ]] || block_forever
       listener=$ancestor
       break
     fi
@@ -136,12 +139,13 @@ function Refuse([string]$reason) {
     $ancestor = $PID
     $worker = $null
     $listener = $null
-    for ($depth = 0; $depth -lt 64; $depth++) {
+    for ($depth = 0; $depth -lt 5; $depth++) {
       $process = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $ancestor"
       if (!$process -or $process.ParentProcessId -le 1 -or $process.ParentProcessId -eq $ancestor) { Wait-Forever }
-      if (!$worker -and $process.Name -ceq 'Runner.Worker.exe') {
-        $worker = $ancestor
-      } elseif ($worker -and $process.Name -ceq 'Runner.Listener.exe') {
+      if (!$worker) {
+        if ($process.Name -ceq 'Runner.Worker.exe') { $worker = $ancestor }
+      } else {
+        if ($process.Name -cne 'Runner.Listener.exe') { Wait-Forever }
         $listener = $ancestor
         break
       }

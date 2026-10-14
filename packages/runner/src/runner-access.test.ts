@@ -417,6 +417,56 @@ for (const mode of ["bash", "bash-proc", "bash-kill-failure", "pwsh"] as const) 
   );
 }
 
+test("a distant Runner.Worker ancestor is never stopped", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-access-distant-"));
+  let listener: ChildProcess | undefined;
+  try {
+    const gate = join(home, "vectis-actions-runner/_vectis");
+    await mkdir(gate, { recursive: true });
+    const source = join(home, "process.c");
+    const listenerPath = join(home, "Runner.Listener");
+    const workerPath = join(home, "Runner.Worker");
+    const middlePath = join(home, "Middle");
+    await writeFile(source, processHarness);
+    const compiled = spawnSync("cc", [source, "-o", listenerPath], { encoding: "utf8" });
+    expect(compiled.status, compiled.stderr).toBe(0);
+    await copyFile(listenerPath, workerPath);
+    await copyFile(listenerPath, middlePath);
+    const hook = join(gate, "hook.sh");
+    await writeFile(hook, bashJobStartedHook());
+    await writeFile(join(gate, "policy"), renderRunnerPolicy(restrictive));
+    const pids = join(home, "pids");
+    const step = join(home, "step-ran");
+    const middles = Array.from({ length: 4 }, () => [middlePath, pids, step]).flat();
+    listener = spawn(
+      listenerPath,
+      [pids, step, workerPath, pids, step, ...middles, "/bin/bash", hook],
+      {
+        env: { ...process.env, HOME: home, GITHUB_REPOSITORY_ID: "99" },
+        detached: true,
+        stdio: "ignore",
+      },
+    );
+    const ownedListener = listener;
+    await expect
+      .poll(() => readFile(join(home, assignmentRejectedPath), "utf8").catch(() => ""), {
+        timeout: 5000,
+      })
+      .toBe("repository id mismatch\n");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(ownedListener.signalCode).toBe(null);
+    const worker = (await readFile(pids, "utf8"))
+      .split("\n")
+      .find((line) => line.endsWith(workerPath))
+      ?.split(" ")[0];
+    const state = spawnSync("/bin/ps", ["-o", "stat=", "-p", worker ?? "0"], { encoding: "utf8" });
+    expect(state.stdout.trim()).not.toMatch(/^Z|^$/);
+  } finally {
+    if (listener) await stopOwnedGroup(listener);
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test.each(["ancestry", "marker", "policy"])(
   "failed %s handling blocks the hook instead of returning control",
   async (failure) => {
