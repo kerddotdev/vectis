@@ -9,9 +9,11 @@ import { Mono, Notice } from "@/components/layout";
 import { StatusBadge } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { addedVectisLabels } from "@/lib/job-graph";
 import { diffLines } from "@/lib/line-diff";
 import { useStateApi } from "@/state";
 import { MigrationDiff } from "@/views/migration-diff";
+import { MigrationJobs } from "@/views/migration-jobs";
 
 export function MigrationResult({ result }: { result: unknown }) {
   const { submit, perform } = useStateApi();
@@ -76,6 +78,7 @@ function MigrationFileDetails({ file }: { file: MigrationAnalysis["files"][numbe
     () => (file.changed ? diffLines(file.before, file.after) : undefined),
     [file.changed, file.before, file.after],
   );
+  const labels = useMemo(() => diff && addedVectisLabels(diff), [diff]);
   return (
     <div className="flex flex-col gap-5 px-3 pt-1 pb-3">
       {!file.changed && file.findings.length === 0 && (
@@ -83,11 +86,15 @@ function MigrationFileDetails({ file }: { file: MigrationAnalysis["files"][numbe
           No job in this file runs on a label this migration replaces.
         </p>
       )}
-      {file.findings.map((finding, index) => (
-        <p key={index} className="text-muted-foreground">
-          <span className="text-foreground">{finding.job}</span>: {finding.reason}
-        </p>
-      ))}
+      {file.jobs && file.jobs.length > 0 ? (
+        <MigrationJobs jobs={file.jobs} labels={labels} />
+      ) : (
+        file.findings.map((finding, index) => (
+          <p key={index} className="text-muted-foreground">
+            <span className="text-foreground">{finding.job}</span>: {finding.reason}
+          </p>
+        ))
+      )}
       {file.changed && <MigrationDiff before={file.before} after={file.after} diff={diff} />}
     </div>
   );
