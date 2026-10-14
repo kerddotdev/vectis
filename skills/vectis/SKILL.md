@@ -83,6 +83,7 @@ An environment is a prepared guest image. Its ID becomes the runner label.
 - `job scan <binding-id>` finds queued or running jobs Vectis missed; `job refresh <binding-id> <job-id>` rereads one job from GitHub.
 - A failed runner whose guest connection was lost or whose runner process exited keeps `diagnostics` (runner output, SSH error, host network and guest state) in its operation `result`; read it with `vectis operation get <id> --json` before retrying.
 - An interrupted runner or VM needs `runner reconcile <operation-id>` or `instance reconcile <id>` after the VM is confirmed stopped. Do not start new runners to hide an uncertain cleanup.
+- Failed file cleanup after an owned VM exits retains an exit receipt for instance reconciliation. A leftover directory alone does not prove the VM is running or stopped.
 
 A job that stays queued usually has one of these causes. Check them in order:
 
