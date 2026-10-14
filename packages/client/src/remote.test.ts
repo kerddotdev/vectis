@@ -150,3 +150,43 @@ test("remote capability discovery uses a fresh inspection and completed operatio
     result: { verified: true },
   });
 });
+
+test("remote readiness sends a read inspection and validates the returned checks", async () => {
+  const { request, client } = fixture();
+  const report = {
+    ready: false,
+    checks: [
+      {
+        id: "github.app",
+        status: "blocked",
+        code: "github_app_not_installed",
+        message: "Install the App.",
+        nextStep: "Open GitHub.",
+        target: { area: "github" },
+      },
+    ],
+  };
+  request.mockResolvedValueOnce({ queryId: "query1" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({ ok: true, result: report }),
+  });
+  expect(await client.repositoryReadiness({ bindingId: "binding1" })).toEqual(report);
+  expect(request.mock.calls[0]?.[0]).toMatchObject({
+    type: "query.submit",
+    machineId: "machine1",
+    query: { name: "repository.readiness", input: { bindingId: "binding1" } },
+  });
+  request.mockResolvedValueOnce({ queryId: "query2" }).mockResolvedValueOnce({
+    pending: false,
+    responseJson: JSON.stringify({
+      ok: true,
+      result: {
+        ready: true,
+        checks: [{ id: "github.app", status: "invented", message: "Invalid" }],
+      },
+    }),
+  });
+  await expect(
+    client.repositoryReadiness({ repositoryName: "owner/repo", environmentId: "linux" }),
+  ).rejects.toThrow();
+});

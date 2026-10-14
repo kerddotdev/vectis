@@ -1,3 +1,4 @@
+import { RepositoryReadiness, RepositoryReadinessInput } from "../../protocol/src/readiness.js";
 import { randomUUID } from "node:crypto";
 import { ServiceLog } from "../../protocol/src/logs.js";
 import { Snapshot, Operation as OperationSchema } from "../../protocol/src/index.js";
@@ -180,6 +181,14 @@ export class RemoteClient {
   }
   async storage() {
     return Schema.decodeUnknownSync(StorageReport)(await this.inspect({ name: "storage" }));
+  }
+  async repositoryReadiness(input: RepositoryReadinessInput, signal?: AbortSignal) {
+    const decoded = Schema.decodeUnknownSync(RepositoryReadinessInput, {
+      onExcessProperty: "error",
+    })(input);
+    return Schema.decodeUnknownSync(RepositoryReadiness)(
+      await this.inspect({ name: "repository.readiness", input: decoded }, signal),
+    );
   }
   async doctor() {
     return Schema.decodeUnknownSync(Diagnostics)(await this.inspect({ name: "doctor" }));

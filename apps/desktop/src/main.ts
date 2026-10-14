@@ -1,3 +1,4 @@
+import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
 import { existsSync } from "node:fs";
 import { rm, writeFile } from "node:fs/promises";
 import electronUpdater from "electron-updater";
@@ -202,6 +203,15 @@ else {
               break;
             case "repositories":
               data = await (await client()).repositories();
+              break;
+            case "repository.readiness":
+              data = await (
+                await client()
+              ).repositoryReadiness(
+                Schema.decodeUnknownSync(RepositoryReadinessInput, { onExcessProperty: "error" })(
+                  input,
+                ),
+              );
               break;
             case "doctor":
               data = await (await client()).doctor();

@@ -1,3 +1,4 @@
+import { RepositoryReadinessInput } from "../../../packages/protocol/src/readiness.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -29,6 +30,7 @@ const waitInput = Schema.Struct({ id: Identifier, timeoutMs: Schema.optional(Sch
 const waitSchema = Schema.toJsonSchemaDocument(waitInput);
 const emptyInput = { type: "object", properties: {}, additionalProperties: false };
 const jobInput = Schema.Struct({ bindingId: Identifier });
+const readinessSchema = Schema.toJsonSchemaDocument(RepositoryReadinessInput);
 const jobSchema = Schema.toJsonSchemaDocument(jobInput);
 const operationInput = Schema.Struct({ id: Identifier });
 const operationSchema = Schema.toJsonSchemaDocument(operationInput);
@@ -63,6 +65,13 @@ const tools = [
     description:
       "List repositories connected to this machine and their environment IDs. Requires cloud pairing and current account authorization.",
     inputSchema: emptyInput,
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: "vectis_readiness",
+    description:
+      "Check repository readiness before connecting a repository or when jobs stay queued. Returns each prerequisite with its status, code, next step and symbolic fix target.",
+    inputSchema: { type: "object", ...readinessSchema.schema, $defs: readinessSchema.definitions },
     annotations: { readOnlyHint: true },
   },
   {
@@ -168,6 +177,7 @@ export function createMcpServer(
       | "storage"
       | "doctor"
       | "repositories"
+      | "repositoryReadiness"
       | "githubAccounts"
       | "jobs"
       | "submit"
@@ -285,6 +295,13 @@ export function createMcpServer(
         case "vectis_repositories":
           result = await (await connect()).repositories();
           break;
+        case "vectis_readiness": {
+          const input = Schema.decodeUnknownSync(RepositoryReadinessInput, {
+            onExcessProperty: "error",
+          })(request.params.arguments);
+          result = await (await connect()).repositoryReadiness(input);
+          break;
+        }
         case "vectis_doctor":
           result = await (await connect()).doctor();
           break;

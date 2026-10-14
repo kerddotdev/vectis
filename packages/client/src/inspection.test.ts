@@ -20,6 +20,16 @@ test("inspection uses the authenticated local contract and reports unavailable c
     expect(JSON.parse(await answerInspection('{"name":"shutdown"}', client, signal))).toMatchObject(
       { ok: false, code: "inspection_failed" },
     );
+    const readiness = await client.repositoryReadiness({ repositoryName: "owner/repo" });
+    expect(
+      JSON.parse(
+        await answerInspection(
+          JSON.stringify({ name: "repository.readiness", input: { repositoryName: "owner/repo" } }),
+          client,
+          signal,
+        ),
+      ),
+    ).toEqual({ ok: true, result: readiness });
     expect((await client.status()).machine.id).toBeDefined();
     await expect(
       answerInspection('{"name":"status"}', client, AbortSignal.abort()),

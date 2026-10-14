@@ -9,6 +9,7 @@ export type DesktopAction =
   | "doctor"
   | "logs"
   | "repositories"
+  | "repository.readiness"
   | "github.accounts"
   | "jobs"
   | "command"
