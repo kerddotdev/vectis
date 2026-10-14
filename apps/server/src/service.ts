@@ -73,6 +73,9 @@ export class Service {
   private closing = false;
   private preparing: string | undefined;
   private tasks = new Map<string, { abort: AbortController; done: Promise<void> }>();
+  private cleanupTimer: ReturnType<typeof setInterval> | undefined;
+  private cleanupSweep: Promise<void> | undefined;
+  private cleanupAbort = new AbortController();
   private retentionTimer: ReturnType<typeof setInterval> | undefined;
   private stopWatchingJobs: () => void;
   constructor(
@@ -96,6 +99,9 @@ export class Service {
     readonly setupCredentials?: SetupCredentials,
     readonly repositorySnapshot: () => MachineRepositories | undefined = () => undefined,
     watchLeases: (ids: readonly string[]) => void = () => {},
+    readonly runnerCleanup: { intervalMs?: number; connected: () => boolean } = {
+      connected: () => false,
+    },
   ) {
     store.recover();
     this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
@@ -167,6 +173,39 @@ export class Service {
       );
       this.retentionTimer.unref();
     }
+    if (!this.closing && !this.cleanupTimer) {
+      this.cleanupTimer = setInterval(() => {
+        if (this.closing || this.cleanupSweep || !this.runnerCleanup.connected()) return;
+        this.cleanupSweep = this.retryRunnerCleanup()
+          .catch((error) => {
+            console.error("Runner cleanup retry failed:", redact(inspect(error)));
+          })
+          .finally(() => {
+            this.cleanupSweep = undefined;
+          });
+      }, this.runnerCleanup.intervalMs ?? 60000);
+      this.cleanupTimer.unref();
+    }
+  }
+  private async retryRunnerCleanup() {
+    for (const operation of this.store.snapshot().operations) {
+      if (this.closing || !this.runnerCleanup.connected()) break;
+      if (
+        operation.command !== "runner.run" ||
+        operation.status !== "action_required" ||
+        this.tasks.has(operation.id) ||
+        !(Date.now() - Date.parse(operation.updatedAt) < 30 * 60 * 1000) ||
+        !Schema.is(Schema.Struct({ code: Schema.Literal("runner_cleanup_required") }))(
+          operation.result,
+        )
+      )
+        continue;
+      try {
+        await this.reconcileRunner(operation.id);
+      } catch {
+        // Keep the original update time so failures cannot extend the retry window.
+      }
+    }
   }
   submit(key: string, command: Command): Operation {
     const operationId = randomUUID();
@@ -214,6 +253,82 @@ export class Service {
     });
     return { operationId: waiting.id, closed: true };
   }
+  private async reconcileRunner(id: string) {
+    this.cleanupAbort.signal.throwIfAborted();
+    const snapshot = this.store.snapshot();
+    const interrupted = snapshot.operations.find((item) => item.id === id);
+    if (
+      !interrupted ||
+      interrupted.command !== "runner.run" ||
+      interrupted.status !== "action_required" ||
+      this.tasks.has(id)
+    )
+      throw new VectisError(
+        "reconciliation_required",
+        "Only an interrupted runner operation can be reconciled.",
+      );
+    const progress = Schema.decodeUnknownSync(RunnerProgress)(interrupted.result);
+    const start = snapshot.operations.find((item) => item.key === `${interrupted.id}:start`);
+    const instance = snapshot.instances.find(
+      (item) => item.id === (progress.instanceId ?? start?.id),
+    );
+    if (instance && instance.status !== "stopped")
+      throw new VectisError(
+        "reconciliation_required",
+        "The runner VM must be verified stopped first.",
+        "Stop or reconcile the owned instance, then retry runner reconciliation.",
+      );
+    const abort = new AbortController();
+    const signal = AbortSignal.any([abort.signal, this.cleanupAbort.signal]);
+    const work = (async () => {
+      const broker = this.runnerConnection();
+      const lease = await broker.reconcileRunner(
+        {
+          bindingId: progress.bindingId,
+          environmentId: progress.environmentId,
+          key: progress.leaseKey,
+        },
+        AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+      );
+      if (
+        lease.bindingId !== progress.bindingId ||
+        lease.environmentId !== progress.environmentId ||
+        (progress.leaseId && lease.id !== progress.leaseId)
+      )
+        throw new VectisError(
+          "runner_identity_mismatch",
+          "The cloud lease does not match this operation.",
+        );
+      signal.throwIfAborted();
+      if (lease.phase !== "released")
+        await broker.releaseRunner(lease.id, AbortSignal.any([signal, AbortSignal.timeout(60000)]));
+      signal.throwIfAborted();
+      this.store.update(interrupted, {
+        status: progress.cause ? "failed" : "cancelled",
+        message:
+          progress.cause?.message ??
+          "Interrupted runner cleaned up. Check GitHub for the job result.",
+        result: {
+          ...progress,
+          leaseId: lease.id,
+          stage: "finished",
+          ...(progress.cause ? { code: progress.cause.code } : {}),
+        },
+      });
+      return { operationId: interrupted.id, leaseId: lease.id };
+    })().finally(() => {
+      this.tasks.delete(id);
+    });
+    this.tasks.set(id, {
+      abort,
+      done: work.then(
+        () => {},
+        () => {},
+      ),
+    });
+    return work;
+  }
+
   private async execute(operation: Operation, command: Command) {
     operation = this.store.update(operation, { status: "running", message: "Running." });
     try {
@@ -680,7 +795,9 @@ export class Service {
                                 "nextStep" in completed
                                   ? completed.nextStep
                                   : completed.status === "action_required"
-                                    ? "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
+                                    ? completed.code === "runner_cleanup_required"
+                                      ? "Confirm the owned VM is stopped. While connected, Vectis retries GitHub cleanup automatically for up to 30 minutes. Use vectis runner reconcile with this operation ID if cleanup remains unresolved."
+                                      : "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
                                     : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
                             }),
                       }
@@ -701,54 +818,7 @@ export class Service {
           return;
         }
         case "runner.reconcile": {
-          const interrupted = snapshot.operations.find((item) => item.id === command.id);
-          if (
-            !interrupted ||
-            interrupted.command !== "runner.run" ||
-            interrupted.status !== "action_required" ||
-            this.tasks.has(command.id)
-          )
-            throw new VectisError(
-              "reconciliation_required",
-              "Only an interrupted runner operation can be reconciled.",
-            );
-          const progress = Schema.decodeUnknownSync(RunnerProgress)(interrupted.result);
-          const start = snapshot.operations.find((item) => item.key === `${interrupted.id}:start`);
-          const instance = snapshot.instances.find(
-            (item) => item.id === (progress.instanceId ?? start?.id),
-          );
-          if (instance && instance.status !== "stopped")
-            throw new VectisError(
-              "reconciliation_required",
-              "The runner VM must be verified stopped first.",
-              "Stop or reconcile the owned instance, then retry runner reconciliation.",
-            );
-          const broker = this.runnerConnection();
-          const lease = await broker.reconcileRunner(
-            {
-              bindingId: progress.bindingId,
-              environmentId: progress.environmentId,
-              key: progress.leaseKey,
-            },
-            AbortSignal.timeout(10000),
-          );
-          if (
-            lease.bindingId !== progress.bindingId ||
-            lease.environmentId !== progress.environmentId ||
-            (progress.leaseId && lease.id !== progress.leaseId)
-          )
-            throw new VectisError(
-              "runner_identity_mismatch",
-              "The cloud lease does not match this operation.",
-            );
-          if (lease.phase !== "released")
-            await broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
-          this.store.update(interrupted, {
-            status: "cancelled",
-            message: "Interrupted runner cleaned up. Check GitHub for the job result.",
-            result: { ...progress, leaseId: lease.id, stage: "finished" },
-          });
-          result = { operationId: interrupted.id, leaseId: lease.id };
+          result = await this.reconcileRunner(command.id);
           break;
         }
         case "activity.cancel": {
@@ -1074,6 +1144,7 @@ export class Service {
   }
   async drain() {
     await this.queue;
+    await this.cleanupSweep;
   }
   beginShutdown(ifIdle: boolean) {
     const snapshot = this.store.snapshot();
@@ -1084,7 +1155,8 @@ export class Service {
         snapshot.operations.some((operation) =>
           ["accepted", "running"].includes(operation.status),
         ) ||
-        this.tasks.size > 0)
+        this.tasks.size > 0 ||
+        this.cleanupSweep !== undefined)
     )
       throw new VectisError(
         "service_busy",
@@ -1097,8 +1169,10 @@ export class Service {
     this.closing = true;
     this.stopWatchingJobs();
     if (this.retentionTimer) clearInterval(this.retentionTimer);
+    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+    this.cleanupAbort.abort();
     for (const task of this.tasks.values()) task.abort.abort();
-    await this.queue;
+    await Promise.all([this.queue, this.cleanupSweep]);
     await Promise.all([...this.tasks.values()].map((task) => task.done));
     await this.runtime.close();
   }

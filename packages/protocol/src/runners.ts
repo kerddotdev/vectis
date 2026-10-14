@@ -47,6 +47,12 @@ export const RunnerProgress = Schema.Struct({
   leaseId: Schema.optional(Identifier),
   runnerId: Schema.optional(Schema.Int),
   diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(16384))),
+  cause: Schema.optional(
+    Schema.Struct({
+      code: Schema.Literal("runner_assignment_rejected"),
+      message: Schema.String,
+    }),
+  ),
   stage: Schema.Literals([
     "starting",
     "preparing_guest",

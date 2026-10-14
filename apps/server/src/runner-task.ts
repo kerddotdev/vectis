@@ -171,7 +171,12 @@ export async function runRunnerTask(
       }).catch(() => undefined),
     });
   {
-    update({ stage: "cleaning" });
+    update({
+      stage: "cleaning",
+      ...(failure instanceof VectisError && failure.code === "runner_assignment_rejected"
+        ? { cause: { code: failure.code, message: failure.message } }
+        : {}),
+    });
     if (started) {
       try {
         await controls.stop();
@@ -179,7 +184,9 @@ export async function runRunnerTask(
         return {
           status: "action_required" as const,
           progress,
-          message: "VM cleanup is unconfirmed. The runner registration was retained.",
+          message: progress.cause
+            ? "Vectis refused the assigned job. VM cleanup is unconfirmed and GitHub runner cleanup is waiting."
+            : "VM cleanup is unconfirmed. The runner registration was retained.",
           code: "runner_cleanup_required",
         };
       }
@@ -191,7 +198,9 @@ export async function runRunnerTask(
         return {
           status: "action_required" as const,
           progress,
-          message: "The VM is stopped, but GitHub runner cleanup needs reconciliation.",
+          message: progress.cause
+            ? "Vectis refused the assigned job. The VM is stopped and cleanup is waiting for GitHub to release the runner."
+            : "The VM is stopped, but GitHub runner cleanup is waiting for reconciliation.",
           code: "runner_cleanup_required",
         };
       }

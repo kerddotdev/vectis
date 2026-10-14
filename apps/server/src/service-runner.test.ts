@@ -1,7 +1,10 @@
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { VectisError } from "../../../packages/protocol/src/index.js";
+import type { RunnerBroker, RunnerProgress } from "../../../packages/protocol/src/runners.js";
+import { activityFor } from "./activities.js";
 import type { JobRefresh } from "../../../packages/protocol/src/jobs.js";
 import { Service } from "./service.js";
 import { runnerCapacity } from "./runner-capacity.js";
@@ -296,3 +299,245 @@ test.each(["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprep
     }
   },
 );
+
+async function cleanupFixture(intervalMs = 60000) {
+  const home = await mkdtemp(join(tmpdir(), "vectis-runner-cleanup-"));
+  const store = new Store(join(home, "state.sqlite"));
+  const runtime = new VmRuntime({ home });
+  const unused = async () => {
+    throw new Error("Unexpected broker call");
+  };
+  const broker = {
+    reconcileRunner: vi.fn<RunnerBroker["reconcileRunner"]>(async () => ({
+      id: "lease",
+      bindingId: "binding",
+      environmentId: "test",
+      phase: "ready",
+    })),
+    releaseRunner: vi.fn<RunnerBroker["releaseRunner"]>(async () => {}),
+    prepareRunner: unused,
+    runnerStatus: unused,
+    jobLogs: unused,
+    controlRun: unused,
+    repositories: unused,
+    analyzeMigration: unused,
+    publishMigration: unused,
+    connectRepository: unused,
+    disconnectRepository: unused,
+    setAutomatic: unused,
+    setAccess: unused,
+    scanJobs: unused,
+    refreshJob: unused,
+  };
+  const cloud = { connected: true };
+  const service = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+    intervalMs,
+    connected: () => cloud.connected,
+  });
+  const progress: RunnerProgress = {
+    bindingId: "binding",
+    environmentId: "test",
+    leaseKey: "run",
+    leaseId: "lease",
+    instanceId: "instance",
+    stage: "cleaning",
+  };
+  const accepted = store.accept(
+    "run",
+    "fingerprint",
+    "runner.run",
+    activityFor("run", { type: "runner.run", bindingId: "binding" }),
+    "run",
+  );
+  const operation = store.update(accepted.operation, {
+    status: "action_required",
+    message: "Waiting for runner cleanup.",
+    result: { ...progress, code: "runner_cleanup_required" },
+  });
+  const instance = {
+    id: "instance",
+    environmentId: "test",
+    status: "stopped" as const,
+    pid: 0,
+    createdAt: new Date().toISOString(),
+  };
+  store.put("instance", instance.id, instance);
+  await service.initialize();
+  return {
+    store,
+    service,
+    broker,
+    cloud,
+    operation,
+    progress,
+    instance,
+    read: () => store.snapshot().operations.find((item) => item.id === operation.id),
+    tick: async (ms = 60000) => {
+      await vi.advanceTimersByTimeAsync(ms);
+      await service.drain();
+    },
+    close: async () => {
+      await service.close();
+      store.close();
+      await rm(home, { recursive: true, force: true });
+    },
+  };
+}
+
+describe("automatic runner cleanup", () => {
+  let fixture: Awaited<ReturnType<typeof cleanupFixture>>;
+  beforeEach(async () => {
+    vi.useFakeTimers();
+    fixture = await cleanupFixture();
+  });
+  afterEach(async () => {
+    await fixture.close();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  test("busy cleanup retries the existing operation and activity until GitHub releases it", async () => {
+    const { broker, read, tick, store, operation } = fixture;
+    broker.releaseRunner.mockRejectedValueOnce(new VectisError("runner_busy", "Runner is busy."));
+    await tick();
+    expect(read()).toEqual(operation);
+    await tick();
+    expect(read()).toMatchObject({
+      status: "cancelled",
+      result: { stage: "finished", leaseId: "lease" },
+    });
+    expect(broker.releaseRunner).toHaveBeenCalledTimes(2);
+    expect(store.snapshot().operations).toHaveLength(1);
+    expect(store.snapshot().activities).toMatchObject([{ id: operation.id, status: "cancelled" }]);
+    await tick();
+    expect(broker.releaseRunner).toHaveBeenCalledTimes(2);
+  });
+
+  test.each([new VectisError("runner_busy", "Runner is busy."), new Error("GitHub unavailable")])(
+    "failed cleanup stops retrying after 30 minutes without claiming success: %s",
+    async (error) => {
+      const { broker, tick, read, operation } = fixture;
+      broker.releaseRunner.mockRejectedValue(error);
+      await tick(29 * 60000);
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(29);
+      expect(read()).toEqual(operation);
+      await tick(10 * 60000);
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(29);
+      expect(read()).toEqual(operation);
+      broker.releaseRunner.mockResolvedValue();
+      fixture.service.submit("manual", { type: "runner.reconcile", id: operation.id });
+      await fixture.service.drain();
+      expect(read()?.status).toBe("cancelled");
+    },
+  );
+
+  test.each(["manual", "automatic"])(
+    "%s cleanup preserves an assignment refusal as failure",
+    async (mode) => {
+      const { store, operation, progress, service, tick, read } = fixture;
+      const cause = {
+        code: "runner_assignment_rejected" as const,
+        message: "Vectis refused an unapproved job.",
+      };
+      store.update(operation, { result: { ...progress, code: "runner_cleanup_required", cause } });
+      if (mode === "manual") {
+        service.submit("manual", { type: "runner.reconcile", id: operation.id });
+        await service.drain();
+      } else await tick();
+      expect(read()).toMatchObject({
+        status: "failed",
+        message: cause.message,
+        result: { stage: "finished", code: cause.code, cause },
+      });
+      expect(store.snapshot().activities).toMatchObject([
+        { status: "failed", message: cause.message },
+      ]);
+    },
+  );
+
+  test("disconnected cleanup waits for the cloud connection", async () => {
+    fixture.cloud.connected = false;
+    await fixture.tick();
+    expect(fixture.broker.reconcileRunner).not.toHaveBeenCalled();
+    fixture.cloud.connected = true;
+    await fixture.tick();
+    expect(fixture.read()?.status).toBe("cancelled");
+  });
+
+  test.each(["starting", "running", "interrupted"] as const)(
+    "a %s VM prevents GitHub cleanup",
+    async (status) => {
+      fixture.store.put("instance", fixture.instance.id, { ...fixture.instance, status, pid: 42 });
+      await fixture.tick();
+      expect(fixture.broker.reconcileRunner).not.toHaveBeenCalled();
+      expect(fixture.read()).toEqual(fixture.operation);
+    },
+  );
+
+  test("other actionable runner results are left for manual reconciliation", async () => {
+    fixture.store.update(fixture.operation, {
+      result: { ...fixture.progress, code: "runner_registration_uncertain" },
+    });
+    await fixture.tick();
+    expect(fixture.broker.reconcileRunner).not.toHaveBeenCalled();
+    expect(fixture.read()?.status).toBe("action_required");
+  });
+
+  test("a mismatched lease is never released or reported cleaned up", async () => {
+    fixture.broker.reconcileRunner.mockResolvedValue({
+      id: "other",
+      bindingId: "binding",
+      environmentId: "test",
+      phase: "ready",
+    });
+    await fixture.tick();
+    expect(fixture.broker.releaseRunner).not.toHaveBeenCalled();
+    expect(fixture.read()).toEqual(fixture.operation);
+  });
+
+  test("close clears the timer and aborts an in-flight cleanup without completing it", async () => {
+    fixture.broker.releaseRunner.mockImplementation(
+      (_id, signal) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fixture.broker.releaseRunner).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fixture.broker.releaseRunner).toHaveBeenCalledOnce();
+    fixture.service.submit("pause", { type: "machine.pause", paused: true });
+    fixture.service.submit("manual", { type: "runner.reconcile", id: fixture.operation.id });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fixture.store.snapshot().machine.paused).toBe(true);
+    expect(
+      fixture.store.snapshot().operations.find((operation) => operation.key === "manual"),
+    ).toMatchObject({ status: "action_required", result: { code: "reconciliation_required" } });
+    expect(fixture.broker.reconcileRunner).toHaveBeenCalledOnce();
+    expect(() => fixture.service.beginShutdown(true)).toThrow("The service still has active work");
+    await fixture.service.close();
+    expect(fixture.read()).toEqual(fixture.operation);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(fixture.broker.releaseRunner).toHaveBeenCalledOnce();
+  });
+});
+
+test("the cleanup interval is injectable and repeated initialization owns one timer", async () => {
+  vi.useFakeTimers();
+  const fixture = await cleanupFixture(1000);
+  try {
+    const timerCount = vi.getTimerCount();
+    await fixture.service.initialize();
+    expect(vi.getTimerCount()).toBe(timerCount);
+    await fixture.tick(999);
+    expect(fixture.broker.releaseRunner).not.toHaveBeenCalled();
+    await fixture.tick(1);
+    expect(fixture.read()?.status).toBe("cancelled");
+    expect(fixture.broker.releaseRunner).toHaveBeenCalledOnce();
+  } finally {
+    await fixture.close();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.useRealTimers();
+  }
+});
