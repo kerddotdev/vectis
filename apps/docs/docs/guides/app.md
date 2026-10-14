@@ -30,6 +30,8 @@ Every view follows the service by itself: a change you make anywhere, and a chan
 
 A setting that applies immediately, such as the **Automatic** switch, is confirmed by a notification once the service has applied it. Work that takes longer, such as preparing an image or running a job, is confirmed as started and then continues in **Activity**. Notifications about something that worked disappear on their own; a failure, or anything waiting for you, stays until you dismiss it.
 
+While the app runs, native macOS notifications report new local activities that need you or fail, even when the window is hidden or minimized or another Mac is selected. They are suppressed while focused; clicking opens the local activity. Startup history is not replayed. Closing the last window stops notifications. The desktop-local **Notify me when Vectis needs me or work fails** preference defaults on; its Settings toggle will be added separately.
+
 ## Control another Mac
 
 After signing in under **Connections > Other Macs**, the machine switcher at the bottom of the sidebar selects which Mac the views control. File pickers work only for this Mac; for another Mac, type paths that exist on it. Service installation and pairing only work on the Mac itself. See [Remote control](/docs/guides/remote-control).

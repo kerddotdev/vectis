@@ -4,6 +4,8 @@ export type DesktopAction =
   | "controller.finish"
   | "controller.logout"
   | "machines.list"
+  | "notifications.get"
+  | "notifications.set"
   | "status"
   | "storage"
   | "doctor"
