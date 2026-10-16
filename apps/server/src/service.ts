@@ -71,6 +71,7 @@ import { jobAccess, restrictiveAccess } from "../../../packages/github/src/acces
 export class Service {
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
+  private instanceStops = new Map<string, Promise<void>>();
   private preparing: string | undefined;
   private tasks = new Map<string, { abort: AbortController; done: Promise<void> }>();
   private cleanupTimer: ReturnType<typeof setInterval> | undefined;
@@ -174,6 +175,13 @@ export class Service {
       this.retentionTimer.unref();
     }
     if (!this.closing && !this.cleanupTimer) {
+      this.cleanupSweep = this.retryRunnerCleanup(true)
+        .catch((error: unknown) => {
+          console.error("Runner recovery failed:", redact(inspect(error)));
+        })
+        .finally(() => {
+          this.cleanupSweep = undefined;
+        });
       this.cleanupTimer = setInterval(() => {
         if (this.closing || this.cleanupSweep || !this.runnerCleanup.connected()) return;
         this.cleanupSweep = this.retryRunnerCleanup()
@@ -187,23 +195,89 @@ export class Service {
       this.cleanupTimer.unref();
     }
   }
-  private async retryRunnerCleanup() {
+  private async retryRunnerCleanup(restarted = false) {
+    const metadata = Schema.Struct({
+      recovery: Schema.Struct({
+        startedAt: Schema.Number,
+        attempts: Schema.Number,
+        nextAttemptAt: Schema.Number,
+      }),
+    });
     for (const operation of this.store.snapshot().operations) {
       if (this.closing || !this.runnerCleanup.connected()) break;
       if (
         operation.command !== "runner.run" ||
         operation.status !== "action_required" ||
-        this.tasks.has(operation.id) ||
-        !(Date.now() - Date.parse(operation.updatedAt) < 30 * 60 * 1000) ||
-        !Schema.is(Schema.Struct({ code: Schema.Literal("runner_cleanup_required") }))(
-          operation.result,
+        this.tasks.has(operation.id)
+      )
+        continue;
+      const result = operation.result;
+      if (!Schema.is(Schema.Struct({ code: Schema.optional(Schema.String) }))(result)) continue;
+      if (
+        ![
+          "runner_cleanup_required",
+          "runner_recovery_pending",
+          "runner_registration_uncertain",
+        ].includes(result.code ?? "runner_recovery_pending")
+      )
+        continue;
+      const recovery = Schema.is(metadata)(result)
+        ? result.recovery
+        : {
+            startedAt: Date.parse(operation.updatedAt),
+            attempts: 0,
+            nextAttemptAt:
+              Date.parse(operation.updatedAt) + (this.runnerCleanup.intervalMs ?? 60000),
+          };
+      const now = Date.now();
+      if (now - recovery.startedAt >= 24 * 60 * 60 * 1000) {
+        if (
+          operation.message !==
+          "Automatic runner recovery expired after 24 hours; cleanup is still unconfirmed."
         )
+          this.store.update(operation, {
+            message:
+              "Automatic runner recovery expired after 24 hours; cleanup is still unconfirmed.",
+            result: {
+              ...result,
+              recovery,
+              nextStep:
+                "Confirm the owned VM stopped, then run vectis runner reconcile with this operation ID.",
+            },
+          });
+        continue;
+      }
+      if (
+        now < recovery.nextAttemptAt &&
+        !(restarted && result.code === "runner_recovery_pending" && !Schema.is(metadata)(result))
       )
         continue;
       try {
+        const snapshot = this.store.snapshot();
+        const progress = Schema.is(RunnerProgress)(result) ? result : undefined;
+        const start = snapshot.operations.find((item) => item.key === `${operation.id}:start`);
+        const instance = snapshot.instances.find(
+          (item) => item.id === (progress?.instanceId ?? start?.id),
+        );
+        if (
+          instance?.status === "interrupted" &&
+          (await this.runtime.reconcile(instance.id, instance.directory))
+        )
+          this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
         await this.reconcileRunner(operation.id);
       } catch {
-        // Keep the original update time so failures cannot extend the retry window.
+        const current = this.store.snapshot().operations.find((item) => item.id === operation.id);
+        if (current?.status === "action_required")
+          this.store.update(current, {
+            result: {
+              ...result,
+              recovery: {
+                ...recovery,
+                attempts: recovery.attempts + 1,
+                nextAttemptAt: Date.now() + Math.min(60000 * 2 ** recovery.attempts, 30 * 60000),
+              },
+            },
+          });
       }
     }
   }
@@ -267,7 +341,36 @@ export class Service {
         "reconciliation_required",
         "Only an interrupted runner operation can be reconciled.",
       );
+    if (!Schema.is(RunnerProgress)(interrupted.result)) {
+      const start = snapshot.operations.find((item) => item.key === `${interrupted.id}:start`);
+      const activity = snapshot.activities?.find((item) => item.rootOperationId === interrupted.id);
+      if (
+        !start &&
+        activity?.bindingId &&
+        Schema.is(Schema.Struct({ code: Schema.Literal("runner_recovery_pending") }))(
+          interrupted.result,
+        )
+      ) {
+        this.store.update(interrupted, {
+          status: "failed",
+          message: "The service restarted before runner startup or registration began.",
+          result: { code: "runner_interrupted" },
+        });
+        return { operationId: interrupted.id };
+      }
+    }
     const progress = Schema.decodeUnknownSync(RunnerProgress)(interrupted.result);
+    const recoveryCause = Schema.is(
+      Schema.Struct({
+        recoveryCause: Schema.Struct({
+          code: Schema.Literal("runner_offline"),
+          message: Schema.String,
+        }),
+      }),
+    )(interrupted.result)
+      ? interrupted.result.recoveryCause
+      : undefined;
+    const cause = progress.cause ?? recoveryCause;
     const start = snapshot.operations.find((item) => item.key === `${interrupted.id}:start`);
     const instance = snapshot.instances.find(
       (item) => item.id === (progress.instanceId ?? start?.id),
@@ -304,15 +407,14 @@ export class Service {
         await broker.releaseRunner(lease.id, AbortSignal.any([signal, AbortSignal.timeout(60000)]));
       signal.throwIfAborted();
       this.store.update(interrupted, {
-        status: progress.cause ? "failed" : "cancelled",
+        status: cause ? "failed" : "cancelled",
         message:
-          progress.cause?.message ??
-          "Interrupted runner cleaned up. Check GitHub for the job result.",
+          cause?.message ?? "Interrupted runner cleaned up. Check GitHub for the job result.",
         result: {
           ...progress,
           leaseId: lease.id,
           stage: "finished",
-          ...(progress.cause ? { code: progress.cause.code } : {}),
+          code: cause?.code ?? "runner_interrupted",
         },
       });
       return { operationId: interrupted.id, leaseId: lease.id };
@@ -647,145 +749,161 @@ export class Service {
         case "runner.run": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           const broker = this.runnerConnection();
-          const binding = (await broker.repositories()).find(
-            (item) => item.id === command.bindingId,
-          );
-          if (!binding)
-            throw new VectisError("repository_missing", "This repository binding is unavailable.");
-          this.store.updateActivity(operation.id, (base) => ({
-            ...base,
-            bindingId: binding.id,
-            environmentId: binding.environmentId,
-            repository: { id: binding.repositoryId, name: binding.repositoryName },
-          }));
-          const environment = snapshot.environments.find(
-            (item) => item.id === binding.environmentId,
-          );
-          if (!environment || environment.state !== "ready")
-            throw new VectisError("setup_required", "Prepare this repository's environment first.");
           const abort = new AbortController();
-          let startId: string | undefined;
-          const demandJobId = command.jobId;
-          if (demandJobId === undefined && restrictiveAccess(binding.access))
-            throw new VectisError(
-              "job_required",
-              "Start a specific job under this repository access policy.",
+          let lifecycleStarted = false;
+          const done = (async () => {
+            const binding = (await broker.repositories()).find(
+              (item) => item.id === command.bindingId,
             );
-          const done = runRunnerTask(
-            command.bindingId,
-            operation.id,
-            environment,
-            {
-              broker,
-              request: {
-                ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
-                ...(command.automatic ? { automatic: true } : {}),
-              },
-              ...(demandJobId === undefined
-                ? {}
-                : {
-                    needed: async (signal) => {
-                      if (
-                        command.automatic &&
-                        !(await broker.repositories()).some(
-                          (item) => item.id === command.bindingId && item.automatic,
+            if (!binding)
+              throw new VectisError(
+                "repository_missing",
+                "This repository binding is unavailable.",
+              );
+            abort.signal.throwIfAborted();
+            this.store.updateActivity(operation.id, (base) => ({
+              ...base,
+              bindingId: binding.id,
+              environmentId: binding.environmentId,
+              repository: { id: binding.repositoryId, name: binding.repositoryName },
+            }));
+            const environment = this.store
+              .snapshot()
+              .environments.find((item) => item.id === binding.environmentId);
+            if (!environment || environment.state !== "ready")
+              throw new VectisError(
+                "setup_required",
+                "Prepare this repository's environment first.",
+              );
+            let startId: string | undefined;
+            const demandJobId = command.jobId;
+            if (demandJobId === undefined && restrictiveAccess(binding.access))
+              throw new VectisError(
+                "job_required",
+                "Start a specific job under this repository access policy.",
+              );
+            lifecycleStarted = true;
+            return runRunnerTask(
+              command.bindingId,
+              operation.id,
+              environment,
+              {
+                broker,
+                request: {
+                  ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
+                  ...(command.automatic ? { automatic: true } : {}),
+                },
+                ...(demandJobId === undefined
+                  ? {}
+                  : {
+                      needed: async (signal) => {
+                        if (
+                          command.automatic &&
+                          !(await broker.repositories()).some(
+                            (item) => item.id === command.bindingId && item.automatic,
+                          )
                         )
-                      )
-                        return false;
-                      const job = await broker.refreshJob(command.bindingId, demandJobId, signal);
-                      this.store.updateActivity(operation.id, (base) => ({
-                        ...base,
-                        subject: {
-                          ...base.subject,
-                          type: "runner",
-                          requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
-                        },
-                      }));
-                      // GitHub reports runner ID 0 for a queued job that no runner has taken.
-                      if (job.status !== "queued" || job.runnerId) return false;
-                      if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
-                        throw new VectisError(
-                          "runner_labels_mismatch",
-                          "The GitHub job requires different runner capabilities.",
+                          return false;
+                        const job = await broker.refreshJob(command.bindingId, demandJobId, signal);
+                        this.store.updateActivity(operation.id, (base) => ({
+                          ...base,
+                          subject: {
+                            ...base.subject,
+                            type: "runner",
+                            requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
+                          },
+                        }));
+                        // GitHub reports runner ID 0 for a queued job that no runner has taken.
+                        if (job.status !== "queued" || job.runnerId) return false;
+                        if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
+                          throw new VectisError(
+                            "runner_labels_mismatch",
+                            "The GitHub job requires different runner capabilities.",
+                          );
+                        const current = (await broker.repositories()).find(
+                          (item) => item.id === command.bindingId,
                         );
-                      const current = (await broker.repositories()).find(
-                        (item) => item.id === command.bindingId,
-                      );
-                      if (!current)
-                        throw new VectisError(
-                          "repository_missing",
-                          "This repository binding is unavailable.",
-                        );
-                      const access = jobAccess(current.access, job);
-                      if (access && (access !== "approval_required" || command.automatic))
-                        throw new VectisError(
-                          access,
-                          "This job is refused by the repository access policy.",
-                        );
-                      return true;
-                    },
-                  }),
-              start: async () => {
-                const started = this.submitChild(operation.id, `${operation.id}:start`, {
-                  type: "environment.start",
-                  id: environment.id,
-                });
-                startId = started.id;
-                const cancelStart = () => {
-                  if (this.closing) this.tasks.get(started.id)?.abort.abort();
-                  else
-                    this.submitChild(operation.id, `${operation.id}:cancel-start`, {
-                      type: "operation.cancel",
-                      id: started.id,
-                    });
-                };
-                abort.signal.addEventListener("abort", cancelStart, { once: true });
-                if (abort.signal.aborted) cancelStart();
-                try {
-                  await this.waitForOperation(started.id);
-                } finally {
-                  abort.signal.removeEventListener("abort", cancelStart);
-                }
-                const instance = this.store
-                  .snapshot()
-                  .instances.find((item) => item.id === started.id);
-                if (!instance || instance.status !== "running")
-                  throw new VectisError("runner_vm_missing", "The runner VM did not start.");
-                return instance;
+                        if (!current)
+                          throw new VectisError(
+                            "repository_missing",
+                            "This repository binding is unavailable.",
+                          );
+                        const access = jobAccess(current.access, job);
+                        if (access && (access !== "approval_required" || command.automatic))
+                          throw new VectisError(
+                            access,
+                            "This job is refused by the repository access policy.",
+                          );
+                        return true;
+                      },
+                    }),
+                start: async () => {
+                  const started = this.submitChild(operation.id, `${operation.id}:start`, {
+                    type: "environment.start",
+                    id: environment.id,
+                  });
+                  startId = started.id;
+                  const cancelStart = () => {
+                    if (this.closing) this.tasks.get(started.id)?.abort.abort();
+                    else
+                      this.submitChild(operation.id, `${operation.id}:cancel-start`, {
+                        type: "operation.cancel",
+                        id: started.id,
+                      });
+                  };
+                  abort.signal.addEventListener("abort", cancelStart, { once: true });
+                  if (abort.signal.aborted) cancelStart();
+                  try {
+                    await this.waitForOperation(started.id);
+                  } finally {
+                    abort.signal.removeEventListener("abort", cancelStart);
+                  }
+                  const instance = this.store
+                    .snapshot()
+                    .instances.find((item) => item.id === started.id);
+                  if (!instance || instance.status !== "running")
+                    throw new VectisError("runner_vm_missing", "The runner VM did not start.");
+                  return instance;
+                },
+                stop: async () => {
+                  if (!startId) return;
+                  const current = this.store
+                    .snapshot()
+                    .instances.find((item) => item.id === startId);
+                  if (!current || current.status === "stopped") return;
+                  const stopped = this.submitChild(operation.id, `${operation.id}:stop`, {
+                    type: "instance.stop",
+                    id: startId,
+                  });
+                  await this.waitForOperation(stopped.id);
+                  const instance = this.store
+                    .snapshot()
+                    .instances.find((item) => item.id === startId);
+                  if (instance && instance.status !== "stopped")
+                    throw new VectisError(
+                      "runner_cleanup_required",
+                      "Owned VM termination is unconfirmed.",
+                    );
+                },
+                progress: (result) => {
+                  operation = this.store.update(operation, {
+                    result,
+                    message: `Runner: ${result.stage}.`,
+                  });
+                },
               },
-              stop: async () => {
-                if (!startId) return;
-                const current = this.store.snapshot().instances.find((item) => item.id === startId);
-                if (!current || current.status === "stopped") return;
-                const stopped = this.submitChild(operation.id, `${operation.id}:stop`, {
-                  type: "instance.stop",
-                  id: startId,
-                });
-                await this.waitForOperation(stopped.id);
-                const instance = this.store
-                  .snapshot()
-                  .instances.find((item) => item.id === startId);
-                if (instance && instance.status !== "stopped")
-                  throw new VectisError(
-                    "runner_cleanup_required",
-                    "Owned VM termination is unconfirmed.",
-                  );
-              },
-              progress: (result) => {
-                operation = this.store.update(operation, {
-                  result,
-                  message: `Runner: ${result.stage}.`,
-                });
-              },
-            },
-            abort.signal,
-          )
+              abort.signal,
+            );
+          })()
             .then((completed) => {
               this.store.update(operation, {
                 status: completed.status,
                 message: completed.message,
                 result: {
                   ...completed.progress,
+                  ...("recoveryCause" in completed
+                    ? { recoveryCause: completed.recoveryCause }
+                    : {}),
                   ...("code" in completed
                     ? {
                         code: completed.code,
@@ -797,7 +915,7 @@ export class Service {
                                   ? completed.nextStep
                                   : completed.status === "action_required"
                                     ? completed.code === "runner_cleanup_required"
-                                      ? "Confirm the owned VM is stopped. While connected, Vectis retries GitHub cleanup automatically for up to 30 minutes. Use vectis runner reconcile with this operation ID if cleanup remains unresolved."
+                                      ? "Confirm the owned VM is stopped. While connected, Vectis retries GitHub cleanup automatically with exponential backoff for up to 24 hours. Use vectis runner reconcile with this operation ID if cleanup remains unresolved."
                                       : "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
                                     : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
                             }),
@@ -806,11 +924,24 @@ export class Service {
                 },
               });
             })
-            .catch(() => {
-              this.store.update(operation, {
-                status: "action_required",
-                message: "Runner recovery requires inspection.",
-              });
+            .catch((error: unknown) => {
+              if (lifecycleStarted)
+                this.store.update(operation, {
+                  status: "action_required",
+                  message: "Runner recovery requires inspection.",
+                  result: {
+                    ...(typeof operation.result === "object" && operation.result !== null
+                      ? operation.result
+                      : {}),
+                    code: "runner_recovery_pending",
+                  },
+                });
+              else if (abort.signal.aborted)
+                this.store.update(operation, {
+                  status: "cancelled",
+                  message: "Runner request cancelled before startup.",
+                });
+              else this.failOperation(operation, error);
             })
             .finally(() => {
               this.tasks.delete(operation.id);
@@ -1073,9 +1204,32 @@ export class Service {
           this.store.put("instance", command.id, { ...instance, status: "stopped", pid: 0 });
           break;
         }
-        case "instance.stop":
-          await this.runtime.stop(command.id);
-          break;
+        case "instance.stop": {
+          const abort = new AbortController();
+          let stopping = this.instanceStops.get(command.id);
+          if (!stopping) {
+            const startup = this.tasks.get(command.id);
+            stopping = (async () => {
+              if (startup) {
+                startup.abort.abort();
+                await startup.done;
+              }
+              const instance = this.store
+                .snapshot()
+                .instances.find((item) => item.id === command.id);
+              if (instance?.status !== "stopped") await this.runtime.stop(command.id);
+            })().finally(() => this.instanceStops.delete(command.id));
+            this.instanceStops.set(command.id, stopping);
+          }
+          const done = stopping
+            .then(() => {
+              this.store.update(operation, { status: "succeeded", message: "Completed." });
+            })
+            .catch((error: unknown) => this.failOperation(operation, error))
+            .finally(() => this.tasks.delete(operation.id));
+          this.tasks.set(operation.id, { abort, done });
+          return;
+        }
         case "migration.preview":
           result = previewMigration(command.source, command.targets);
           break;

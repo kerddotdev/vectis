@@ -31,11 +31,13 @@ vectis runner run <binding-id> --key <any-unique-key> --json
 vectis runner run <binding-id> --job-id <github-job-id> --json   # only if that job is still queued
 ```
 
-A manual runner without a job ID waits up to six hours for a job.
+A manual runner without a job ID waits for work and drains after 5 idle minutes. The listener has a six-hour maximum lifetime, including job execution.
 
 An automatic runner request that the Mac does not pick up expires so another Mac connected to the same repository can take the job: after 2 minutes with result code `machine_offline` if the Mac went offline, or after 10 minutes with `claim_timeout` if it stayed online. The job is requested again on the next heartbeat.
 
-A runner requested for a specific job is drained after 10 minutes of inactivity if that job no longer needs queued capacity. Vectis stops the VM and releases the runner lease, reporting the operation as `cancelled` with result code `runner_idle`; busy runners and runners whose jobs still need queued capacity keep listening.
+Every runner is drained after 5 minutes of inactivity if its requested job no longer needs queued capacity. Manual runners without a requested job drain after the same idle window. Vectis confirms the runner is not busy, stops the VM and releases the lease, reporting `cancelled` with result code `runner_idle`. Busy runners and runners whose jobs still need queued capacity keep listening.
+
+A locally listening runner that GitHub reports offline or missing for 2 consecutive minutes is stopped with retryable failure code `runner_offline`. Continuous status read failures for 15 minutes trigger the same recovery. Cleanup must be confirmed before the operation ends; unconfirmed cleanup stays `action_required`.
 
 ## Read job results
 
@@ -114,7 +116,7 @@ An unreachable guest is reported as such, with SSH's reason (timeout, no route, 
 
 ## Recover after a crash
 
-If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Vectis never guesses: it cleans up only after it has evidence that the VM process exited.
+If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Interrupted runner operations report `runner_recovery_pending`. On startup and during periodic recovery, Vectis checks the owned VM's exit evidence. Once the instance is stopped or absent, it reconciles the cloud lease and releases the registration automatically. A VM that may still be running, or an unconfirmed cloud release, keeps the operation unresolved.
 
 If deleting an owned VM's files fails after its process exits, Vectis retains an exit receipt so reconciliation can retry the file cleanup.
 
@@ -125,8 +127,10 @@ vectis runner reconcile <operation-id> --wait
 
 The app offers the same actions as **Reconcile** in **Overview**. Until an interrupted VM is reconciled, the Mac starts no new VMs and offers no runner slots. Do not start new runners to work around an unresolved one.
 
-For `runner_cleanup_required`, the service retries runner reconciliation about every minute while connected to the cloud, for up to 30 minutes from the operation's last update. A stopped runner can still be busy on GitHub, usually for up to 15 minutes until GitHub releases its job. `runner_busy` leaves cleanup unresolved until a later retry succeeds. Once the retry window expires, the operation remains `action_required` and you can reconcile it manually.
+For interrupted runners, `runner_registration_uncertain` and `runner_cleanup_required`, recovery retries while connected to the cloud, with delays of 1, 2, 4, 8, 16 and then 30 minutes, capped at 30 minutes. The retry schedule survives service restarts. After 24 hours, the operation remains `action_required` with a message and a next step for manual reconciliation. A stopped runner can still be busy on GitHub, usually for up to 15 minutes until GitHub releases its job; `runner_busy` leaves cleanup unresolved until a later retry succeeds.
 
-A refused assignment retains its policy reason during cleanup. After manual or automatic reconciliation succeeds, the runner operation ends as `failed` with `runner_assignment_rejected` and the original refusal message. Other interrupted runners end as `cancelled`; this does not establish the GitHub job result.
+A refused assignment retains its policy reason during cleanup. After manual or automatic reconciliation succeeds, the runner operation ends as `failed` with `runner_assignment_rejected` and the original refusal message. Offline runners retain `failed` with `runner_offline` after delayed cleanup. Other interrupted runners end as `cancelled` with `runner_interrupted`; this does not establish the GitHub job result. Requests interrupted before startup or registration began end as `failed` with `runner_interrupted`.
 
 Runner reconciliation also works when registration stopped before creating a cloud lease. After confirming VM cleanup, Vectis records the request as released in the cloud so a delayed registration cannot create a duplicate runner. If the cloud cannot confirm this, the operation stays unresolved.
+
+Registration failures confirmed to have no remaining cloud registration end as retryable `failed` with `runner_registration_failed`. A lost response is reconciled before retrying; unavailable reconciliation stays `action_required`. Approval-required results retain their existing manual next steps.

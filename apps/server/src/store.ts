@@ -234,6 +234,18 @@ export class Store {
           status: "action_required",
           message:
             "The service restarted before completion was confirmed. Inspect the operation before retrying.",
+          ...(operation.command === "runner.run"
+            ? {
+                result: {
+                  ...(typeof operation.result === "object" && operation.result !== null
+                    ? operation.result
+                    : {}),
+                  code: "runner_recovery_pending",
+                  nextStep:
+                    "Vectis retries recovery automatically while connected. Confirm the owned VM stopped before manually running vectis runner reconcile with this operation ID.",
+                },
+              }
+            : {}),
         });
     for (const instance of this.snapshot().instances)
       if (instance.status === "starting" || instance.status === "running")
