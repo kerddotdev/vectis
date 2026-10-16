@@ -18,7 +18,7 @@ import {
 } from "../../../packages/protocol/src/index.js";
 import { runtimeDiagnostics } from "../../../packages/runner/src/diagnostics.js";
 import { storageReport } from "../../../packages/runner/src/storage.js";
-import { Store, snapshotLimits } from "./store.js";
+import { Store, snapshotLimits, type StoreOptions } from "./store.js";
 import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
@@ -53,12 +53,13 @@ async function body(request: IncomingMessage) {
   }
 }
 export async function startService(
-  options: RuntimeOptions & {
-    port?: number;
-    token?: string;
-    keychainHelper?: string;
-    onShutdown?: () => void;
-  },
+  options: RuntimeOptions &
+    StoreOptions & {
+      port?: number;
+      token?: string;
+      keychainHelper?: string;
+      onShutdown?: () => void;
+    },
 ) {
   privateHome(options.home);
   privateFile(join(options.home, "connection.json"));
@@ -90,7 +91,7 @@ export async function startService(
   const token = options.token ?? randomBytes(32).toString("hex");
   let store: Store;
   try {
-    store = new Store(join(options.home, "state.sqlite"));
+    store = new Store(join(options.home, "state.sqlite"), options);
   } catch (error) {
     await rm(lockPath, { force: true });
     throw error;

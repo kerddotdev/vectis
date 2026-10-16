@@ -7,7 +7,7 @@ import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { activityFor } from "./activities.js";
 import { retainActivities, retainInstances } from "./activity-retention.js";
 import { Service } from "./service.js";
-import { Store } from "./store.js";
+import { Store, type StoreOptions } from "./store.js";
 
 const day = 24 * 60 * 60 * 1000;
 const now = Date.parse("2026-09-21T12:00:00Z");
@@ -17,10 +17,10 @@ afterEach(async () => {
   cleanup.length = 0;
   vi.useRealTimers();
 });
-async function fixture() {
+async function fixture(options: StoreOptions = {}) {
   const home = await mkdtemp(join(tmpdir(), "vectis-retention-"));
   cleanup.push(() => rm(home, { recursive: true, force: true }));
-  const store = new Store(join(home, "state.sqlite"));
+  const store = new Store(join(home, "state.sqlite"), options);
   cleanup.push(() => store.close());
   const add = (id: string, age: number, status: Operation["status"] = "succeeded") => {
     const operation = store.accept(
@@ -241,12 +241,16 @@ test("a newly stopped old instance ages from its stop and duplicate stop request
 });
 
 test("retention sweeps records outside the bounded status window", async () => {
-  const { store, add } = await fixture();
-  for (let index = 0; index < 120; index++) add(`expired-${index}`, 40 + index);
+  const { store, add } = await fixture({
+    snapshotLimits: { operations: 3, activities: 3, stoppedInstances: 2 },
+  });
+  for (let index = 0; index < 4; index++) add(`expired-${index}`, 40 + index);
   add("visible", 0.5);
+  expect(store.snapshot().operations).toHaveLength(3);
+  expect(store.snapshot().activities).toHaveLength(3);
   expect(store.snapshot().activities?.length).toBeLessThan(store.activitySummaries().length);
   retainActivities(store, () => false, now);
   expect(store.activitySummaries().map(({ id }) => id)).toEqual(["visible"]);
   expect(store.operations().map(({ id }) => id)).toEqual(["visible"]);
-  expect(store.db.prepare("SELECT COUNT(*) AS count FROM requests").get()?.count).toBe(121);
+  expect(store.db.prepare("SELECT COUNT(*) AS count FROM requests").get()?.count).toBe(5);
 });

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { Store } from "./store.js";
+import { Store, type StoreOptions } from "./store.js";
 import { activityFor } from "./activities.js";
 import { Snapshot, type Operation } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
@@ -12,11 +12,11 @@ afterEach(async () => {
   for (const close of cleanup.reverse()) await close();
   cleanup.length = 0;
 });
-async function fixture() {
+async function fixture(options: StoreOptions = {}) {
   const home = await mkdtemp(join(tmpdir(), "vectis-store-"));
   cleanup.push(() => rm(home, { recursive: true, force: true }));
   const path = join(home, "state.sqlite");
-  return { path, store: new Store(path) };
+  return { path, store: new Store(path, options) };
 }
 
 test("recovery never silently retries an uncertain side effect", async () => {
@@ -287,7 +287,9 @@ test("restart marks runner recovery pending without losing its durable lease ide
 });
 
 test("snapshot bounds only terminal history, by completion time, independently of activity members", async () => {
-  const { store } = await fixture();
+  const { store } = await fixture({
+    snapshotLimits: { operations: 2, activities: 1, stoppedInstances: 1 },
+  });
   try {
     const add = (id: string, status: Operation["status"], updatedAt: string) => {
       const command = { type: "job.scan", bindingId: "binding" } as const;
@@ -308,7 +310,7 @@ test("snapshot bounds only terminal history, by completion time, independently o
     ] as const)
       store.put("instance", id, { id, status, createdAt, environmentId: "env", pid: 0 });
 
-    const snapshot = store.snapshot({ operations: 2, activities: 1, stoppedInstances: 1 });
+    const snapshot = store.snapshot();
     expect(snapshot.operations.map(({ id }) => id).sort()).toEqual([
       "accepted",
       "action_required",

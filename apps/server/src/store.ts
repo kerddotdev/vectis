@@ -34,6 +34,7 @@ function redactOperation(operation: Operation): Operation {
 
 const decodeOperation = Schema.decodeUnknownSync(Operation);
 export const snapshotLimits = { operations: 100, activities: 100, stoppedInstances: 20 };
+export type StoreOptions = { snapshotLimits?: typeof snapshotLimits };
 const terminalStatuses = "('succeeded','failed','cancelled')";
 function readOperation(body: unknown): Operation[] {
   if (typeof body !== "string") return [];
@@ -49,7 +50,9 @@ export class Store {
   readonly startId = randomUUID();
   private changes = 0;
   private listeners = new Set<() => void>();
-  constructor(path: string) {
+  private readonly snapshotLimits: typeof snapshotLimits;
+  constructor(path: string, options: StoreOptions = {}) {
+    this.snapshotLimits = options.snapshotLimits ?? snapshotLimits;
     if (path !== ":memory:") {
       privateFile(path, true);
       privateFile(`${path}-wal`);
@@ -215,7 +218,7 @@ export class Store {
     if (current !== undefined)
       this.put("activity", id, update(Schema.decodeUnknownSync(ActivityBase)(current)));
   }
-  snapshot(limits = snapshotLimits): Snapshot {
+  snapshot(limits = this.snapshotLimits): Snapshot {
     const machine = Schema.decodeUnknownSync(Machine)(this.get("machine", "self"));
     return {
       revision: `${this.startId}:${this.changes}`,
