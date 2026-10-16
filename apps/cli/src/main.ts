@@ -58,6 +58,7 @@ async function main() {
       egress: { type: "string" },
       "max-runners": { type: "string" },
       "memory-budget-mib": { type: "string" },
+      "warm-pool": { type: "string" },
       "job-id": { type: "string" },
       ref: { type: "string" },
       input: { type: "string", multiple: true },
@@ -194,6 +195,7 @@ Environments
   environment register --file <path>  Register an existing prepared environment JSON file
   environment list              List environments and effective network egress
   environment configure <id>    Set --cpu, --memory-mib, --storage-path, --x64 rosetta|off or --egress internet_only|open for future VMs
+                                --warm-pool <N> keeps 0-4 SSH-ready VMs (default 0, uses RAM)
   environment start <id>        Start a clean VM, optionally overriding --cpu, --memory-mib, --storage-path
   environment remove <id>       Remove an idle definition, preserving its disk
   instance stop <id>            Stop a VM owned by this service
@@ -264,6 +266,14 @@ Documentation: https://vectis.kerd.dev/docs
     throw new VectisError(
       "invalid_arguments",
       "--egress is supported only by environment configure.",
+    );
+  if (
+    values["warm-pool"] !== undefined &&
+    !(command === "environment" && subcommand === "configure")
+  )
+    throw new VectisError(
+      "invalid_arguments",
+      "--warm-pool is supported only by environment configure.",
     );
   if (values.machine && ["service", "cloud", "login", "logout", "machine"].includes(command))
     throw new VectisError("invalid_target", "This command does not accept --machine.");
@@ -786,6 +796,7 @@ Documentation: https://vectis.kerd.dev/docs
     request = decodeCommand({
       type: "environment.configure",
       id,
+      ...(values["warm-pool"] !== undefined ? { warmPool: Number(values["warm-pool"]) } : {}),
       ...(values.x64 !== undefined ? { x64: values.x64 } : {}),
       ...(values.egress !== undefined ? { egress: values.egress } : {}),
       ...(values.cpu !== undefined ? { cpu: Number(values.cpu) } : {}),

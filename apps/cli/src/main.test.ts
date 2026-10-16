@@ -641,3 +641,101 @@ test.each([
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each([
+  { value: "0", valid: true },
+  { value: "1", valid: true },
+  { value: "4", valid: true },
+  { value: "-1", valid: false },
+  { value: "5", valid: false },
+  { value: "1.5", valid: false },
+  { value: "invalid", valid: false },
+])(
+  "environment configure parses --warm-pool $value through the shared command",
+  async ({ value, valid }) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cli-warm-"));
+    const server = await startService({ home });
+    const submit = vi.spyOn(server.service, "submit");
+    const argv = process.argv;
+    const exitCode = process.exitCode;
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      vi.resetModules();
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "environment",
+        "configure",
+        "linux",
+        "--warm-pool",
+        value,
+        "--key",
+        "pool",
+        "--json",
+      ];
+      await import("./main.js");
+      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+      if (valid)
+        expect(submit).toHaveBeenCalledWith("pool", {
+          type: "environment.configure",
+          id: "linux",
+          warmPool: Number(value),
+        });
+      else {
+        expect(submit).not.toHaveBeenCalled();
+        expect(process.exitCode).toBe(1);
+      }
+    } finally {
+      process.argv = argv;
+      process.exitCode = exitCode;
+      output.mockRestore();
+      submit.mockRestore();
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test("CLI status shows warm pool VMs without counting them as running jobs", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-cli-warm-status-"));
+  const server = await startService({ home });
+  const argv = process.argv;
+  const exitCode = process.exitCode;
+  const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  try {
+    server.service.store.put("environment", "linux", {
+      id: "linux",
+      name: "Linux",
+      os: "linux",
+      state: "ready",
+      basePath: join(home, "base"),
+      cpu: 1,
+      memoryMiB: 512,
+      warmPool: 1,
+    });
+    server.service.store.put("instance", "warm", {
+      id: "warm",
+      environmentId: "linux",
+      status: "running",
+      role: "warm",
+      memoryMiB: 512,
+      pid: 0,
+      createdAt: new Date().toISOString(),
+    });
+    vi.resetModules();
+    process.argv = [process.execPath, "vectis", "--home", home, "status", "--json"];
+    await import("./main.js");
+    await vi.waitFor(() =>
+      expect(output).toHaveBeenCalledWith(expect.stringContaining('"role":"warm"')),
+    );
+    expect(output).toHaveBeenCalledWith(expect.stringContaining('"active":0'));
+  } finally {
+    process.argv = argv;
+    process.exitCode = exitCode;
+    output.mockRestore();
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});

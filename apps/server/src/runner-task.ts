@@ -28,7 +28,8 @@ interface Controls {
   now?: () => number;
   pollIntervalMs?: number;
   idleTimeoutMs?: number;
-  start(): Promise<Instance>;
+  start(onStarting?: (instanceId: string) => void): Promise<Instance>;
+  claimWarm?(): { instance: Instance; connection: GuestConnection } | undefined;
   stop(): Promise<void>;
   progress(value: RunnerProgress): void;
 }
@@ -66,11 +67,28 @@ export async function runRunnerTask(
       );
     signal.throwIfAborted();
     started = true;
-    const instance = await controls.start();
+    const warm = controls.claimWarm?.();
+    let instance = warm?.instance ?? (await controls.start((instanceId) => update({ instanceId })));
     update({ instanceId: instance.id, stage: "preparing_guest" });
     signal.throwIfAborted();
-    connection = await readyGuest(environment, instance, signal);
     const shell = environment.os === "windows" ? "powershell" : "bash";
+    if (warm) {
+      try {
+        const health = await executeGuest(warm.connection, "exit 0", {
+          shell,
+          signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+        });
+        if (health.exitCode !== 0)
+          throw new VectisError("guest_unavailable", "The warm VM failed its SSH health check.");
+        connection = warm.connection;
+      } catch {
+        signal.throwIfAborted();
+        await controls.stop();
+        instance = await controls.start((instanceId) => update({ instanceId }));
+        update({ instanceId: instance.id });
+      }
+    }
+    connection ??= await readyGuest(environment, instance, signal);
     const installed = await executeGuest(connection, runnerInstallScript(environment.os), {
       shell,
       signal: AbortSignal.any([signal, AbortSignal.timeout(600000)]),

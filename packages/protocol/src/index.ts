@@ -63,6 +63,7 @@ export const Preparation = Schema.Struct({
   ]),
 });
 export type Preparation = typeof Preparation.Type;
+const WarmPoolSize = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4 }));
 export const Environment = Schema.Struct({
   id: Identifier,
   name: Schema.NonEmptyString,
@@ -71,6 +72,7 @@ export const Environment = Schema.Struct({
   storagePath: Schema.optional(Schema.NonEmptyString),
   cpu: Schema.Int,
   memoryMiB: Schema.Int,
+  warmPool: Schema.optional(WarmPoolSize),
   state: Schema.Literals(["ready", "action_required"]),
   sshHost: Schema.optional(Schema.String),
   sshPort: Schema.optional(Schema.Int),
@@ -162,6 +164,7 @@ export const Instance = Schema.Struct({
   cpu: Schema.optional(Schema.Int),
   memoryMiB: Schema.optional(Schema.Int),
   status: Schema.Literals(["starting", "running", "stopped", "interrupted"]),
+  role: Schema.optional(Schema.Literals(["warming", "warm"])),
   pid: Schema.Int,
   macAddress: Schema.optional(Schema.String),
   sshHost: Schema.optional(Schema.String),
@@ -286,6 +289,7 @@ export const Command = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("environment.configure"),
     id: Identifier,
+    warmPool: Schema.optional(WarmPoolSize),
     x64: Schema.optional(Schema.Literals(["rosetta", "off"])),
     egress: Schema.optional(Egress),
     cpu: Schema.optional(Schema.Int),
@@ -571,7 +575,7 @@ export const capabilities = [
     kind: "command",
     activity: "setting",
     description:
-      "Set CPU, memory, an absolute VM storage directory, egress or opt-in Rosetta x86_64 support for future instances. Internet-only egress is supported only on Windows; open allows host and local network access. Rosetta is Linux-only and does not change ARM64 runner labels.",
+      "Set CPU, memory, an absolute VM storage directory, egress, opt-in Rosetta x86_64 support or an opt-in warm pool (0-4 SSH-ready VMs, default 0). Warm VMs use RAM but hold no job credentials. Internet-only egress is supported only on Windows; open allows host and local network access. Rosetta is Linux-only and does not change ARM64 runner labels.",
   },
   {
     name: "environment.start",

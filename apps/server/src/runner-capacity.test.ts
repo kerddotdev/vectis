@@ -51,6 +51,22 @@ function operation(status: Operation["status"], command = "runner.run"): Operati
   return { id: status, key: status, command, status, createdAt: "", updatedAt: "", message: "" };
 }
 
+test("warm VMs are reclaimable capacity while their actual memory remains visible", () => {
+  const state = snapshot({ ...environment, memoryMiB: 2048 });
+  state.machine.memoryBudgetMiB = 4096;
+  state.instances = [
+    { ...running(), memoryMiB: 2048, role: "warm" },
+    { ...running(), id: "booting", memoryMiB: 2048, status: "starting", role: "warming" },
+  ];
+  expect(runnerCapacity(state, host)).toMatchObject({
+    active: 0,
+    available: 2,
+    budget: { memoryCommittedMiB: 4096 },
+  });
+  state.instances = state.instances.map((instance) => ({ ...instance, status: "interrupted" }));
+  expect(runnerCapacity(state, host).available).toBe(0);
+});
+
 test("defaults to five runners and counts only unfinished runner operations", () => {
   const state = snapshot({ ...environment, cpu: 1, memoryMiB: 512 });
   state.operations = (

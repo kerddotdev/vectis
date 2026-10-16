@@ -74,6 +74,24 @@ export function instanceAdmissionError(
     return new VectisError("macos_limit", "The two-instance macOS limit has been reached.");
 }
 
+export function preparationBusy(snapshot: Snapshot) {
+  return (
+    snapshot.preparationBusy === true ||
+    snapshot.operations.some(
+      (operation) =>
+        [
+          "environment.prepare-linux",
+          "environment.resume",
+          "environment.install-macos",
+          "environment.install-windows",
+          "environment.resume-windows",
+          "environment.resume-macos",
+          "environment.open-macos-setup",
+        ].includes(operation.command) && ["accepted", "running"].includes(operation.status),
+    )
+  );
+}
+
 export function runnerCapacity(
   snapshot: Snapshot,
   host: Host,
@@ -107,20 +125,6 @@ export function runnerCapacity(
       );
     });
   const active = runners.length;
-  const preparationBusy =
-    snapshot.preparationBusy === true ||
-    snapshot.operations.some(
-      (operation) =>
-        [
-          "environment.prepare-linux",
-          "environment.resume",
-          "environment.install-macos",
-          "environment.install-windows",
-          "environment.resume-windows",
-          "environment.resume-macos",
-          "environment.open-macos-setup",
-        ].includes(operation.command) && ["accepted", "running"].includes(operation.status),
-    );
   const ready = snapshot.environments.filter((item) => item.state === "ready");
   const reservations = runners.flatMap(({ operation, progress, instance }) => {
     if (instance) return [];
@@ -145,10 +149,16 @@ export function runnerCapacity(
       },
     ];
   });
-  const reserved = { ...snapshot, instances: [...snapshot.instances, ...reservations] };
+  const committed: Snapshot = { ...snapshot, instances: [...snapshot.instances, ...reservations] };
+  const reserved = {
+    ...committed,
+    instances: committed.instances.filter(
+      (instance) => !instance.role || !["starting", "running"].includes(instance.status),
+    ),
+  };
   const environments = ready.map((environment) => {
     let available = 0;
-    if (!snapshot.machine.paused && !preparationBusy) {
+    if (!snapshot.machine.paused && !preparationBusy(snapshot)) {
       while (
         available < max - active &&
         !instanceAdmissionError(reserved, environment, host, available + 1, measured)
@@ -162,6 +172,6 @@ export function runnerCapacity(
     active,
     available: Math.max(0, ...environments.map((item) => item.available)),
     environments,
-    budget: memoryBudget(reserved, host, measured),
+    budget: memoryBudget(committed, host, measured),
   };
 }

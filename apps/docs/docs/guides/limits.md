@@ -22,6 +22,8 @@ An automatic runner also waits while an environment is being prepared, while an 
 
 ## Environments
 
+The warm pool is opt-in: `environment configure <id> --warm-pool <N>` accepts 0 to 4, default 0. Idle pool VMs consume host RAM and disk space under the same admission budget and pressure gate as other VMs. Pool filling leaves one runner slot and a startup memory estimate free, so the actual size can be smaller than requested, including zero at a one-runner limit. Owned warm VMs yield to jobs and count as reclaimable capacity, while their memory stays visible in `runnerCapacity.budget`. They contain no runner registration, JIT configuration or job credentials. Idle VMs are recycled after 30 minutes and drained on pause, disable or service shutdown. See [Runners and jobs](/docs/guides/runners#optional-warm-pool).
+
 | Environment | Default CPU | Default memory | Default disk |
 | ----------- | ----------- | -------------- | ------------ |
 | Ubuntu      | 2           | 4096 MiB       | 32 GiB       |

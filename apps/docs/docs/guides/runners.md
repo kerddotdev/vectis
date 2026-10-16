@@ -3,7 +3,22 @@ title: Runners and jobs
 description: Automatic and manual runners, reading job results, cancelling and recovering.
 ---
 
-Every job runs on its own runner in its own VM. Vectis boots a copy of the environment, registers a GitHub runner that accepts exactly one job, runs it, then deletes the VM and the registration.
+Every job runs on its own runner in its own VM. Vectis boots a copy of the environment or takes over an unused warm VM, registers a GitHub runner that accepts exactly one job, runs it, then deletes the VM and the registration.
+
+## Optional warm pool
+
+Keep up to four pre-booted, SSH-ready VMs per environment to skip cloning, booting and waiting for SSH when a job arrives. The pool is opt-in and defaults to zero on Linux, macOS and Windows:
+
+```sh
+vectis environment configure <environment-id> --warm-pool 1 --wait
+vectis environment configure <environment-id> --warm-pool 0 --wait
+```
+
+Warm VMs use real host RAM and disk space while idle. They follow the shared memory budget, normal-pressure gate and macOS two-VM limit. Vectis leaves a runner slot and another startup estimate free, and does not fill the pool while a runner is waiting for a VM or preparation is busy. The requested size is an upper bound, not a capacity guarantee. With a one-runner limit, no warm VM is kept.
+
+Idle warm VMs have no runner registration, JIT configuration or job credentials. Registration happens only after a runner atomically takes over the VM and checks SSH. Unhealthy VMs are stopped before falling back to a cold start; used job VMs never return to the pool. `status` and MCP snapshots distinguish idle pool instances with `role: "warm"` and background startup with `role: "warming"`, separately from the VM's lifecycle status. They are not running jobs. Reported runner capacity treats owned pool VMs as reclaimable while the budget still reports their RAM usage.
+
+Idle warm VMs are stopped and replaced after 30 minutes. A real job can reclaim warm VMs belonging to other environments when it needs memory or a macOS slot. Pausing, disabling the pool or shutting down the service drains idle VMs; changing environment defaults replaces them. After a crash, pool VMs require the same confirmed-exit reconciliation as other interrupted instances.
 
 ## Automatic runners
 

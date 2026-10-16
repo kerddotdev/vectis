@@ -89,6 +89,135 @@ function fixture(os: Environment["os"] = "linux") {
   });
   return { controls, broker, events };
 }
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s warm takeover skips boot/readiness and requests credentials only after SSH and installation",
+  async (os) => {
+    const { controls, broker } = fixture(os);
+    const connection = {
+      host: "192.0.2.1",
+      port: 22,
+      user: "test",
+      identityFile: "/unused/key",
+      knownHostsFile: "/unused/hosts",
+      hostKeyAlias: "warm",
+    };
+    const claimWarm = vi.fn(() => ({
+      instance: {
+        id: "warm",
+        environmentId: environment.id,
+        status: "running" as const,
+        pid: 0,
+        createdAt: "",
+      },
+      connection,
+    }));
+    broker.prepareRunner.mockImplementationOnce(async () => {
+      expect(executeGuest).toHaveBeenCalledTimes(2);
+      expect(executeGuest).toHaveBeenNthCalledWith(
+        1,
+        connection,
+        "exit 0",
+        expect.objectContaining({ shell: os === "windows" ? "powershell" : "bash" }),
+      );
+      return {
+        state: "ready",
+        id: "lease",
+        runnerId: 12,
+        encodedConfig: "c2VjcmV0",
+        environmentId: "test",
+        access: { repositoryId: 2, actors: "any", approval: "automatic" },
+        os,
+      };
+    });
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      { ...environment, os },
+      { ...controls, claimWarm },
+      AbortSignal.timeout(1000),
+    );
+    expect(result.status).toBe("succeeded");
+    expect(claimWarm).toHaveBeenCalledOnce();
+    expect(controls.start).not.toHaveBeenCalled();
+    expect(readyGuest).not.toHaveBeenCalled();
+    expect(controls.stop).toHaveBeenCalledOnce();
+  },
+);
+
+test("a failed warm health command stops the claim before a cold start", async () => {
+  const { controls, broker, events } = fixture();
+  const connection = {
+    host: "192.0.2.1",
+    port: 22,
+    user: "test",
+    identityFile: "/unused/key",
+    knownHostsFile: "/unused/hosts",
+    hostKeyAlias: "warm",
+  };
+  vi.mocked(executeGuest).mockResolvedValueOnce({
+    exitCode: 1,
+    stdout: "",
+    stderr: "",
+    truncated: false,
+  });
+  controls.start.mockImplementationOnce(async () => {
+    expect(events).toEqual(["stop"]);
+    expect(broker.prepareRunner).not.toHaveBeenCalled();
+    return { id: "cold", environmentId: "test", status: "running", pid: 0, createdAt: "" };
+  });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      claimWarm: () => ({
+        instance: { id: "warm", environmentId: "test", status: "running", pid: 0, createdAt: "" },
+        connection,
+      }),
+    },
+    AbortSignal.timeout(1000),
+  );
+  expect(result.status).toBe("succeeded");
+  expect(result.progress.instanceId).toBe("cold");
+  expect(readyGuest).toHaveBeenCalledOnce();
+  expect(controls.stop).toHaveBeenCalledTimes(2);
+});
+
+test("unconfirmed warm cleanup prevents cold fallback and JIT registration", async () => {
+  const { controls, broker } = fixture();
+  const connection = {
+    host: "192.0.2.1",
+    port: 22,
+    user: "test",
+    identityFile: "/unused/key",
+    knownHostsFile: "/unused/hosts",
+    hostKeyAlias: "warm",
+  };
+  vi.mocked(executeGuest).mockRejectedValueOnce(new GuestUnavailableError("SSH lost"));
+  controls.stop.mockRejectedValue(new Error("unconfirmed"));
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      claimWarm: () => ({
+        instance: { id: "warm", environmentId: "test", status: "running", pid: 0, createdAt: "" },
+        connection,
+      }),
+    },
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({
+    status: "action_required",
+    code: "runner_cleanup_required",
+    progress: { instanceId: "warm" },
+  });
+  expect(controls.start).not.toHaveBeenCalled();
+  expect(broker.prepareRunner).not.toHaveBeenCalled();
+});
 test("a failed pinned guest identity never allocates JIT credentials or sends runner scripts", async () => {
   const { controls, broker } = fixture();
   vi.mocked(readyGuest).mockRejectedValue(

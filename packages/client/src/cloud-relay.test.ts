@@ -520,14 +520,16 @@ test("relay shutdown interrupts runner status polling", async () => {
   await rejected;
 });
 
-test("remote machine configuration replays both shared budget settings unchanged", async () => {
+test.each([
+  { type: "machine.configure", maxRunners: 8, memoryBudgetMiB: 24576 },
+  { type: "environment.configure", id: "linux", warmPool: 2 },
+])("remote $type configuration replays settings unchanged", async (command) => {
   vi.useFakeTimers();
   const { store, local } = await fixture();
-  const command = { type: "machine.configure", maxRunners: 8, memoryBudgetMiB: 24576 };
   const submit = vi.spyOn(local, "submit").mockResolvedValue({
     id: "local-settings",
     key: "remote:settings",
-    command: "machine.configure",
+    command: command.type,
     status: "succeeded",
     message: "Applied",
     createdAt: "",
