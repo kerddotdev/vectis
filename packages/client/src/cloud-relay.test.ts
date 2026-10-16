@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
@@ -10,7 +10,7 @@ import { api } from "../../../convex/_generated/api.js";
 import { Store } from "../../../apps/server/src/store.js";
 import { VectisClient } from "./index.js";
 import { startCloudRelay } from "./cloud-relay.js";
-import { VectisError } from "../../protocol/src/index.js";
+import { VectisError, type Environment } from "../../protocol/src/index.js";
 
 type Subscription = {
   name: string;
@@ -118,6 +118,7 @@ async function fixture(get = async (): Promise<string | null> => null) {
     return found;
   };
   return {
+    home,
     relay,
     local,
     onJobObservations,
@@ -125,6 +126,38 @@ async function fixture(get = async (): Promise<string | null> => null) {
     subscription,
     repositories: subscription("repositoryBindings:forMachine"),
   };
+}
+
+async function heartbeatFixture() {
+  const context = await fixture();
+  const { home, store, local } = context;
+  const environment: Environment = {
+    id: "linux",
+    name: "Linux",
+    os: "linux",
+    basePath: join(home, "base.img"),
+    cpu: 2,
+    memoryMiB: 2048,
+    state: "ready",
+  };
+  await writeFile(environment.basePath, "synthetic image");
+  store.put("environment", environment.id, environment);
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  transport.query.mockImplementation(async (query) =>
+    getFunctionName(query) === "machines:self"
+      ? { id: "machine1", localId: store.snapshot().machine.id }
+      : [],
+  );
+  return { ...context, environment };
+}
+
+async function nextRelayTick() {
+  const reconciliations = () =>
+    transport.query.mock.calls.filter(([query]) => getFunctionName(query) === "operations:pending")
+      .length;
+  const previous = reconciliations();
+  await vi.advanceTimersByTimeAsync(2000);
+  await vi.waitFor(() => expect(reconciliations()).toBeGreaterThan(previous));
 }
 
 const binding = (id: string) => ({
@@ -341,6 +374,229 @@ test("lease observations use one subscription per set and release stale callback
   expect(onJobObservations).toHaveBeenCalledOnce();
   expect(transport.subscriptions.filter((item) => item.name === "jobs:forLeases")).toHaveLength(3);
 });
+
+test("environment registration sends a heartbeat on the next tick without waiting for the cadence", async () => {
+  vi.useFakeTimers();
+  const { store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+  store.put("environment", "new", { ...environment, id: "new" });
+  await vi.advanceTimersByTimeAsync(2000);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(2));
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: [
+      expect.objectContaining({ id: "linux" }),
+      expect.objectContaining({ id: "new" }),
+    ],
+  });
+});
+
+test("connecting a new environment reports it before invoking the cloud action", async () => {
+  vi.useFakeTimers();
+  const { relay, store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+  store.put("environment", "new", { ...environment, id: "new" });
+  transport.action.mockImplementation(async () => {
+    expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+      environments: expect.arrayContaining([expect.objectContaining({ id: "new" })]),
+    });
+    return "binding";
+  });
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "new" },
+      new AbortController().signal,
+    ),
+  ).resolves.toBe("binding");
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+});
+
+test.each<Partial<Environment>>([
+  { name: "Renamed" },
+  { os: "windows" },
+  { cpu: 4 },
+  { memoryMiB: 4096 },
+  { state: "action_required" },
+])("reported environment changes send an early heartbeat: %j", async (change) => {
+  vi.useFakeTimers();
+  const { store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  store.put("environment", environment.id, { ...environment, ...change });
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: [expect.objectContaining({ id: environment.id, ...change })],
+  });
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+});
+
+test("image revisions, missing images and environment removal send early heartbeats", async () => {
+  vi.useFakeTimers();
+  const { store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  const first = transport.mutation.mock.calls.at(-1)?.[1];
+  await writeFile(environment.basePath, "replacement image with a different size");
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).not.toEqual(first);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: [expect.objectContaining({ state: "ready", revision: expect.any(String) })],
+  });
+  await rm(environment.basePath);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: [expect.objectContaining({ state: "action_required" })],
+  });
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).not.toHaveProperty("environments.0.revision");
+  store.remove("environment", environment.id);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(4);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({ environments: [] });
+});
+
+test("unchanged inventories, ordering and known connections add no heartbeat before the cadence", async () => {
+  vi.useFakeTimers();
+  const { relay, store, local, environment } = await heartbeatFixture();
+  store.put("environment", "second", { ...environment, id: "second" });
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  vi.mocked(local.status).mockImplementation(async () => {
+    const snapshot = store.snapshot();
+    return { ...snapshot, environments: [...snapshot.environments].reverse() };
+  });
+  await nextRelayTick();
+  await relay.connectRepository(
+    { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+    new AbortController().signal,
+  );
+  await vi.advanceTimersByTimeAsync(20000);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(6000);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(2));
+});
+
+test("concurrent connections wait for the same acknowledged inventory heartbeat", async () => {
+  vi.useFakeTimers();
+  const { relay } = await heartbeatFixture();
+  let finishHeartbeat: () => void = () => {};
+  const heartbeat = new Promise<void>((resolve) => {
+    finishHeartbeat = resolve;
+  });
+  transport.mutation.mockReturnValueOnce(heartbeat);
+  transport.auth.changed?.(true);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+  const connect = () =>
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      new AbortController().signal,
+    );
+  const first = connect();
+  const second = connect();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.action).not.toHaveBeenCalled();
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  finishHeartbeat();
+  await expect(Promise.all([first, second])).resolves.toEqual(["binding", "binding"]);
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+});
+
+test("a connection refreshes once after an in-flight heartbeat with an older inventory", async () => {
+  vi.useFakeTimers();
+  const { relay, store, environment } = await heartbeatFixture();
+  let finishHeartbeat: () => void = () => {};
+  const heartbeat = new Promise<void>((resolve) => {
+    finishHeartbeat = resolve;
+  });
+  transport.mutation.mockReturnValueOnce(heartbeat);
+  transport.auth.changed?.(true);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+  store.put("environment", "new", { ...environment, id: "new" });
+  const connection = relay.connectRepository(
+    { accountId: "account", repositoryName: "repo", environmentId: "new" },
+    new AbortController().signal,
+  );
+  expect(transport.action).not.toHaveBeenCalled();
+  finishHeartbeat();
+  await expect(connection).resolves.toBe("binding");
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: expect.arrayContaining([expect.objectContaining({ id: "new" })]),
+  });
+});
+
+test("failed inventory heartbeats prevent connect and are retried without marking inventory sent", async () => {
+  vi.useFakeTimers();
+  const { relay, store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  store.put("environment", "new", { ...environment, id: "new" });
+  const failure = new Error("Heartbeat unavailable");
+  transport.mutation.mockRejectedValueOnce(failure);
+  const connect = () =>
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "new" },
+      new AbortController().signal,
+    );
+  await expect(connect()).rejects.toBe(failure);
+  expect(transport.action).not.toHaveBeenCalled();
+  await expect(connect()).resolves.toBe("binding");
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+});
+
+test("an unknown environment gets one bounded inventory check without duplicate heartbeats", async () => {
+  vi.useFakeTimers();
+  const { relay, local } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  const reads = vi.mocked(local.status).mock.calls.length;
+  transport.action.mockRejectedValueOnce(new ConvexError({ code: "environment_unavailable" }));
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "missing" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code: "environment_unavailable" });
+  expect(local.status).toHaveBeenCalledTimes(reads + 1);
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  expect(transport.action).toHaveBeenCalledOnce();
+});
+
+test.each(["cancel", "close", "timeout"])(
+  "a pending heartbeat releases the connect wait on %s without invoking the action",
+  async (reason) => {
+    vi.useFakeTimers();
+    const { relay } = await heartbeatFixture();
+    transport.mutation.mockImplementationOnce(async () => new Promise(() => {}));
+    transport.auth.changed?.(true);
+    await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+    const abort = new AbortController();
+    const timeout = new AbortController();
+    if (reason === "timeout") vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(timeout.signal);
+    const connection = relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      abort.signal,
+    );
+    const rejection = expect(connection).rejects.toThrow();
+    if (reason === "cancel") abort.abort(new Error("Stop connecting"));
+    else if (reason === "close") await relay.close();
+    else {
+      expect(AbortSignal.timeout).toHaveBeenCalledWith(10000);
+      timeout.abort(new DOMException("Heartbeat timed out", "TimeoutError"));
+    }
+    await rejection;
+    expect(transport.action).not.toHaveBeenCalled();
+    expect(transport.mutation).toHaveBeenCalledTimes(1);
+  },
+);
 
 test("slot changes send a heartbeat on the next tick without waiting for the cadence", async () => {
   vi.useFakeTimers();
@@ -707,7 +963,7 @@ test.each([
   "cloud_unconfigured",
   "cloud_unavailable",
 ])("connection relay preserves the coded %s refusal even without cloud prose", async (code) => {
-  const { relay } = await fixture();
+  const { relay } = await heartbeatFixture();
   transport.auth.changed?.(true);
   transport.action.mockRejectedValueOnce(new ConvexError({ code }));
   await expect(
@@ -731,7 +987,7 @@ test.each([
   new Error("Connection lost after submit"),
   new ConvexError({ code: "unexpected_failure" }),
 ])("an uncertain connection outcome remains unconfirmed", async (error) => {
-  const { relay } = await fixture();
+  const { relay } = await heartbeatFixture();
   transport.auth.changed?.(true);
   transport.action.mockRejectedValueOnce(error);
   await expect(
