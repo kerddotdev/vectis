@@ -5,7 +5,7 @@ import { GitHubIcon } from "@/components/github-icon";
 import { JobLog } from "@/components/job-log";
 import { Details, ExpandableRow, Mono } from "@/components/layout";
 import { OsTile } from "@/components/os-icon";
-<<<<<<< HEAD
+import { RunnerPhases } from "@/components/runner-phases";
 import {
   JobStatus,
   OperationStatus,
@@ -13,10 +13,6 @@ import {
   StatusBadge,
   StatusText,
 } from "@/components/status";
-=======
-import { RunnerPhases } from "@/components/runner-phases";
-import { JobStatus, OperationStatus, RunnerStage, StatusText } from "@/components/status";
->>>>>>> feat/runner-phase-timings
 import { Button } from "@/components/ui/button";
 import { activityJob, activitySummary, activityTitle } from "@/lib/activities";
 import { formatDateTime, formatRelative } from "@/lib/format";
