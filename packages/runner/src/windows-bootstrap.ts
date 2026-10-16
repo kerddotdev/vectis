@@ -11,6 +11,7 @@ const Diagnostic = Schema.Struct({
     "ssh-installation",
     "ssh-configuration",
     "ssh-access",
+    "windows-toolchain",
     "git-download",
     "git-checksum",
     "git-installation",

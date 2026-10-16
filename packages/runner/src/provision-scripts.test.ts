@@ -10,6 +10,7 @@ import {
   runnerPreinstallScript,
   setupUploadScripts,
 } from "./provision-scripts.js";
+import { windowsToolchainScript } from "./windows-toolchain.js";
 import { runnerDistribution, runnerVersion } from "./runner-release.js";
 
 test.each(["linux", "macos", "windows"] as const)(
@@ -30,7 +31,9 @@ test.each(["linux", "macos", "windows"] as const)(
       expect(provisionScript(os, { runner: true, setup: true })).toContain(
         "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $setup",
       );
-      expect(provisionScript(os, { runner: false, setup: true })).not.toMatch(/pwsh|bash/);
+      expect(provisionScript(os, { runner: false, setup: true })).toContain(
+        windowsToolchainScript(),
+      );
     } else {
       expect(script).toContain("--retry 3");
       if (os === "linux") {

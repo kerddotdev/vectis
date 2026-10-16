@@ -15,7 +15,7 @@ export const ubuntuImage = {
 // download those at job time, and a disposable local VM should not carry them.
 const runnerPackages = [
   // vital_packages
-  "bzip2 curl g++ gcc make jq tar unzip wget",
+  "bzip2 curl g++ gcc make jq tar unzip wget zstd",
   // common_packages, without p7zip-rar, which is multiverse and non-free.
   "autoconf automake dbus dnsutils dpkg-dev fakeroot fonts-noto-color-emoji gnupg2 iproute2",
   "iputils-ping libyaml-dev libtool libssl-dev libicu-dev libgbm-dev libsqlite3-dev locales",

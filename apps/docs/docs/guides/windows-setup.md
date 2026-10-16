@@ -69,11 +69,46 @@ The service reports success only after checking guest ARM64 architecture, clock 
 
 ## What the guest contains
 
-The recipe is designed to install Windows unattended. Preparation installs one thing a workflow cannot do without: Git. It downloads the pinned MinGit ARM64 build published by Git for Windows, the same portable build GitHub's own runner images use, verifies its SHA-256, unpacks it into `C:\Program Files\MinGit` and puts it on the machine `Path`. MinGit's configuration includes the standard `C:\Program Files\Git` configuration, so installing MinGit there would create a circular include. Without Git, `actions/checkout` cannot check out the repository. The installed version is recorded in the guest at `C:\ProgramData\Vectis\toolchain.json` together with the Windows build.
+Fresh installation and `environment provision` install the same pinned, SHA-256-verified Windows toolchain. Provisioning runs under Windows PowerShell 5.1 and requires an elevated guest administrator:
 
-The download uses basic parsing to avoid the [Windows PowerShell 5.1 web-content confirmation prompt](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest?view=powershell-5.1). It still verifies the pinned SHA-256 before extracting Git.
+- [Git for Windows 2.55.0.5 ARM64](https://github.com/git-for-windows/git/releases/tag/v2.55.0.windows.5), including Bash at `C:\Program Files\Git\bin\bash.exe` and GNU tar at `C:\Program Files\Git\usr\bin\tar.exe`. Bash and Git are on the machine PATH. The installer includes Git LFS; Bash and GNU tar are part of its base payload. Optional desktop integration and automatic Git updates are omitted.
+- [zstd 1.5.7](https://github.com/facebook/zstd/releases/tag/v1.5.7) at `C:\Program Files\zstd`, on the machine PATH. This release has no Windows ARM64 build, so Vectis uses the official x64 executable through Windows 11 ARM64's x64 emulation and verifies that it runs.
+- [PowerShell 7.6.6 ARM64](https://github.com/PowerShell/PowerShell/releases/tag/v7.6.6), installed by MSI at `C:\Program Files\PowerShell\7`, with `pwsh` on the machine PATH. Automatic Microsoft Update integration and PowerShell remoting are not enabled. Windows PowerShell 5.1 remains the provisioning shell.
 
-Everything else comes from the workflow. Windows 11 provides PowerShell, `curl` and `tar`; `actions/setup-*` actions download their own toolchains at job time; build tools, SDKs and package managers are a job's own step. Nothing a job installs survives it, because every VM starts from the same base image.
+The [Actions cache toolkit prefers GNU tar at the standard Git installation path](https://github.com/actions/toolkit/blob/main/packages/cache/src/internal/tar.ts), and uses zstd when available. Windows' built-in bsdtar remains available, but is not the cache toolkit's preferred executable after provisioning. These tools address missing shell support and the gzip cache fallback; they do not establish a particular cache speedup.
+
+Existing MinGit files stay in `C:\Program Files\MinGit` for callers using absolute paths. Only its exact machine PATH entries (`cmd` and `bin`, ignoring case and trailing slashes) are removed. The full Git's `bin` and `cmd` entries take priority, and other machine PATH entries are preserved. MinGit is no longer installed in fresh images.
+
+Downloads use basic parsing to avoid the [Windows PowerShell 5.1 web-content confirmation prompt](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest?view=powershell-5.1), with bounded retries and SHA-256 verification before installation or extraction. Repeating provisioning checks the pinned versions and required binaries before deciding whether to install them again. Temporary downloads are removed even on failure.
+
+Languages, build tools, SDKs and package managers still come from workflow steps or a custom provisioning script. Nothing installed during a job survives that job's disposable VM.
+
+## Disposable guest performance settings
+
+Vectis deliberately disables Microsoft Defender realtime, behavior, downloaded-file and script scanning inside the disposable Windows guest, along with cloud reporting and automatic sample submission. Realtime scanning is a suspected contributor to slow dependency installation and cache saves. The VM boundary isolates the host from untrusted job code; guest antivirus is not that boundary. Keep host protection enabled. These settings belong in disposable CI guests, not on the host or a general-purpose Windows machine.
+
+Provisioning writes Defender policy keys and checks `Get-MpComputerStatus` and `Get-MpPreference` after applying preferences. `DisableAntiSpyware` is written for compatibility but is ignored by modern Defender builds and does not prove protection is off. [Tamper Protection can block or silently ignore these changes](https://learn.microsoft.com/en-us/defender-endpoint/tamper-protection-overview). If protection remains enabled or the requested preferences do not take effect, Vectis tries `Add-MpPreference -ExclusionPath 'C:\'`, verifies the exclusion is present and reports `defender-mode=exclusion`. This mode does not mean realtime protection is disabled. If the exclusion is blocked too, provisioning fails.
+
+Windows Update is disabled through `NoAutoUpdate` policy and `wuauserv`; Windows Search indexing (`WSearch`) and SysMain are disabled and stopped. Vectis also attempts to disable and stop Update Orchestrator (`UsoSvc`) and Update Medic (`WaaSMedicSvc`). Windows can protect those two services: blocked changes produce a warning and their actual state is recorded rather than reported as disabled. HVCI / Memory Integrity's `Enabled` value is set to `0` when present; running HVCI is recorded as requiring a reboot, and must be off on the next boot.
+
+Every step emits a `vectis-provision: <step>` marker. Versions, Windows build, Defender mode and preferences, service states, Update policy and HVCI state are merged into `C:\ProgramData\Vectis\toolchain.json`, preserving unrelated manifest fields.
+
+### Verify the next boot
+
+Defender preferences can reset across reboots. Provisioning registers `Vectis-VerifySecurity`, an idempotently replaced SYSTEM startup task using Windows PowerShell 5.1. It reapplies Defender settings, verifies the resulting mode, checks mandatory service states and running HVCI, updates the manifest, and writes `security-boot.json` plus a bounded-per-boot transcript at `C:\ProgramData\Vectis\security-boot.log`. The old boot receipt is cleared during provisioning. A task failure writes `Status: failed` and returns an error; Task Scheduler retries up to three times.
+
+After the lead boots a newly provisioned image or clone, check in the guest:
+
+```powershell
+Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, IsTamperProtected
+Get-Content C:\ProgramData\Vectis\toolchain.json -Raw
+Get-Content C:\ProgramData\Vectis\security-boot.json -Raw
+Get-CimInstance Win32_OperatingSystem | Select-Object LastBootUpTime
+Get-ScheduledTaskInfo -TaskName Vectis-VerifySecurity
+Get-Content C:\ProgramData\Vectis\security-boot.log
+```
+
+Wait for `vectis-provision: defender-boot-verified` and `Status: verified` with `BootTime` matching this boot. In `disabled` mode, `RealTimeProtectionEnabled` must be `False`; in `exclusion` mode it can remain `True` and the `C:\` exclusion must be present. The task verifies the latter's configured exclusion, not a measured absence of scanning. A receipt copied from the parent image is not evidence for the clone's current boot. Provisioning alone does not prove reboot persistence, HVCI shutdown or improved job timings. Verify them before accepting the image, and compare real dependency installation and cache save/restore timings separately.
 
 ## Interruption and recovery
 

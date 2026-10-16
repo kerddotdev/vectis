@@ -1,3 +1,4 @@
+import { windowsToolchainScript } from "./windows-toolchain.js";
 import type { Environment } from "../../protocol/src/index.js";
 import { VectisError } from "../../protocol/src/index.js";
 import {
@@ -123,7 +124,7 @@ export function provisionScript(
   if (os === "windows")
     return `$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-${install}${
+${windowsToolchainScript()}${install}${
       options.setup
         ? `Write-Output 'vectis-provision: setup-decode'
 $setupRoot = Join-Path $env:USERPROFILE '.vectis-provision'

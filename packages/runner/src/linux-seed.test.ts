@@ -43,6 +43,7 @@ test("fresh Linux images retain the same verified runner used by derived environ
   expect(script).not.toContain("sudo -n");
   expect(script).toContain("trap finish EXIT");
   expect(script).toContain("VECTIS_PREPARATION_FAILED_test step=%s exit=%s");
+  expect(script).toMatch(/apt-get install -y --no-install-recommends [^\n]*\bzstd\b/);
   expect(script).not.toContain("/opt/vectis-bootstrap");
   expect(linuxSeed({ id: "test", publicKey: "ssh-ed25519 AAAA synthetic" }).userdata).toContain(
     "ALL=(ALL) NOPASSWD:ALL",

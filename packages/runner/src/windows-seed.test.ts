@@ -4,8 +4,9 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { windowsGit, windowsSeed } from "./windows-seed.js";
+import { windowsSeed } from "./windows-seed.js";
 import { runnerPreinstallScript } from "./provision-scripts.js";
+import { windowsGit, windowsToolchainScript } from "./windows-toolchain.js";
 
 const configuration = {
   id: "isolated-setup",
@@ -13,11 +14,12 @@ const configuration = {
   imageName: "Windows 11 Pro",
   acceptLicense: true,
 };
-test("fresh Windows images preinstall the same verified runner without PowerShell Core", () => {
+test("fresh Windows images share toolchain provisioning and bootstrap the runner with Windows PowerShell", () => {
   const { script } = windowsSeed(configuration);
   expect(script).toContain(runnerPreinstallScript("windows"));
   expect(script).toContain("$stage = 'runner-preinstall'");
-  expect(script).not.toContain("pwsh");
+  expect(script).toContain(windowsToolchainScript());
+  expect(script).toContain("$stage = 'windows-toolchain'");
 });
 
 test("Windows answer media requires explicit license acceptance and safe script identifiers", () => {
@@ -27,18 +29,18 @@ test("Windows answer media requires explicit license acceptance and safe script 
   expect(() => windowsSeed({ ...configuration, imageName: "Windows\u0000Pro" })).toThrow();
 });
 
-test("guest git is checked against its pinned hash before anything uses it", () => {
+test("fresh Windows images verify the pinned Git download before launching its installer", () => {
   const { script } = windowsSeed(configuration);
   const download = script.indexOf(windowsGit.url);
   const verify = script.indexOf(windowsGit.sha256);
-  const use = script.indexOf("git.exe");
+  const use = script.indexOf("Start-Process -FilePath $installer");
   expect(download).toBeGreaterThan(-1);
   expect(verify).toBeGreaterThan(download);
   expect(use).toBeGreaterThan(verify);
-  expect(script).toContain("throw 'Git checksum mismatch'");
+  expect(script).toContain('throw "Tool checksum mismatch: $Url"');
   expect(script).toContain("Invoke-WebRequest -UseBasicParsing");
-  expect(script).toContain("$gitRoot = 'C:\\Program Files\\MinGit'");
-  expect(script).not.toContain("$gitRoot = 'C:\\Program Files\\Git'");
+  expect(script).toContain("$gitRoot = 'C:\\Program Files\\Git'");
+  expect(script).not.toContain("MinGit-2.");
 });
 
 test("answer-file values cannot inject XML or leak the password into the bootstrap script", () => {

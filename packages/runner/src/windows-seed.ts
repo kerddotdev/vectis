@@ -1,4 +1,5 @@
 import { runnerPreinstallScript } from "./provision-scripts.js";
+import { windowsToolchainScript } from "./windows-toolchain.js";
 import { VectisError } from "../../protocol/src/index.js";
 
 function xml(value: string) {
@@ -12,16 +13,6 @@ function xml(value: string) {
 function component(name: string, contents: string) {
   return `<component name="${name}" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">${contents}</component>`;
 }
-
-// Windows installation runs unattended from start to finish, so nobody is ever inside the guest to
-// add git, and actions/checkout needs it. MinGit is the portable build GitHub's own runner images
-// use; everything else a workflow needs comes from its own steps.
-export const windowsGit = {
-  version: "2.55.0.5",
-  url: "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/MinGit-2.55.0.5-arm64.zip",
-  sha256: "05843f9d6e60306c3ab886799e2c67200caab921571f10512df3493049179ddb",
-  bytes: 37650057,
-};
 
 const bootstrap = `$ErrorActionPreference='Stop'; $media=@(Get-Volume | Where-Object FileSystemLabel -eq 'VECTIS_SETUP'); if($media.Count -ne 1){throw 'Setup media unavailable'}; & ($media[0].DriveLetter + ':\\prepare.ps1')`;
 export const windowsBootstrapCommand = `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(bootstrap, "utf16le").toString("base64")}`;
@@ -108,31 +99,10 @@ Subsystem sftp sftp-server.exe
   Start-Service sshd
   Set-ExecutionPolicy -Scope Process RemoteSigned -Force
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
-  $stage = 'git-download'
-  $gitArchive = Join-Path $env:TEMP 'vectis-mingit.zip'
-  Invoke-WebRequest -UseBasicParsing -Uri '${windowsGit.url}' -OutFile $gitArchive
-  $stage = 'git-checksum'
-  if ((Get-FileHash -Algorithm SHA256 $gitArchive).Hash.ToLowerInvariant() -ne '${windowsGit.sha256}') { throw 'Git checksum mismatch' }
-  $stage = 'git-installation'
-  $gitRoot = 'C:\Program Files\MinGit'
-  Expand-Archive -Path $gitArchive -DestinationPath $gitRoot -Force
-  Remove-Item $gitArchive -Force
-  $gitCommand = Join-Path $gitRoot 'cmd'
-  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-  if ($machinePath -notlike "*$gitCommand*") { [Environment]::SetEnvironmentVariable('Path', "$machinePath;$gitCommand", 'Machine') }
-  $stage = 'git-verification'
-  $gitVersion = & (Join-Path $gitCommand 'git.exe') --version 2>&1
-  if ($LASTEXITCODE -ne 0) { throw "Git is not usable: $($gitVersion -join ' ')" }
+  $stage = 'windows-toolchain'
+${windowsToolchainScript()}
   $stage = 'runner-preinstall'
 ${runnerPreinstallScript("windows")}
-  $stage = 'toolchain'
-  $system = Get-ComputerInfo -Property WindowsProductName,WindowsVersion,OsBuildNumber
-  [pscustomobject]@{
-    WindowsProductName = $system.WindowsProductName
-    WindowsVersion = $system.WindowsVersion
-    OsBuildNumber = $system.OsBuildNumber
-    Git = $gitVersion
-  } | ConvertTo-Json | Set-Content (Join-Path $root 'toolchain.json')
   $stage = 'completion'
   Remove-Item C:\Windows\Panther\unattend.xml,C:\Windows\Panther\Unattend\unattend.xml,C:\Windows\System32\Sysprep\unattend.xml -Force -ErrorAction SilentlyContinue
   Remove-Item (Join-Path $root 'failed') -Force -ErrorAction SilentlyContinue
