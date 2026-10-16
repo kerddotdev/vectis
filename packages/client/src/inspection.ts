@@ -38,6 +38,12 @@ export async function answerInspection(
         }
         case "operation":
           return local.operation(query.id, signal);
+        case "operation.key":
+          return local.operationByKey(query.key, signal);
+        case "activities":
+          return local.activities(signal);
+        case "activity":
+          return local.activity(query.id, signal);
         case "logs":
           return local.logs(query.lines);
       }

@@ -33,6 +33,8 @@ function redactOperation(operation: Operation): Operation {
 }
 
 const decodeOperation = Schema.decodeUnknownSync(Operation);
+export const snapshotLimits = { operations: 100, activities: 100, stoppedInstances: 20 };
+const terminalStatuses = "('succeeded','failed','cancelled')";
 function readOperation(body: unknown): Operation[] {
   if (typeof body !== "string") return [];
   try {
@@ -81,6 +83,17 @@ export class Store {
       .map((row) => (typeof row.body === "string" ? JSON.parse(row.body) : null));
   }
   put(kind: string, id: string, body: unknown) {
+    if (kind === "instance") {
+      const instance = Schema.decodeUnknownSync(Instance)(body);
+      if (instance.status === "stopped" && instance.stoppedAt === undefined) {
+        const previous = this.get(kind, id);
+        const stoppedAt =
+          previous === undefined
+            ? instance.createdAt
+            : (Schema.decodeUnknownSync(Instance)(previous).stoppedAt ?? new Date().toISOString());
+        body = { ...instance, stoppedAt };
+      }
+    }
     this.db
       .prepare(
         "INSERT INTO records(kind,id,body) VALUES(?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body",
@@ -114,34 +127,96 @@ export class Store {
       .all(activityId)
       .flatMap((row) => readOperation(row.body));
   }
-  private activities(operations: readonly Operation[]) {
-    const groups = new Map<string, Operation[]>();
-    for (const operation of operations) {
-      if (operation.activityId === undefined) continue;
-      const members = groups.get(operation.activityId);
-      if (members) members.push(operation);
-      else groups.set(operation.activityId, [operation]);
-    }
-    return this.list("activity")
-      .flatMap((value) => {
-        const base = Schema.decodeUnknownSync(ActivityBase)(value);
-        // Operations are read newest row first; preparation outcomes follow insertion order.
-        const activity = deriveActivity(base, (groups.get(base.id) ?? []).toReversed());
-        return activity ? [activity] : [];
-      })
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  operation(id: string) {
+    const value = this.get("operation", id);
+    if (value === undefined)
+      throw new VectisError("operation_missing", "The operation was not found.");
+    return decodeOperation(value);
+  }
+  instance(id: string) {
+    const value = this.get("instance", id);
+    return value === undefined ? undefined : Schema.decodeUnknownSync(Instance)(value);
+  }
+  operationByKey(key: string) {
+    const row = this.db.prepare("SELECT operation_id FROM requests WHERE key=?").get(key);
+    if (!row) throw new VectisError("operation_missing", "The operation was not found.");
+    return this.operation(String(row.operation_id));
+  }
+  activity(id: string) {
+    const value = this.get("activity", id);
+    const operations = this.activityMembers(id);
+    const activity =
+      value === undefined
+        ? undefined
+        : deriveActivity(Schema.decodeUnknownSync(ActivityBase)(value), operations);
+    if (!activity) throw new VectisError("activity_missing", "The activity was not found.");
+    return { activity, operations };
+  }
+  // Retention and job observation need retained history, independently of the status window.
+  activitySummaries(terminalLimit?: number) {
+    return this.db
+      .prepare(`
+      WITH summaries AS MATERIALIZED (
+        SELECT a.body,
+          (SELECT json_remove(o.body,'$.result') FROM records o
+            WHERE o.kind='operation' AND json_valid(o.body)
+              AND json_extract(o.body,'$.activityId')=json_extract(a.body,'$.id')
+              AND (json_extract(a.body,'$.subject.type')='preparation'
+                OR o.id=json_extract(a.body,'$.rootOperationId'))
+            ORDER BY o.rowid DESC LIMIT 1) AS deciding,
+          (SELECT MAX(json_extract(o.body,'$.updatedAt')) FROM records o
+            WHERE o.kind='operation' AND json_valid(o.body)
+              AND json_extract(o.body,'$.activityId')=json_extract(a.body,'$.id')) AS updatedAt
+        FROM records a WHERE a.kind='activity'
+      ), ranked AS (
+        SELECT *, ROW_NUMBER() OVER (
+          PARTITION BY json_extract(deciding,'$.status') IN ${terminalStatuses}
+          ORDER BY json_extract(deciding,'$.updatedAt') DESC, json_extract(body,'$.createdAt') DESC
+        ) AS terminalRank FROM summaries WHERE deciding IS NOT NULL
+      )
+      SELECT body, deciding, updatedAt FROM ranked
+        WHERE json_extract(deciding,'$.status') NOT IN ${terminalStatuses} OR terminalRank<=?
+        ORDER BY json_extract(body,'$.createdAt') DESC
+    `)
+      .all(terminalLimit ?? Number.MAX_SAFE_INTEGER)
+      .flatMap((row) => {
+        if (typeof row.body !== "string") return [];
+        const base = Schema.decodeUnknownSync(ActivityBase)(JSON.parse(row.body));
+        const activity = deriveActivity(base, readOperation(row.deciding));
+        return activity && typeof row.updatedAt === "string"
+          ? [{ ...activity, updatedAt: row.updatedAt }]
+          : [];
+      });
+  }
+  operations(terminalLimit?: number) {
+    return this.db
+      .prepare(`SELECT body FROM records WHERE kind='operation' AND json_valid(body)
+      AND (json_extract(body,'$.status') NOT IN ${terminalStatuses}
+        OR id IN (SELECT id FROM records WHERE kind='operation' AND json_valid(body)
+          AND json_extract(body,'$.status') IN ${terminalStatuses}
+          ORDER BY json_extract(body,'$.updatedAt') DESC, rowid DESC LIMIT ?))
+      ORDER BY rowid DESC`)
+      .all(terminalLimit ?? Number.MAX_SAFE_INTEGER)
+      .flatMap((row) => readOperation(row.body));
+  }
+  instances(stoppedLimit: number) {
+    return this.db
+      .prepare(`SELECT body FROM records WHERE kind='instance'
+      AND (json_extract(body,'$.status')!='stopped'
+        OR id IN (SELECT id FROM records WHERE kind='instance'
+          AND json_extract(body,'$.status')='stopped'
+          ORDER BY COALESCE(json_extract(body,'$.stoppedAt'),json_extract(body,'$.createdAt')) DESC,
+            rowid DESC LIMIT ?)) ORDER BY rowid DESC`)
+      .all(stoppedLimit)
+      .map((row) => Schema.decodeUnknownSync(Instance)(JSON.parse(String(row.body))));
   }
   updateActivity(id: string, update: (base: ActivityBase) => ActivityBase) {
     const current = this.get("activity", id);
     if (current !== undefined)
       this.put("activity", id, update(Schema.decodeUnknownSync(ActivityBase)(current)));
   }
-  snapshot(): Snapshot {
+  snapshot(limits = snapshotLimits): Snapshot {
     const machine = Schema.decodeUnknownSync(Machine)(this.get("machine", "self"));
-    const operations = this.db
-      .prepare("SELECT body FROM records WHERE kind='operation' ORDER BY rowid DESC")
-      .all()
-      .flatMap((row) => readOperation(row.body));
     return {
       revision: `${this.startId}:${this.changes}`,
       preparationBusy: [
@@ -157,9 +232,9 @@ export class Store {
       environments: this.list("environment").map((value) =>
         Schema.decodeUnknownSync(Environment)(value),
       ),
-      instances: this.list("instance").map((value) => Schema.decodeUnknownSync(Instance)(value)),
-      operations,
-      activities: this.activities(operations),
+      instances: this.instances(limits.stoppedInstances),
+      operations: this.operations(limits.operations),
+      activities: this.activitySummaries(limits.activities),
     };
   }
   accept(

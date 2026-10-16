@@ -18,7 +18,7 @@ import {
 } from "../../../packages/protocol/src/index.js";
 import { runtimeDiagnostics } from "../../../packages/runner/src/diagnostics.js";
 import { storageReport } from "../../../packages/runner/src/storage.js";
-import { Store } from "./store.js";
+import { Store, snapshotLimits } from "./store.js";
 import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
@@ -275,6 +275,25 @@ export async function startService(
           });
         return reply(response, 200, { ...service.snapshot(), version: buildInfo().version, cloud });
       }
+      if (request.method === "GET" && request.url === "/v1/activities")
+        return reply(response, 200, store.activitySummaries(snapshotLimits.activities));
+      if (request.method === "GET" && request.url?.startsWith("/v1/operations?")) {
+        const key = new URL(request.url, "http://127.0.0.1").searchParams.get("key");
+        if (!key) throw new VectisError("invalid_request", "An operation key is required.");
+        return reply(response, 200, store.operationByKey(key));
+      }
+      if (request.method === "GET" && request.url?.startsWith("/v1/operations/"))
+        return reply(
+          response,
+          200,
+          store.operation(decodeURIComponent(request.url.slice("/v1/operations/".length))),
+        );
+      if (request.method === "GET" && request.url?.startsWith("/v1/activities/"))
+        return reply(
+          response,
+          200,
+          store.activity(decodeURIComponent(request.url.slice("/v1/activities/".length))),
+        );
       if (request.method === "GET" && request.url === "/v1/capabilities")
         return reply(response, 200, { protocolVersion: 1, capabilities });
       if (request.method === "POST" && request.url === "/v1/commands") {
@@ -299,11 +318,19 @@ export async function startService(
         error instanceof VectisError
           ? error
           : new VectisError("internal_error", "The service could not process the request.");
-      reply(response, issue.code === "idempotency_conflict" ? 409 : 400, {
-        code: issue.code,
-        message: redact(issue.message),
-        nextStep: redact(issue.nextStep),
-      });
+      reply(
+        response,
+        issue.code === "idempotency_conflict"
+          ? 409
+          : ["operation_missing", "activity_missing"].includes(issue.code)
+            ? 404
+            : 400,
+        {
+          code: issue.code,
+          message: redact(issue.message),
+          nextStep: redact(issue.nextStep),
+        },
+      );
     });
   });
   server.requestTimeout = 15000;

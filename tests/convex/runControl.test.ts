@@ -541,7 +541,7 @@ test("remote replay after a lost local response and lost local database still PO
   const local = {
     submit: async (command: Parameters<Service["submit"]>[1], key: string) =>
       service.submit(key, command),
-    status: async () => service.snapshot(),
+    operationByKey: async (key: string) => store.operationByKey(key),
   };
   const signal = new AbortController().signal;
   try {

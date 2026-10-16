@@ -7,6 +7,25 @@ const day = 24 * 60 * 60 * 1000;
 // arguments so a test can prove the rule without writing hundreds of rows to prove the constant.
 export type RetentionLimits = { maxAgeMs: number; keep: number };
 export const retentionLimits: RetentionLimits = { maxAgeMs: 30 * day, keep: 300 };
+export const instanceRetentionLimits: RetentionLimits = { maxAgeMs: day, keep: 20 };
+
+export function retainInstances(
+  store: Store,
+  now = Date.now(),
+  limits: RetentionLimits = instanceRetentionLimits,
+) {
+  const removed = store.db
+    .prepare(`DELETE FROM records WHERE kind='instance'
+    AND json_extract(body,'$.status')='stopped'
+    AND julianday(COALESCE(json_extract(body,'$.stoppedAt'),json_extract(body,'$.createdAt')))
+      < julianday(?)
+    AND id NOT IN (SELECT id FROM records WHERE kind='instance'
+      AND json_extract(body,'$.status')='stopped'
+      ORDER BY COALESCE(json_extract(body,'$.stoppedAt'),json_extract(body,'$.createdAt')) DESC,
+        rowid DESC LIMIT ?)`)
+    .run(new Date(now - limits.maxAgeMs).toISOString(), limits.keep);
+  if (removed.changes) store.touch();
+}
 
 export function retainActivities(
   store: Store,
@@ -14,8 +33,9 @@ export function retainActivities(
   now = Date.now(),
   limits: RetentionLimits = retentionLimits,
 ) {
-  const snapshot = store.snapshot();
-  const candidates = (snapshot.activities ?? [])
+  retainInstances(store, now);
+  const candidates = store
+    .activitySummaries()
     .flatMap((activity) =>
       isTerminal(activity.status) && activity.completedAt !== undefined
         ? [{ activity, completedAt: Date.parse(activity.completedAt) }]
@@ -37,7 +57,7 @@ export function retainActivities(
       throw error;
     }
   }
-  for (const operation of snapshot.operations) {
+  for (const operation of store.operations()) {
     if (
       operation.activityId === undefined &&
       isTerminal(operation.status) &&

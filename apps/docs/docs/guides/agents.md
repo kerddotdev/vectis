@@ -65,6 +65,8 @@ The skill is a plain [`SKILL.md`](https://github.com/kerddotdev/vectis/blob/main
 
 To let an agent control another Mac, sign in once with `vectis login` and start the server with `vectis-mcp --machine <machine-id>`. A remote session never falls back to the local Mac.
 
+`vectis_status` returns a compact summary: machine and cloud state, runner capacity, environments, non-stopped instances, counts within the status window, and the newest 20 operations and activities with shortened messages. It omits full operation results. Read `vectis_activities` for unfinished activities and the newest 100 terminal activities, `vectis_activity` for one retained activity and all its steps, or `vectis_operation` for a full result. These detail tools query individual records, locally and remotely, and remain available when a record falls outside the status window. Tool results are returned once in `structuredContent`, with an empty `content` array.
+
 ## Rules agents follow
 
 - Humans approve pairing, sign-in and GitHub linking in the browser. Agents hand over the link and wait.

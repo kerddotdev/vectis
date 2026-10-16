@@ -7,6 +7,7 @@ export type DesktopAction =
   | "notifications.get"
   | "notifications.set"
   | "status"
+  | "activity"
   | "storage"
   | "doctor"
   | "logs"

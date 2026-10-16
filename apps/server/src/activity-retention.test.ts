@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { Operation } from "../../../packages/protocol/src/index.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { activityFor } from "./activities.js";
-import { retainActivities } from "./activity-retention.js";
+import { retainActivities, retainInstances } from "./activity-retention.js";
 import { Service } from "./service.js";
 import { Store } from "./store.js";
 
@@ -180,4 +180,73 @@ test("the service sweeps after initialization and hourly, then releases its time
   await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
   expect(store.get("activity", "after-close")).toBeDefined();
   expect(vi.getTimerCount()).toBe(0);
+});
+
+test("instance retention keeps the stopped tail, recent stops and every non-stopped instance", async () => {
+  const { store } = await fixture();
+  const add = (id: string, age: number, status = "stopped") =>
+    store.put("instance", id, {
+      id,
+      environmentId: "env",
+      status,
+      pid: 0,
+      createdAt: new Date(now - age * day).toISOString(),
+    });
+  add("oldest", 10);
+  add("old-tail", 5);
+  add("recent", 0.5);
+  add("boundary", 1);
+  for (const status of ["starting", "running", "interrupted"]) add(status, 40, status);
+  const revision = store.snapshot().revision;
+  retainInstances(store, now, { maxAgeMs: day, keep: 2 });
+  expect(store.get("instance", "oldest")).toBeUndefined();
+  expect(store.get("instance", "old-tail")).toBeUndefined();
+  for (const id of ["recent", "boundary", "starting", "running", "interrupted"])
+    expect(store.get("instance", id)).toBeDefined();
+  expect(store.snapshot().revision).not.toBe(revision);
+  const unchanged = store.snapshot().revision;
+  retainInstances(store, now, { maxAgeMs: day, keep: 2 });
+  expect(store.snapshot().revision).toBe(unchanged);
+  retainInstances(store, now + 10 * day, { maxAgeMs: day, keep: 2 });
+  expect(store.get("instance", "boundary")).toBeDefined();
+  expect(store.get("instance", "recent")).toBeDefined();
+});
+
+test("a newly stopped old instance ages from its stop and duplicate stop requests keep their receipt", async () => {
+  const { store } = await fixture();
+  vi.useFakeTimers();
+  vi.setSystemTime(now);
+  const instance = {
+    id: "long-running",
+    environmentId: "env",
+    status: "running",
+    pid: 42,
+    createdAt: new Date(now - 40 * day).toISOString(),
+  };
+  store.put("instance", instance.id, instance);
+  store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
+  expect(store.get("instance", instance.id)).toMatchObject({
+    stoppedAt: new Date(now).toISOString(),
+  });
+  const receipt = store.accept("stop", "stop-fingerprint", "instance.stop").operation;
+  store.update(receipt, { status: "succeeded" });
+  retainInstances(store, now + day, { maxAgeMs: day, keep: 0 });
+  expect(store.get("instance", instance.id)).toBeDefined();
+  retainInstances(store, now + day + 1, { maxAgeMs: day, keep: 0 });
+  expect(store.get("instance", instance.id)).toBeUndefined();
+  expect(store.accept("stop", "stop-fingerprint", "instance.stop")).toMatchObject({
+    fresh: false,
+    operation: { id: receipt.id, status: "succeeded" },
+  });
+});
+
+test("retention sweeps records outside the bounded status window", async () => {
+  const { store, add } = await fixture();
+  for (let index = 0; index < 120; index++) add(`expired-${index}`, 40 + index);
+  add("visible", 0.5);
+  expect(store.snapshot().activities?.length).toBeLessThan(store.activitySummaries().length);
+  retainActivities(store, () => false, now);
+  expect(store.activitySummaries().map(({ id }) => id)).toEqual(["visible"]);
+  expect(store.operations().map(({ id }) => id)).toEqual(["visible"]);
+  expect(store.db.prepare("SELECT COUNT(*) AS count FROM requests").get()?.count).toBe(121);
 });

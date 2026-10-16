@@ -270,6 +270,7 @@ export function ExpandableRow({
   aside,
   actions,
   defaultOpen = false,
+  onOpenChange,
   children,
 }: {
   id?: string;
@@ -279,11 +280,13 @@ export function ExpandableRow({
   aside?: ReactNode;
   actions?: ReactNode;
   defaultOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
   children: ReactNode;
 }) {
   return (
     <Collapsible
       defaultOpen={defaultOpen}
+      onOpenChange={onOpenChange}
       className="rise-in scroll-mt-4"
       id={id ? sectionId(id) : undefined}
     >

@@ -8,17 +8,15 @@ import type { Store } from "./store.js";
 const observationLifetime = 48 * 60 * 60 * 1000;
 
 function runnerActivities(store: Store) {
-  const snapshot = store.snapshot();
-  const operations = new Map(snapshot.operations.map((operation) => [operation.id, operation]));
   const cutoff = Date.now() - observationLifetime;
-  return (snapshot.activities ?? []).flatMap((activity) => {
+  return store.activitySummaries().flatMap((activity) => {
     if (
       activity.subject.type !== "runner" ||
       activity.subject.actualJob?.status === "completed" ||
       !(Date.parse(activity.createdAt) > cutoff)
     )
       return [];
-    const operation = operations.get(activity.rootOperationId);
+    const operation = store.operation(activity.rootOperationId);
     if (operation?.command !== "runner.run") return [];
     const progress = Schema.decodeUnknownOption(RunnerProgress)(operation.result);
     return progress._tag === "Some" && progress.value.leaseId

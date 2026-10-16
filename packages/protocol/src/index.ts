@@ -145,6 +145,11 @@ export const Operation = Schema.Struct({
   result: Schema.optional(Schema.Unknown),
 });
 export type Operation = typeof Operation.Type;
+export const ActivityDetail = Schema.Struct({
+  activity: Activity,
+  operations: Schema.Array(Operation),
+});
+export type ActivityDetail = typeof ActivityDetail.Type;
 export const defaultMaxRunners = 5;
 const MaxRunners = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 16 }));
 export const Machine = Schema.Struct({
@@ -165,6 +170,7 @@ export const Instance = Schema.Struct({
   sshHost: Schema.optional(Schema.String),
   sshPort: Schema.optional(Schema.Int),
   createdAt: Schema.String,
+  stoppedAt: Schema.optional(Schema.String),
   knownHostsPath: Schema.optional(Schema.String),
 });
 export type Instance = typeof Instance.Type;
