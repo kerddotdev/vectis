@@ -31,6 +31,7 @@ function content(path: string) {
 test("fresh Linux images retain the same verified runner used by derived environments", () => {
   const script = content("/opt/vectis/prepare.sh");
   expect(script).toContain(runnerPreinstallScript("linux"));
+  expect(script).toContain("runuser -u vectis -- bash -s <<'VECTIS_RUNNER'");
   expect(script).not.toContain("/opt/vectis-bootstrap");
   expect(linuxSeed({ id: "test", publicKey: "ssh-ed25519 AAAA synthetic" }).userdata).toContain(
     "ALL=(ALL) NOPASSWD:ALL",

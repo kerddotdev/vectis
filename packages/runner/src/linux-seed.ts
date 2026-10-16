@@ -55,7 +55,8 @@ apt-get install -y --no-install-recommends ${runnerPackages}
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
-${runnerPreinstallScript("linux")}
+runuser -u vectis -- bash -s <<'VECTIS_RUNNER'
+${runnerPreinstallScript("linux")}VECTIS_RUNNER
 netplan generate
 test "$(docker info --format '{{.OSType}}')" = linux
 mkdir -p /etc/vectis

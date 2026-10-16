@@ -27,6 +27,17 @@ function tail(text: string, limit: number) {
   return text.length > limit ? `...${text.slice(-limit)}` : text;
 }
 
+export function guestCommandDiagnostics(output: { stderr: string; stdout: string }) {
+  const diagnosticTail = (value: string) => {
+    const bytes = Buffer.from(redact(value.trim()), "utf8");
+    if (bytes.length <= 4096) return bytes.toString("utf8");
+    let start = bytes.length - 4093;
+    while (((bytes[start] ?? 0) & 0xc0) === 0x80) start++;
+    return `...${bytes.subarray(start).toString("utf8")}`;
+  };
+  return `== stderr\n${diagnosticTail(output.stderr)}\n== stdout\n${diagnosticTail(output.stdout)}`;
+}
+
 async function hostNetwork(host: string) {
   if (host === "127.0.0.1") return "guest is forwarded through a loopback port";
   const [arp, interfaces] = await Promise.all([

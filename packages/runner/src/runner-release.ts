@@ -11,8 +11,7 @@ import { VectisError } from "../../protocol/src/index.js";
 export const runnerVersion = "2.337.0";
 export function preinstalledRunnerDirectory(os: Environment["os"]) {
   if (os === "windows") return `C:\\vectis\\runner\\${runnerVersion}`;
-  if (os === "macos") return `$HOME/.vectis-runner/${runnerVersion}`;
-  return `/opt/vectis/runner/${runnerVersion}`;
+  return `$HOME/.vectis-runner/${runnerVersion}`;
 }
 
 const distributions = {

@@ -6,6 +6,7 @@ import { Schema } from "effect";
 import { VectisError, type Command, type Operation } from "../../../packages/protocol/src/index.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
+import { guestCommandDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
 import { cloneProvisionImage } from "../../../packages/runner/src/provision-image.js";
 import {
   provisionScript,
@@ -25,6 +26,10 @@ const ProvisionRecord = Schema.Struct({
 });
 type ProvisionRecord = typeof ProvisionRecord.Type;
 const ownerFile = ".vectis-provision.json";
+const GuestFailure = Schema.Struct({
+  diagnostics: Schema.String.check(Schema.isMaxLength(16384)),
+  exitCode: Schema.optional(Schema.Int),
+});
 
 async function removeOutput(record: ProvisionRecord) {
   const directory = await lstat(record.directory).catch((error: unknown) => {
@@ -48,6 +53,14 @@ export async function recoverProvisions(store: Store) {
     const record = Schema.decodeUnknownSync(ProvisionRecord)(value);
     const operation = store.snapshot().operations.find((item) => item.id === record.id);
     if (!operation) continue;
+    const guestFailure = Schema.is(GuestFailure)(operation.result)
+      ? {
+          diagnostics: operation.result.diagnostics,
+          ...(operation.result.exitCode !== undefined
+            ? { exitCode: operation.result.exitCode }
+            : {}),
+        }
+      : undefined;
     const registered = store
       .snapshot()
       .environments.find(
@@ -70,7 +83,7 @@ export async function recoverProvisions(store: Store) {
       store.update(operation, {
         status: "failed",
         message: "Interrupted provisioning was cleaned up. Retry with a new operation key.",
-        result: { stage: "cleaned", code: "provision_interrupted" },
+        result: { stage: "cleaned", code: "provision_interrupted", ...guestFailure },
       });
     } catch {
       store.update(operation, {
@@ -80,6 +93,7 @@ export async function recoverProvisions(store: Store) {
           stage: "cleaning",
           directory: record.directory,
           code: "provision_cleanup_required",
+          ...guestFailure,
         },
       });
     }
@@ -194,6 +208,7 @@ export async function startProvision(
   let created = false;
   let instance: OwnedInstance | undefined;
   let stage = "cloning";
+  let guestFailure: typeof GuestFailure.Type | undefined;
   const progress = (value: string) => {
     stage = value;
     operation = store.update(operation, {
@@ -204,6 +219,7 @@ export async function startProvision(
         parentId: parent.id,
         directory,
         instanceId: operation.id,
+        ...guestFailure,
       },
     });
   };
@@ -263,6 +279,23 @@ export async function startProvision(
     progress("waiting_for_guest");
     const connection = await readyGuest(environment, running, signal);
     const shell = environment.os === "windows" ? "powershell" : "bash";
+    const runGuest = async (script: string, guestSignal = signal) => {
+      try {
+        const result = await executeGuest(connection, script, { shell, signal: guestSignal });
+        if (result.exitCode !== 0)
+          guestFailure = {
+            exitCode: result.exitCode,
+            diagnostics: guestCommandDiagnostics(result),
+          };
+        return result;
+      } catch (error) {
+        if (error instanceof GuestUnavailableError)
+          guestFailure = {
+            diagnostics: guestCommandDiagnostics({ stderr: error.detail, stdout: "" }),
+          };
+        throw error;
+      }
+    };
     progress("provisioning");
     const scripts = [
       ...(command.setupScript !== undefined
@@ -271,11 +304,10 @@ export async function startProvision(
       provisionScript(environment.os, {
         runner: command.runner !== false,
         setup: command.setupScript !== undefined,
-        user: connection.user,
       }),
     ];
     for (const script of scripts) {
-      const result = await executeGuest(connection, script, { shell, signal });
+      const result = await runGuest(script);
       if (result.exitCode !== 0)
         throw new VectisError(
           "provision_script_failed",
@@ -284,14 +316,14 @@ export async function startProvision(
     }
     progress("shutting_down");
     try {
-      const shutdown = await executeGuest(connection, provisionShutdownScript(environment.os), {
-        shell,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-      });
+      const shutdown = await runGuest(
+        provisionShutdownScript(environment.os),
+        AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+      );
       if (shutdown.exitCode !== 0)
         throw new VectisError(
           "guest_shutdown_failed",
-          "Guest shutdown failed. macOS requires passwordless sudo for /sbin/shutdown.",
+          "Guest shutdown failed. Inspect the guest command diagnostics and passwordless sudo permissions.",
         );
     } catch (error) {
       if (!(error instanceof GuestUnavailableError)) throw error;
@@ -363,6 +395,7 @@ export async function startProvision(
             : "Environment provisioning failed and owned output was removed.",
         result: {
           stage: "cleaned",
+          ...guestFailure,
           code: signal.aborted
             ? "provision_cancelled"
             : error instanceof VectisError
@@ -376,6 +409,7 @@ export async function startProvision(
         message: "Provisioning stopped, but VM exit or output cleanup needs verification.",
         result: {
           stage,
+          ...guestFailure,
           directory,
           instanceId: operation.id,
           code: "provision_cleanup_required",

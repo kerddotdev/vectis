@@ -17,7 +17,7 @@ import {
   type Command,
   type Environment,
 } from "../../../packages/protocol/src/index.js";
-import { executeGuest } from "../../../packages/runner/src/guest.js";
+import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { runnerVersion } from "../../../packages/runner/src/runner-release.js";
@@ -188,11 +188,120 @@ test("a guest script failure stops the owned VM and removes partial output", asy
   const operation = await submit();
   expect(await completed(operation.id)).toMatchObject({
     status: "failed",
-    result: { code: "provision_script_failed" },
+    result: {
+      code: "provision_script_failed",
+      exitCode: 1,
+      diagnostics: "== stderr\nsynthetic script failure\n== stdout\n",
+    },
   });
   expect(stop).toHaveBeenCalledWith(operation.id);
   expect(store.snapshot().environments.map((item) => item.id)).toEqual(["parent"]);
   await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s shutdown failures retain redacted output and the exit code after cleanup",
+  async (os) => {
+    const { parent, store, submit, completed } = await fixture();
+    store.put("environment", parent.id, { ...parent, os });
+    vi.mocked(executeGuest)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+      .mockResolvedValueOnce({
+        exitCode: 23,
+        stdout: "vectis-provision: shutdown",
+        stderr: "Authorization: Bearer HiddenShutdownCanary\nsudo: a password is required",
+        truncated: false,
+      });
+    const operation = await submit();
+    expect(await completed(operation.id)).toMatchObject({
+      status: "failed",
+      result: {
+        code: "guest_shutdown_failed",
+        exitCode: 23,
+        diagnostics:
+          "== stderr\nAuthorization: Bearer [redacted]\nsudo: a password is required\n== stdout\nvectis-provision: shutdown",
+      },
+    });
+    expect(store.snapshot().environments).toHaveLength(1);
+  },
+);
+
+test("setup upload failure retains bounded diagnostic tails before VM cleanup", async () => {
+  const { command, store, submit, completed, stop } = await fixture();
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 28,
+    stdout: `discarded-prefix\n${"漢".repeat(10000)}\nupload interrupted`,
+    stderr: `Authorization: Bearer ${"a".repeat(10000)}\nNo space left on device`,
+    truncated: true,
+  });
+  const inspectCleanup = stop.getMockImplementation();
+  stop.mockImplementation(async (id) => {
+    expect(store.snapshot().operations.find((item) => item.id === id)).toMatchObject({
+      result: { stage: "cleaning", exitCode: 28, diagnostics: expect.stringContaining("No space") },
+    });
+    await inspectCleanup?.(id);
+  });
+  const operation = await submit({ ...command, setupScript: "true" });
+  const finished = await completed(operation.id);
+  expect(finished).toMatchObject({
+    status: "failed",
+    result: {
+      code: "provision_script_failed",
+      exitCode: 28,
+      diagnostics: expect.stringContaining("upload interrupted"),
+    },
+  });
+  expect(JSON.stringify(finished?.result)).not.toContain("discarded-prefix");
+  expect(JSON.stringify(finished?.result)).not.toContain("a".repeat(100));
+  expect(Buffer.byteLength(JSON.stringify(finished?.result))).toBeLessThan(16384);
+});
+
+test("unconfirmed cleanup preserves the original guest failure diagnostics", async () => {
+  const { store, submit, completed, stop } = await fixture();
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 7,
+    stderr: "download failed",
+    stdout: "vectis-provision: download",
+    truncated: false,
+  });
+  stop.mockRejectedValue(new Error("Synthetic cleanup failure"));
+  const operation = await submit();
+  expect(await completed(operation.id)).toMatchObject({
+    status: "action_required",
+    result: {
+      code: "provision_cleanup_required",
+      exitCode: 7,
+      diagnostics: "== stderr\ndownload failed\n== stdout\nvectis-provision: download",
+    },
+  });
+  const instance = store.snapshot().instances.find((item) => item.id === operation.id);
+  if (!instance) throw new Error("Missing instance reservation");
+  store.put("instance", instance.id, { ...instance, status: "stopped" });
+  await recoverProvisions(store);
+  expect(await completed(operation.id)).toMatchObject({
+    status: "failed",
+    result: {
+      stage: "cleaned",
+      code: "provision_interrupted",
+      exitCode: 7,
+      diagnostics: "== stderr\ndownload failed\n== stdout\nvectis-provision: download",
+    },
+  });
+});
+
+test("lost provisioning connections retain redacted connection diagnostics", async () => {
+  const { submit, completed } = await fixture();
+  vi.mocked(executeGuest).mockRejectedValue(
+    new GuestUnavailableError("exit 255: token=HiddenConnectionCanary Connection reset"),
+  );
+  const operation = await submit();
+  expect(await completed(operation.id)).toMatchObject({
+    status: "failed",
+    result: {
+      code: "guest_unavailable",
+      diagnostics: "== stderr\nexit 255: token=[redacted] Connection reset\n== stdout\n",
+    },
+  });
 });
 test.each(["macos", "windows"] as const)(
   "%s uses its guest shell and registers only after a clean exit",

@@ -73,4 +73,4 @@ After a service crash, the previous guest must have verifiable process-exit evid
 
 Completed setup registers the environment automatically. It does not connect a repository or prove a GitHub job has run. Continue with [Repositories and labels](/docs/guides/repositories), then [Runners and jobs](/docs/guides/runners).
 
-New preparations retain the pinned runner under `/opt/vectis/runner/<version>` and record it in `Environment.image`. Jobs use it directly when the recorded version matches. Existing ready images can gain the same installation through [environment provisioning](/docs/guides/environments), without reinstalling Ubuntu.
+New preparations retain the pinned runner under `$HOME/.vectis-runner/<version>` as the guest user and record it in `Environment.image`. Jobs use it directly when the recorded version matches. [Environment provisioning](/docs/guides/environments) can preinstall the runner on an existing ready image without sudo or reinstalling Ubuntu when its prepared libraries are present. Completing provisioning still requires passwordless sudo for identity cleanup and clean shutdown.
