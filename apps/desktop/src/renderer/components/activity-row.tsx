@@ -5,15 +5,24 @@ import { GitHubIcon } from "@/components/github-icon";
 import { JobLog } from "@/components/job-log";
 import { Details, ExpandableRow, Mono } from "@/components/layout";
 import { OsTile } from "@/components/os-icon";
-import { JobStatus, OperationStatus, RunnerStage, StatusText } from "@/components/status";
+import { RunnerPhases } from "@/components/runner-phases";
+import {
+  JobStatus,
+  OperationStatus,
+  RunnerStage,
+  StatusBadge,
+  StatusText,
+} from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { activityJob, activitySummary, activityTitle } from "@/lib/activities";
 import { formatDateTime, formatRelative } from "@/lib/format";
+import { resultCodePresentation } from "@/lib/result-code";
 import { isGeneratedStageMessage, activeRunnerStage } from "@/lib/runner-stage";
+import { runnerPhaseTimeline } from "@/lib/runner-phases";
 import { cancellableCommands, commandLabels } from "@/lib/operations";
 import { MigrationResult } from "@/views/migration-result";
 import { PreparationResult } from "@/views/preparation-result";
-import { useStateApi } from "@/state";
+import { useActivityDetail, useStateApi } from "@/state";
 
 function VectisTile() {
   return (
@@ -24,16 +33,19 @@ function VectisTile() {
 }
 
 export function ActivityRow({
-  activity,
+  activity: summary,
   defaultOpen = false,
 }: {
   activity: Activity;
   defaultOpen?: boolean;
 }) {
   const { snapshot, submit, perform } = useStateApi();
-  const operations = (snapshot?.operations ?? []).filter(
-    (operation) => operation.activityId === activity.id,
-  );
+  const [open, setOpen] = useState(defaultOpen);
+  const detail = useActivityDetail(summary.id, open);
+  const activity = detail?.activity ?? summary;
+  const operations =
+    detail?.operations.toReversed() ??
+    (snapshot?.operations ?? []).filter((operation) => operation.activityId === activity.id);
   // Operations arrive newest first; an activity reads as the story of what happened.
   const steps = [...operations].reverse();
   const deciding =
@@ -55,6 +67,7 @@ export function ActivityRow({
   const closable = activity.status === "action_required" && !preparation && !reconcilable;
   const stage = activeRunnerStage(activity, deciding, job?.status);
   const result: unknown = deciding?.result;
+  const codeStatus = resultCodePresentation(result);
   const nextStep =
     typeof result === "object" &&
     result &&
@@ -77,9 +90,17 @@ export function ActivityRow({
     typeof result.diagnostics === "string"
       ? result.diagnostics
       : undefined;
+  const timeline =
+    activity.subject.type === "runner" && deciding?.command === "runner.run"
+      ? runnerPhaseTimeline(result, {
+          active: running,
+          end: running ? Date.now() : Date.parse(activity.completedAt ?? activity.updatedAt),
+        })
+      : undefined;
   return (
     <ExpandableRow
       defaultOpen={defaultOpen}
+      onOpenChange={setOpen}
       leading={
         activity.kind === "github" ? (
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted text-foreground/80">
@@ -101,6 +122,8 @@ export function ActivityRow({
           {job?.status && <JobStatus status={job.status} conclusion={job.conclusion ?? null} />}
           {stage ? (
             <RunnerStage stage={stage} />
+          ) : codeStatus && !runnerQuiet ? (
+            <StatusBadge tone={codeStatus.tone} label={codeStatus.label} />
           ) : (
             !runnerQuiet && <OperationStatus status={activity.status} />
           )}
@@ -128,6 +151,7 @@ export function ActivityRow({
           </pre>
         </div>
       )}
+      {timeline && <RunnerPhases timeline={timeline} />}
       {job && activity.bindingId && (
         <div className="flex flex-col gap-3">
           <div>

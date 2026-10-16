@@ -1,6 +1,8 @@
 import { expect, test, vi } from "vitest";
 import { ControllerClient } from "./controller.js";
 import { RemoteClient } from "./remote.js";
+import type { ActivityDetail } from "../../protocol/src/index.js";
+import type { RunnerProgress } from "../../protocol/src/runners.js";
 
 function fixture() {
   const controller = new ControllerClient(
@@ -25,6 +27,94 @@ const record = {
   createdAt: 1000,
   updatedAt: 1000,
 };
+
+test("remote detail and activity-list reads submit targeted inspections instead of status", async () => {
+  const { request, client } = fixture();
+  const result: RunnerProgress = {
+    bindingId: "binding",
+    environmentId: "linux",
+    leaseKey: "local-operation",
+    stage: "finished",
+    cache: { attached: true, writeBack: "granted", promoted: true },
+    phases: [{ name: "vm_start", startedAt: "2026-01-01", endedAt: "2026-01-01" }],
+  };
+  const detail: ActivityDetail = {
+    activity: {
+      id: "activity",
+      kind: "vectis",
+      subject: { type: "command", command: "runner.run" },
+      rootOperationId: "local-operation",
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+      status: "succeeded",
+      message: "Done",
+    },
+    operations: [
+      {
+        id: "local-operation",
+        key: "local-key",
+        command: "runner.run",
+        result,
+        activityId: "activity",
+        status: "succeeded",
+        message: "Done",
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01",
+      },
+    ],
+  };
+  const cases = [
+    {
+      query: { name: "activity", id: "activity" },
+      result: detail,
+      read: () => client.activity("activity"),
+    },
+    { query: { name: "activities" }, result: [detail.activity], read: () => client.activities() },
+    {
+      query: { name: "operation", id: "local-operation" },
+      result: detail.operations[0],
+      read: () => client.localOperation("local-operation"),
+    },
+    {
+      query: { name: "operation.key", key: "local-key" },
+      result: detail.operations[0],
+      read: () => client.operationByKey("local-key"),
+    },
+  ];
+  for (const { query, result, read } of cases) {
+    request.mockClear();
+    request.mockResolvedValueOnce({ queryId: "query" }).mockResolvedValueOnce({
+      pending: false,
+      responseJson: JSON.stringify({ ok: true, result }),
+    });
+    expect(await read()).toEqual(result);
+    expect(request.mock.calls[0]?.[0]).toMatchObject({ type: "query.submit", query });
+  }
+});
+test("remote provisioning carries host paths and inline setup data through the shared command", async () => {
+  const { request, client } = fixture();
+  const command = {
+    type: "environment.provision",
+    id: "derived",
+    from: "parent",
+    imageDirectory: "/selected-host/images/derived",
+    setupScript: "printf 'guest setup'",
+    runner: false,
+  } as const;
+  request
+    .mockResolvedValueOnce({ operationId: "remote1" })
+    .mockResolvedValueOnce({ ...record, commandJson: JSON.stringify(command) });
+  expect(await client.submit(command, "derive")).toMatchObject({
+    status: "accepted",
+    command: "environment.provision",
+  });
+  expect(request.mock.calls[0]?.[0]).toEqual({
+    type: "operation.submit",
+    machineId: "machine1",
+    key: "derive",
+    command,
+  });
+});
 test("activity cancellation is replayed on the machine with the local activity identity", async () => {
   const { request, client } = fixture();
   const command = { type: "activity.cancel", id: "local-activity" } as const;
@@ -418,3 +508,27 @@ test("remote readiness preserves the original failure when capability discovery 
     message: "The original inspection failed.",
   });
 });
+
+test.each([
+  { type: "repository.cache", bindingId: "binding", enabled: true, sizeGiB: 30 },
+  { type: "repository.cache", bindingId: "binding", enabled: false },
+  { type: "cache.clear", bindingId: "binding" },
+] as const)(
+  "remote $type preserves the binding settings and local operation contract",
+  async (command) => {
+    const { request, client } = fixture();
+    request
+      .mockResolvedValueOnce({ operationId: "remote1" })
+      .mockResolvedValueOnce({ ...record, commandJson: JSON.stringify(command) });
+    expect(await client.submit(command, "cache")).toMatchObject({
+      status: "accepted",
+      command: command.type,
+    });
+    expect(request.mock.calls[0]?.[0]).toEqual({
+      type: "operation.submit",
+      machineId: "machine1",
+      key: "cache",
+      command,
+    });
+  },
+);

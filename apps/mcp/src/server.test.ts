@@ -8,6 +8,72 @@ import { createMcpServer } from "./server.js";
 import { startService } from "../../server/src/http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { VectisError } from "../../../packages/protocol/src/index.js";
+import { activityFor } from "../../server/src/activities.js";
+import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
+
+test("MCP detail reads preserve runner phases while status stays compact", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mcp-phases-"));
+  const service = await startService({ home });
+  const api = new VectisClient(service.connection);
+  const server = createMcpServer(async () => api);
+  const client = new Client({ name: "phase-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    const command = { type: "runner.run", bindingId: "binding" } as const;
+    const operation = service.store.accept(
+      "runner",
+      "runner",
+      command.type,
+      activityFor("runner", command),
+      "runner",
+    ).operation;
+    const result: RunnerProgress = {
+      bindingId: "binding",
+      environmentId: "linux",
+      leaseKey: operation.id,
+      stage: "finished",
+      phases: [{ name: "vm_start", startedAt: operation.createdAt, endedAt: operation.createdAt }],
+    };
+    service.store.update(operation, { status: "succeeded", result });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    expect(
+      await client.callTool({ name: "vectis_operation", arguments: { id: operation.id } }),
+    ).toMatchObject({
+      content: [],
+      structuredContent: { result: { result } },
+    });
+    expect(
+      await client.callTool({ name: "vectis_activity", arguments: { id: "runner" } }),
+    ).toMatchObject({
+      content: [],
+      structuredContent: { result: { operations: [expect.objectContaining({ result })] } },
+    });
+    const status = await client.callTool({ name: "vectis_status", arguments: {} });
+    expect(status.isError).not.toBe(true);
+    expect(status.content).toEqual([]);
+    expect(status).toHaveProperty("structuredContent.result.operations", [
+      {
+        id: operation.id,
+        activityId: "runner",
+        command: "runner.run",
+        status: "succeeded",
+        updatedAt: expect.any(String),
+        message: expect.any(String),
+      },
+    ]);
+    expect(JSON.stringify(status)).not.toContain('"phases"');
+    expect(status).toHaveProperty(
+      "structuredContent.result.details",
+      expect.stringContaining("vectis_operation"),
+    );
+  } finally {
+    await client.close();
+    await server.close();
+    await service.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("MCP discovers and executes the same authenticated commands as the CLI client", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-mcp-"));
@@ -47,7 +113,14 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
       discovered.find((tool) => tool.name === "vectis_command")?.inputSchema,
     );
     const discovery = await client.callTool({ name: "vectis_capabilities", arguments: {} });
-    for (const name of ["run.rerun-failed", "run.cancel", "workflow.dispatch"]) {
+    for (const name of [
+      "run.rerun-failed",
+      "run.cancel",
+      "workflow.dispatch",
+      "repository.cache",
+      "cache.clear",
+      "repository.capacity-mode",
+    ]) {
       expect(schema).toContain(name);
       expect(JSON.stringify(discovery.structuredContent)).toContain(name);
     }
@@ -309,6 +382,84 @@ test("MCP job logs forwards the byte cursor and rejects invalid requests", async
     expect(read).toHaveBeenCalledOnce();
   } finally {
     read.mockRestore();
+    await client.close();
+    await server.close();
+    await service.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("MCP status bounds retained history and returns data only once", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mcp-bounded-"));
+  const snapshotLimits = { operations: 21, activities: 21, stoppedInstances: 2 };
+  const service = await startService({ home, snapshotLimits });
+  const api = new VectisClient(service.connection);
+  const server = createMcpServer(async () => api);
+  const client = new Client({ name: "bounded-status-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    const command = { type: "job.scan", bindingId: "binding" } as const;
+    service.store.db.exec("BEGIN IMMEDIATE");
+    for (let index = 0; index < snapshotLimits.operations + 2; index++) {
+      const id = `history-${index}`;
+      const link = activityFor(id, command);
+      service.store.put("activity", id, link?.create);
+      service.store.put("operation", id, {
+        id,
+        key: id,
+        command: command.type,
+        activityId: id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: index === 0 ? "action_required" : "succeeded",
+        result: { largeResult: "x".repeat(4096) },
+        message: "x".repeat(1024),
+      });
+    }
+    service.store.db.exec("COMMIT");
+    expect(Buffer.byteLength(JSON.stringify(await api.status()))).toBeGreaterThan(64 * 1024);
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "vectis_status", arguments: {} });
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toEqual([]);
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(64 * 1024);
+    expect(result).toMatchObject({
+      structuredContent: {
+        result: {
+          operations: expect.any(Array),
+          activities: expect.any(Array),
+          counts: {
+            operations: { total: 22, byStatus: { action_required: 1, succeeded: 21 } },
+            activities: { total: 22, byStatus: { action_required: 1, succeeded: 21 } },
+          },
+          details: expect.stringContaining("vectis_operation"),
+        },
+      },
+    });
+    expect(result).toHaveProperty("structuredContent.result.operations.length", 20);
+    expect(result).toHaveProperty("structuredContent.result.activities.length", 20);
+    expect(JSON.stringify(result)).not.toContain("largeResult");
+    const status = vi.spyOn(api, "status").mockRejectedValue(new Error("Unexpected status read"));
+    const activities = await client.callTool({
+      name: "vectis_activities",
+      arguments: { status: "action_required" },
+    });
+    expect(activities).toMatchObject({
+      content: [],
+      structuredContent: { result: [{ id: "history-0" }] },
+    });
+    expect(status).not.toHaveBeenCalled();
+    status.mockRestore();
+    const full = await client.callTool({
+      name: "vectis_operation",
+      arguments: { id: "history-0" },
+    });
+    expect(full).toMatchObject({
+      content: [],
+      structuredContent: { result: { result: { largeResult: expect.any(String) } } },
+    });
+  } finally {
     await client.close();
     await server.close();
     await service.close();

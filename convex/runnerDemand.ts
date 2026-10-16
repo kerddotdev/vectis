@@ -21,7 +21,11 @@ export const forRepository = internalMutation({
       )
       .take(100);
     // Each machine's bounded scan gets its own transaction, including after batched job imports.
-    for (const machineId of new Set(bindings.map((binding) => binding.machineId)))
+    for (const machineId of new Set(
+      bindings
+        .filter((binding) => binding.capacityMode !== "scale_set")
+        .map((binding) => binding.machineId),
+    ))
       await ctx.scheduler.runAfter(0, internal.runnerDemand.forMachine, { machineId });
   },
 });
@@ -44,6 +48,9 @@ export function automaticBindings(ctx: MutationCtx, machineId: Id<"machines">) {
 }
 
 const failureRetryDelay = 60000;
+const actionRequiredRetryDelay = 600000;
+const maxAttempts = 10;
+const maxFailures = 3;
 // Unclaimed runner requests get two minutes for delivery, with a ten-minute cap for online hosts.
 const claimTimeoutMs = 120000;
 const claimDeadlineMs = 600000;
@@ -97,6 +104,21 @@ function expiredBeforeClaim(operation: Doc<"operations">) {
   }
 }
 
+function cachePrivilegeFailure(operation: Doc<"operations">) {
+  if (operation.phase !== "failed" || !operation.resultJson) return false;
+  try {
+    const result: unknown = JSON.parse(operation.resultJson);
+    return (
+      result !== null &&
+      typeof result === "object" &&
+      "code" in result &&
+      result.code === "cache_volume_requires_guest_sudo"
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Runs on every heartbeat, so the reads an idle machine needs come first. Every return before the
 // scheduling loop is free of side effects, so this order schedules exactly what any other would.
 // Convex bills repeated reads within a transaction, so a heartbeat passes the bindings it already read.
@@ -108,12 +130,22 @@ export async function scheduleRunnerDemand(
   const machineId = target._id;
   const liveness = await presence(ctx, machineId);
   if (!liveness || target.paused !== false || liveness.lastSeenAt < Date.now() - 60000) return;
-  const legacy = liveness.runnerSlots === undefined;
-  let free = liveness.runnerSlots ?? (liveness.runnerIdle === true ? 1 : 0);
+  const environmentSlots =
+    liveness.environmentSlots === undefined
+      ? undefined
+      : new Map(liveness.environmentSlots.map((item) => [item.environmentId, item.available]));
+  const legacy = liveness.runnerSlots === undefined && environmentSlots === undefined;
+  let free =
+    liveness.runnerSlots ??
+    (environmentSlots
+      ? Math.max(0, ...environmentSlots.values())
+      : liveness.runnerIdle === true
+        ? 1
+        : 0);
   if (free <= 0) return;
   const queues: Array<{ binding: Doc<"repositoryBindings">; jobs: Doc<"githubJobs">[] }> = [];
   for (const binding of bindings ?? (await automaticBindings(ctx, machineId))) {
-    if (binding.owner !== target.owner) continue;
+    if (binding.owner !== target.owner || binding.capacityMode === "scale_set") continue;
     const environment = target.environments?.find(
       (item) => item.id === binding.environmentId && item.state === "ready",
     );
@@ -149,8 +181,21 @@ export async function scheduleRunnerDemand(
       if (command.type !== "runner.run") continue;
       if (legacy) return;
       // Claim precedes local submission; running can precede the next capacity heartbeat.
-      if (command.automatic && (phase !== "running" || operation.updatedAt >= liveness.lastSeenAt))
+      if (
+        command.automatic &&
+        (phase !== "running" || operation.updatedAt >= liveness.lastSeenAt)
+      ) {
         free--;
+        if (environmentSlots) {
+          const bindingId = ctx.db.normalizeId("repositoryBindings", command.bindingId);
+          const binding = bindingId ? await ctx.db.get("repositoryBindings", bindingId) : null;
+          if (binding?.machineId === machineId && binding.owner === target.owner)
+            environmentSlots.set(
+              binding.environmentId,
+              (environmentSlots.get(binding.environmentId) ?? 0) - 1,
+            );
+        }
+      }
     }
     if (free <= 0) return;
   }
@@ -169,6 +214,7 @@ export async function scheduleRunnerDemand(
     let scheduled = false;
     for (const { binding, jobs } of queues) {
       if (free <= 0) break;
+      if (environmentSlots && (environmentSlots.get(binding.environmentId) ?? 0) <= 0) continue;
       while (jobs.length > 0) {
         const job = jobs.shift();
         if (!job) break;
@@ -181,25 +227,26 @@ export async function scheduleRunnerDemand(
               .eq("jobId", job.jobId),
           )
           .unique();
+        let failures = demand?.failures ?? 0;
         if (demand) {
-          if (demand.owner !== target.owner || demand.attempt >= 3) continue;
-          // A runner that succeeded served another job with the same labels; one that failed never
-          // took this job, because the job is still queued. Both leave the job needing a runner.
-          // A failure waits a minute, so a passing condition does not use up every attempt at once.
-          // Expiry before claim can retry unchanged jobs on another machine. A person's cancellation
-          // stays final unless the job changed after the attempt, as when approval queues it again.
+          if (demand.owner !== target.owner || demand.attempt >= maxAttempts) continue;
           const previous = await ctx.db.get("operations", demand.operationId);
-          if (
-            previous?.phase !== "succeeded" &&
-            !(
-              previous?.phase === "failed" && previous.updatedAt <= Date.now() - failureRetryDelay
-            ) &&
-            !(
-              previous?.phase === "cancelled" &&
-              (expiredBeforeClaim(previous) || job.updatedAt > previous.createdAt)
-            )
-          )
-            continue;
+          if (previous && cachePrivilegeFailure(previous)) continue;
+          const now = Date.now();
+          if (!previous) {
+            if (demand.updatedAt > now - actionRequiredRetryDelay) continue;
+          } else if (previous.phase === "failed" || previous.phase === "action_required") {
+            const delay =
+              previous.phase === "action_required" ? actionRequiredRetryDelay : failureRetryDelay;
+            if (previous.updatedAt > now - delay) continue;
+            failures++;
+          } else if (previous.phase === "cancelled") {
+            if (expiredBeforeClaim(previous)) {
+              if (previous.updatedAt > now - failureRetryDelay) continue;
+              failures++;
+            } else if (job.updatedAt <= previous.createdAt) continue;
+          } else if (previous.phase !== "succeeded") continue;
+          if (failures >= maxFailures) continue;
         }
         const attempt = (demand?.attempt ?? 0) + 1;
         const now = Date.now();
@@ -225,6 +272,7 @@ export async function scheduleRunnerDemand(
           bindingId: binding._id,
           operationId,
           attempt,
+          failures,
           updatedAt: now,
         };
         if (demand) await ctx.db.patch("runnerDemands", demand._id, record);
@@ -233,6 +281,11 @@ export async function scheduleRunnerDemand(
           operationId,
         });
         free--;
+        if (environmentSlots)
+          environmentSlots.set(
+            binding.environmentId,
+            (environmentSlots.get(binding.environmentId) ?? 0) - 1,
+          );
         scheduled = true;
         break;
       }

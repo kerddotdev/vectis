@@ -1,3 +1,4 @@
+import { scheduleScaleSetCleanup } from "./runnerScaleSets.js";
 import { v } from "convex/values";
 import { internal } from "./_generated/api.js";
 import { internalMutation, type MutationCtx } from "./_generated/server.js";
@@ -18,6 +19,7 @@ async function deleteBinding(ctx: MutationCtx, id: Id<"repositoryBindings">) {
     .withIndex("by_binding", (q) => q.eq("bindingId", id))
     .take(batch))
     await ctx.db.delete("jobScans", scan._id);
+  await scheduleScaleSetCleanup(ctx, id);
   await ctx.db.delete("repositoryBindings", id);
   return demands.length;
 }

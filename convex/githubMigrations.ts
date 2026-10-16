@@ -1,5 +1,5 @@
 "use node";
-import { repositoryAccess } from "./githubAccess.js";
+import { githubErrors, repositoryAccess } from "./githubAccess.js";
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
 import { action } from "./_generated/server.js";
@@ -16,58 +16,59 @@ import {
 
 export const analyze = action({
   args: { bindingId: v.string() },
-  handler: async (ctx, args): Promise<MigrationAnalysis> => {
-    const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
-      ...args,
-      preparing: true,
-    });
-    if (!authority.environment) throw new ConvexError({ code: "environment_unavailable" });
-    const environment = authority.environment;
-    const client = new GitHubAppClient(authority.app);
-    const access = await repositoryAccess(client, {
-      owner: authority.binding.repositoryOwner ?? authority.account.login,
-      repo: authority.binding.repositoryName,
-      repositoryId: authority.binding.repositoryId,
-      githubUserId: authority.account.githubId,
-      githubLogin: authority.account.login,
-      purpose: "migration-read",
-    });
-    if (access.installationId !== authority.binding.installationId)
-      throw new ConvexError({ code: "installation_changed" });
-    const source = await readRepositoryWorkflows(
-      (path) => client.request(access.token, access.path + path),
-      access.repositoryId,
-    );
-    const labels =
-      environment.os === "linux"
-        ? ["ubuntu-24.04-arm", "ubuntu-24.04", "ubuntu-latest"]
-        : environment.os === "windows"
-          ? ["windows-11-arm", "windows-latest", "windows-2025", "windows-2022"]
-          : ["macos-26", "macos-latest"];
-    const targets = labels.map((from) => ({ from, to: `vectis-${environment.id}` }));
-    const report = {
-      baseBranch: source.baseBranch,
-      baseCommit: source.baseCommit,
-      files: source.files.map((file) => {
-        const preview = previewMigration(file.source, targets);
-        return {
-          path: file.path,
-          mode: file.mode,
-          before: file.source,
-          after: preview.source,
-          changed: preview.changed,
-          findings: [...preview.findings],
-          ...(preview.jobs ? { jobs: [...preview.jobs] } : {}),
-        };
-      }),
-    };
-    const verified = await ctx.runQuery(internal.migrationPreviews.verified, args);
-    const previewId = await ctx.runMutation(internal.migrationPreviews.save, {
-      ...args,
-      reportJson: JSON.stringify(report),
-    });
-    return { previewId, verified, ...report };
-  },
+  handler: async (ctx, args): Promise<MigrationAnalysis> =>
+    githubErrors(async () => {
+      const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
+        ...args,
+        preparing: true,
+      });
+      if (!authority.environment) throw new ConvexError({ code: "environment_unavailable" });
+      const environment = authority.environment;
+      const client = new GitHubAppClient(authority.app);
+      const access = await repositoryAccess(client, {
+        owner: authority.binding.repositoryOwner ?? authority.account.login,
+        repo: authority.binding.repositoryName,
+        repositoryId: authority.binding.repositoryId,
+        githubUserId: authority.account.githubId,
+        githubLogin: authority.account.login,
+        purpose: "migration-read",
+      });
+      if (access.installationId !== authority.binding.installationId)
+        throw new ConvexError({ code: "installation_changed" });
+      const source = await readRepositoryWorkflows(
+        (path) => client.request(access.token, access.path + path),
+        access.repositoryId,
+      );
+      const labels =
+        environment.os === "linux"
+          ? ["ubuntu-24.04-arm", "ubuntu-24.04", "ubuntu-latest"]
+          : environment.os === "windows"
+            ? ["windows-11-arm", "windows-latest", "windows-2025", "windows-2022"]
+            : ["macos-26", "macos-latest"];
+      const targets = labels.map((from) => ({ from, to: `vectis-${environment.id}` }));
+      const report = {
+        baseBranch: source.baseBranch,
+        baseCommit: source.baseCommit,
+        files: source.files.map((file) => {
+          const preview = previewMigration(file.source, targets);
+          return {
+            path: file.path,
+            mode: file.mode,
+            before: file.source,
+            after: preview.source,
+            changed: preview.changed,
+            findings: [...preview.findings],
+            ...(preview.jobs ? { jobs: [...preview.jobs] } : {}),
+          };
+        }),
+      };
+      const verified = await ctx.runQuery(internal.migrationPreviews.verified, args);
+      const previewId = await ctx.runMutation(internal.migrationPreviews.save, {
+        ...args,
+        reportJson: JSON.stringify(report),
+      });
+      return { previewId, verified, ...report };
+    }),
 });
 export const publish = action({
   args: { previewId: v.string() },

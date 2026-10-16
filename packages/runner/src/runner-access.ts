@@ -4,16 +4,28 @@ import { VectisError, type Environment } from "../../protocol/src/index.js";
 
 export const assignmentRejectedMarker = "VECTIS_RUNNER_ASSIGNMENT_REJECTED";
 export const assignmentRejectedPath = "vectis-actions-runner/_vectis/assignment-rejected";
+export const jobStartedMarker = "VECTIS_RUNNER_JOB_STARTED";
+export const jobStartedPath = "vectis-actions-runner/_vectis/job-started";
 
-export function assignmentRejectedScript(os: Environment["os"]) {
+export function runnerGateScript(os: Environment["os"]) {
   if (os === "windows")
-    return `$marker = Join-Path $env:USERPROFILE '${assignmentRejectedPath}'
+    return `$started = Join-Path $env:USERPROFILE '${jobStartedPath}'
+if (Test-Path -LiteralPath $started -PathType Leaf) {
+  Write-Output '${jobStartedMarker}'
+  Get-Content -LiteralPath $started
+}
+$marker = Join-Path $env:USERPROFILE '${assignmentRejectedPath}'
 if (Test-Path -LiteralPath $marker -PathType Leaf) {
   Write-Output '${assignmentRejectedMarker}'
   Get-Content -LiteralPath $marker
 }
 `;
-  return `marker="$HOME/${assignmentRejectedPath}"
+  return `started="$HOME/${jobStartedPath}"
+if test -f "$started"; then
+  printf '${jobStartedMarker}\\n'
+  cat "$started"
+fi
+marker="$HOME/${assignmentRejectedPath}"
 if test -f "$marker"; then
   printf '${assignmentRejectedMarker}\\n'
   cat "$marker"
@@ -35,6 +47,8 @@ actors=${access.actors === "any" ? "any" : [...new Set(access.actors.ids)].join(
 approval=${access.approval}
 runId=${access.approvedRun?.runId ?? ""}
 runAttempt=${access.approvedRun?.runAttempt ?? ""}
+cacheRunId=${access.cacheRun?.runId ?? ""}
+cacheRunAttempt=${access.cacheRun?.runAttempt ?? ""}
 `;
 }
 
@@ -89,6 +103,9 @@ set -eu
 policy_dir="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 source "$policy_dir/policy"
 [[ "\${GITHUB_REPOSITORY_ID:-}" == "$repositoryId" ]] || refuse "repository id mismatch"
+if [[ -n "$cacheRunId" ]]; then
+  [[ "\${GITHUB_RUN_ID:-}" == "$cacheRunId" && "\${GITHUB_RUN_ATTEMPT:-}" == "$cacheRunAttempt" ]] || refuse "cache run mismatch"
+fi
 if [[ "$approval" == required ]]; then
   [[ -n "$runId" && -n "$runAttempt" && "\${GITHUB_RUN_ID:-}" == "$runId" && "\${GITHUB_RUN_ATTEMPT:-}" == "$runAttempt" ]] || refuse "run approval mismatch"
 fi
@@ -119,7 +136,14 @@ VECTIS_PYTHON
   [[ "$sender" =~ ^[1-9][0-9]*$ ]] || refuse "triggering actor id unavailable"
   [[ ",$actors," == *",$sender,"* ]] || refuse "triggering actor not allowed"
 fi
-trap - EXIT
+trap - ERR EXIT
+started_at=$(date -u +%s%3N) || started_at=
+if [[ ! "$started_at" =~ ^[0-9]+$ ]]; then
+  started_at=$(perl -MTime::HiRes=time -e 'printf "%d\\n", time * 1000') || started_at=
+fi
+if [[ "$started_at" =~ ^[0-9]+$ ]]; then
+  (umask 077; printf '%s\\n' "$started_at" > "$HOME/${jobStartedPath}.tmp" && mv -f "$HOME/${jobStartedPath}.tmp" "$HOME/${jobStartedPath}") || :
+fi
 `;
 }
 
@@ -160,6 +184,9 @@ function Refuse([string]$reason) {
 try {
   $policy = ConvertFrom-StringData (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'policy') -Raw)
   if ($env:GITHUB_REPOSITORY_ID -cne $policy.repositoryId) { Refuse 'repository id mismatch' }
+  if ($policy.cacheRunId) {
+    if ($env:GITHUB_RUN_ID -cne $policy.cacheRunId -or $env:GITHUB_RUN_ATTEMPT -cne $policy.cacheRunAttempt) { Refuse 'cache run mismatch' }
+  }
   if ($policy.approval -eq 'required') {
     if (!$policy.runId -or !$policy.runAttempt -or $env:GITHUB_RUN_ID -cne $policy.runId -or $env:GITHUB_RUN_ATTEMPT -cne $policy.runAttempt) { Refuse 'run approval mismatch' }
   }
@@ -175,5 +202,10 @@ try {
     if ($allowed -cnotcontains [string]$sender.id) { Refuse 'triggering actor not allowed' }
   }
 } catch { Refuse 'policy verification failed' }
+try {
+  $started = Join-Path $env:USERPROFILE '${jobStartedPath}'
+  [System.IO.File]::WriteAllText("$started.tmp", [string][DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(), [System.Text.Encoding]::ASCII)
+  [System.IO.File]::Move("$started.tmp", $started)
+} catch {}
 `;
 }

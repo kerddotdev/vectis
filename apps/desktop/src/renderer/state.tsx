@@ -3,11 +3,13 @@ import { createContext, useContext, useEffect, useRef, useState, type ReactNode 
 import { Schema } from "effect";
 import {
   commandActivity,
+  ActivityDetail,
   Operation,
   Snapshot,
   type Command,
 } from "../../../../packages/protocol/src/index.js";
 import type { DesktopAction } from "../bridge.js";
+import { mergeActivityDetail } from "@/lib/activity-detail";
 import { activityTitle, openActivity } from "@/lib/activities";
 import { notify } from "@/lib/notify";
 import { commandLabels, settingLabels } from "@/lib/operations";
@@ -33,6 +35,7 @@ export async function readJobLogs(input: JobLogRequest, machineId?: string) {
 // Reads never change anything, so they never need the views to look again.
 const reads: ReadonlySet<DesktopAction> = new Set([
   "status",
+  "activity",
   "notifications.get",
   "jobs",
   "job.logs",
@@ -93,7 +96,14 @@ export function StateProvider({ children }: { children: ReactNode }) {
           const value = Schema.decodeUnknownSync(Snapshot)(
             await request("status", undefined, machineId),
           );
-          if (!stopped) setSnapshot(value);
+          const route = new URL(window.location.hash.slice(1), "http://localhost");
+          const id = route.pathname === "/activities" ? route.searchParams.get("id") : null;
+          const detail = id
+            ? await request("activity", id, machineId)
+                .then((reply) => Schema.decodeUnknownSync(ActivityDetail)(reply))
+                .catch(() => undefined)
+            : undefined;
+          if (!stopped) setSnapshot(detail ? mergeActivityDetail(value, detail) : value);
         } catch {
           if (!stopped) setSnapshot(null);
         }
@@ -113,11 +123,13 @@ export function StateProvider({ children }: { children: ReactNode }) {
       if (document.visibilityState === "visible") void refresh();
     };
     document.addEventListener("visibilitychange", wake);
+    window.addEventListener("hashchange", wake);
     void refresh();
     return () => {
       stopped = true;
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", wake);
+      window.removeEventListener("hashchange", wake);
     };
   }, [machineId]);
   useEffect(() => {
@@ -210,4 +222,28 @@ export function useStateApi() {
   const state = useContext(State);
   if (!state) throw new Error("Missing desktop state.");
   return state;
+}
+
+export function useActivityDetail(id: string, open: boolean) {
+  const { snapshot, machineId } = useStateApi();
+  const [detail, setDetail] = useState<{ machineId: string | undefined; value: ActivityDetail }>();
+  const revision = snapshot?.revision;
+  useEffect(() => {
+    if (!open) return;
+    let stopped = false;
+    void request("activity", id, machineId)
+      .then((reply) => {
+        const value = Schema.decodeUnknownSync(ActivityDetail)(reply);
+        if (!stopped) setDetail({ machineId, value });
+      })
+      .catch(() => {
+        if (!stopped) setDetail(undefined);
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [id, open, machineId, revision]);
+  return detail?.machineId === machineId && detail?.value.activity.id === id
+    ? detail.value
+    : undefined;
 }

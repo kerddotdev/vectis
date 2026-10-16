@@ -1,21 +1,28 @@
+vi.mock("./resource-probe.js", () => ({
+  resourceProbe: () => ({ footprintsMiB: new Map(), pressure: "normal", pressureKnown: true }),
+}));
+
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { startService } from "./http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { Snapshot, VectisError } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
+import { activityFor } from "./activities.js";
+import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
+import type { StoreOptions } from "./store.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const close of cleanup.reverse()) await close();
   cleanup.length = 0;
 });
-async function fixture() {
+async function fixture(options: StoreOptions = {}) {
   const home = await mkdtemp(join(tmpdir(), "vectis-test-"));
   cleanup.push(() => rm(home, { recursive: true, force: true }));
-  const server = await startService({ home });
+  const server = await startService({ home, ...options });
   cleanup.push(server.close);
   return { home, server, client: new VectisClient(server.connection) };
 }
@@ -27,6 +34,108 @@ test("an unpaired status snapshot decodes with a stable revision and no reposito
   expect(snapshot.revision).toBe(server.service.snapshot().revision);
   expect(snapshot).not.toHaveProperty("repositories");
   expect((await client.status()).revision).toBe(snapshot.revision);
+});
+
+test("snapshot, activity and operation reads preserve runner phase timestamps", async () => {
+  const { client, server } = await fixture();
+  const command = { type: "runner.run", bindingId: "binding" } as const;
+  const operation = server.store.accept(
+    "runner",
+    "runner",
+    command.type,
+    activityFor("runner", command),
+    "runner",
+  ).operation;
+  const result: RunnerProgress = {
+    bindingId: "binding",
+    environmentId: "linux",
+    leaseKey: operation.id,
+    stage: "finished",
+    cache: { attached: true, writeBack: "granted", promoted: true },
+    phases: [{ name: "vm_start", startedAt: operation.createdAt, endedAt: operation.createdAt }],
+  };
+  server.store.update(operation, { status: "succeeded", result });
+  expect(
+    (await client.status()).operations.find((item) => item.id === operation.id)?.result,
+  ).toEqual(result);
+  expect((await client.operation(operation.id)).result).toEqual(result);
+  expect((await client.activity("runner")).operations[0]?.result).toEqual(result);
+});
+
+test("individual operations, keys and activities remain readable outside the status window", async () => {
+  const { client, server } = await fixture({
+    snapshotLimits: { operations: 3, activities: 3, stoppedInstances: 2 },
+  });
+  const command = { type: "runner.run", bindingId: "binding" } as const;
+  const id = "old-operation";
+  const key = "request:/with spaces?&=value";
+  const operation = server.store.accept(
+    key,
+    key,
+    command.type,
+    activityFor(id, command),
+    id,
+  ).operation;
+  const result: RunnerProgress = {
+    bindingId: "binding",
+    environmentId: "linux",
+    leaseKey: id,
+    stage: "finished",
+    phases: [{ name: "vm_start", startedAt: operation.createdAt, endedAt: operation.createdAt }],
+  };
+  server.store.put("operation", id, {
+    ...operation,
+    status: "succeeded",
+    updatedAt: "2020-01-01T00:00:00Z",
+    result,
+  });
+  for (let index = 0; index < 3; index++) {
+    const recentId = `recent-${index}`;
+    const recentCommand = { type: "job.scan", bindingId: "binding" } as const;
+    const recent = server.store.accept(
+      recentId,
+      recentId,
+      recentCommand.type,
+      activityFor(recentId, recentCommand),
+      recentId,
+    ).operation;
+    server.store.update(recent, { status: "succeeded" });
+  }
+  const status = await client.status();
+  expect(status.operations).toHaveLength(3);
+  expect(status.activities).toHaveLength(3);
+  expect(status.operations.some((item) => item.id === id)).toBe(false);
+  expect(status.activities?.some((item) => item.id === id)).toBe(false);
+  const snapshot = vi.spyOn(server.service, "snapshot").mockImplementation(() => {
+    throw new Error("Targeted reads must not use status");
+  });
+  const revision = server.store.snapshot().revision;
+  expect(await client.operation(id)).toMatchObject({ id, key, status: "succeeded", result });
+  expect(await client.operationByKey(key)).toEqual(await client.operation(id));
+  expect(await client.activity(id)).toMatchObject({
+    activity: { id, status: "succeeded" },
+    operations: [{ id, result }],
+  });
+  expect((await client.activities()).map((activity) => activity.id)).toContain(id);
+  for (const path of [
+    "/v1/operations/unknown",
+    "/v1/operations?key=unknown",
+    "/v1/activities/unknown",
+  ]) {
+    expect(
+      (
+        await fetch(`${server.connection.url}${path}`, {
+          headers: { Authorization: `Bearer ${server.connection.token}` },
+        })
+      ).status,
+    ).toBe(404);
+    expect((await fetch(`${server.connection.url}${path}`)).status).toBe(401);
+  }
+  await expect(client.operation("unknown")).rejects.toMatchObject({ code: "operation_missing" });
+  await expect(client.activity("unknown")).rejects.toMatchObject({ code: "activity_missing" });
+  expect(server.store.snapshot().revision).toBe(revision);
+  expect(snapshot).not.toHaveBeenCalled();
+  snapshot.mockRestore();
 });
 
 test("strict snapshot decoding accepts older services during an app update", async () => {
@@ -274,7 +383,12 @@ test("an accepted shutdown stops advertising readiness before the listener close
 
 test("machine runner limits reject invalid values and survive a service restart", async () => {
   const { home, server, client } = await fixture();
-  expect((await client.status()).runnerCapacity).toEqual({ max: 5, active: 0, available: 0 });
+  expect((await client.status()).runnerCapacity).toMatchObject({
+    max: 5,
+    active: 0,
+    available: 0,
+    environments: [],
+  });
   for (const maxRunners of [0, 17, -1, 1.5, "5"]) {
     const response = await fetch(server.connection.url + "/v1/commands", {
       method: "POST",
@@ -294,7 +408,12 @@ test("machine runner limits reject invalid values and survive a service restart"
     expect(operation.status).toBe("succeeded");
     const state = await client.status();
     expect(state.machine.maxRunners).toBe(maxRunners);
-    expect(state.runnerCapacity).toEqual({ max: maxRunners, active: 0, available: 0 });
+    expect(state.runnerCapacity).toMatchObject({
+      max: maxRunners,
+      active: 0,
+      available: 0,
+      environments: [],
+    });
     expect(state.activities).toEqual([]);
   }
   await server.close();
@@ -304,6 +423,62 @@ test("machine runner limits reject invalid values and survive a service restart"
   const state = await new VectisClient(restarted.connection).status();
   expect(state.machine.maxRunners).toBe(3);
   expect(state.runnerCapacity?.max).toBe(3);
+});
+
+test("machine memory budget validates host bounds, preserves other settings and survives restart", async () => {
+  const { home, server, client } = await fixture();
+  const hostMemoryMiB = Math.floor(totalmem() / 1024 ** 2);
+  for (const memoryBudgetMiB of [0, 2047, -1, 2048.5, "8192"]) {
+    const response = await fetch(server.connection.url + "/v1/commands", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${server.connection.token}` },
+      body: JSON.stringify({
+        key: `invalid-budget-${memoryBudgetMiB}`,
+        command: { type: "machine.configure", memoryBudgetMiB },
+      }),
+    });
+    expect(response.status).toBe(400);
+  }
+  expect(
+    await client.settle(
+      { type: "machine.configure", memoryBudgetMiB: hostMemoryMiB + 1 },
+      "too-large",
+    ),
+  ).toMatchObject({ status: "failed", result: { code: "invalid_resources" } });
+  expect(await client.settle({ type: "machine.configure" }, "empty")).toMatchObject({
+    status: "failed",
+    result: { code: "invalid_resources" },
+  });
+  for (const memoryBudgetMiB of [2048, hostMemoryMiB]) {
+    expect(
+      (
+        await client.settle(
+          { type: "machine.configure", memoryBudgetMiB },
+          `budget-${memoryBudgetMiB}`,
+        )
+      ).status,
+    ).toBe("succeeded");
+    expect((await client.status()).runnerCapacity?.budget).toMatchObject({
+      memoryBudgetMiB,
+      memoryCommittedMiB: 0,
+      pressure: "normal",
+      pressureKnown: true,
+    });
+  }
+  await client.settle({ type: "machine.configure", maxRunners: 3 }, "runners-only");
+  expect((await client.status()).machine).toMatchObject({
+    maxRunners: 3,
+    memoryBudgetMiB: hostMemoryMiB,
+  });
+  await client.settle({ type: "machine.configure", memoryBudgetMiB: 2048 }, "memory-only");
+  await server.close();
+  cleanup.pop();
+  const restarted = await startService({ home });
+  cleanup.push(restarted.close);
+  expect((await new VectisClient(restarted.connection).status()).machine).toMatchObject({
+    maxRunners: 3,
+    memoryBudgetMiB: 2048,
+  });
 });
 
 test("task failures are redacted in storage and the logs query before any display", async () => {

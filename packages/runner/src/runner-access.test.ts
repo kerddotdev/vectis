@@ -9,7 +9,9 @@ import {
   powershellJobStartedHook,
   assignmentRejectedMarker,
   assignmentRejectedPath,
-  assignmentRejectedScript,
+  runnerGateScript,
+  jobStartedMarker,
+  jobStartedPath,
 } from "./runner-access.js";
 import type { RunnerAccess } from "../../protocol/src/repository-access.js";
 import { runnerStartScript } from "./runner-release.js";
@@ -101,12 +103,22 @@ for (const shell of ["bash", "pwsh"] as const) {
           GITHUB_EVENT_PATH: eventPath,
         });
         expect(result.status, result.stdout + result.stderr).toBe(allowed ? 0 : null);
-        if (!allowed) {
+        if (allowed) {
+          const timestamp = Number(await readFile(join(home, jobStartedPath), "utf8"));
+          expect(timestamp).toBeGreaterThan(Date.now() - 10000);
+          expect(timestamp).toBeLessThanOrEqual(Date.now());
+          await expect(readFile(join(home, `${jobStartedPath}.tmp`))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
+        } else {
           expect(result.stdout).toContain("::error::Vectis refused this job:");
           expect(result.stdout).toContain(assignmentRejectedMarker);
           expect(await readFile(join(home, assignmentRejectedPath), "utf8")).toMatch(
             /mismatch|not allowed|unavailable/,
           );
+          await expect(readFile(join(home, jobStartedPath))).rejects.toMatchObject({
+            code: "ENOENT",
+          });
         }
       } finally {
         await rm(home, { recursive: true, force: true });
@@ -129,13 +141,79 @@ test("policy rendering validates integers, actor bounds and approval scope befor
   expect(() => renderRunnerPolicy({ ...restrictive, approval: "automatic" })).toThrow();
 });
 
+test.each(["1760572800123", "17605728003N"])(
+  "bash records epoch milliseconds atomically with date output %s",
+  async (dateOutput) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-access-start-"));
+    try {
+      const gate = join(home, "vectis-actions-runner/_vectis");
+      await mkdir(gate, { recursive: true });
+      await writeFile(
+        join(gate, "policy"),
+        renderRunnerPolicy({ repositoryId: 2, actors: "any", approval: "automatic" }),
+      );
+      await writeFile(join(gate, "hook.sh"), bashJobStartedHook());
+      await writeFile(join(home, "date"), `#!/bin/sh\nprintf '%s\\n' '${dateOutput}'\n`, {
+        mode: 0o700,
+      });
+      await writeFile(join(home, "perl"), "#!/bin/sh\nprintf '1760572800456\\n'\n", {
+        mode: 0o700,
+      });
+      await writeFile(
+        join(home, "mv"),
+        `#!/bin/sh
+test ! -e "$3" || exit 1
+test -f "$2" || exit 1
+exec /bin/mv "$@"
+`,
+        { mode: 0o700 },
+      );
+      const result = await runHook("bash", join(gate, "hook.sh"), {
+        ...process.env,
+        HOME: home,
+        GITHUB_REPOSITORY_ID: "2",
+        PATH: `${home}:${process.env.PATH}`,
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(await readFile(join(home, jobStartedPath), "utf8")).toBe(
+        `${dateOutput.endsWith("N") ? "1760572800456" : dateOutput}\n`,
+      );
+      await expect(readFile(join(home, `${jobStartedPath}.tmp`))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test("timestamp write failure does not refuse an allowed assignment", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-access-start-failure-"));
+  try {
+    await writeFile(
+      join(home, "policy"),
+      renderRunnerPolicy({ repositoryId: 2, actors: "any", approval: "automatic" }),
+    );
+    await writeFile(join(home, "hook.sh"), bashJobStartedHook());
+    const result = await runHook("bash", join(home, "hook.sh"), {
+      ...process.env,
+      HOME: home,
+      GITHUB_REPOSITORY_ID: "2",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).not.toContain(assignmentRejectedMarker);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("the start wrapper installs the marker directory and a refused hook never returns", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-access-wrapper-"));
   try {
-    await mkdir(join(home, "vectis-actions-runner"));
+    await mkdir(join(home, "vectis-actions-runner/bin"), { recursive: true });
     await writeFile(join(home, "event.json"), "{}");
     await writeFile(
-      join(home, "vectis-actions-runner/run.sh"),
+      join(home, "vectis-actions-runner/bin/Runner.Listener"),
       '#!/bin/bash\nbash "$ACTIONS_RUNNER_HOOK_JOB_STARTED"\nprintf step-ran\nexit 0\n',
       { mode: 0o700 },
     );
@@ -514,14 +592,14 @@ test.each(["ancestry", "marker", "policy"])(
 
 for (const os of ["linux", "macos", "windows"] as const) {
   test.skipIf(os === "windows" && !pwsh)(
-    `${os} host probe reads the fixed rejection reason`,
+    `${os} host probe reads job start and the fixed rejection reason`,
     async () => {
       const home = await mkdtemp(join(tmpdir(), "vectis-access-probe-"));
       try {
         const script = join(home, os === "windows" ? "probe.ps1" : "probe.sh");
         const executable = os === "windows" ? "pwsh" : "bash";
         const args = os === "windows" ? ["-NoProfile", "-File", script] : [script];
-        await writeFile(script, assignmentRejectedScript(os));
+        await writeFile(script, runnerGateScript(os));
         expect(
           spawnSync(executable, args, {
             env: { ...process.env, HOME: home, USERPROFILE: home },
@@ -536,9 +614,54 @@ for (const os of ["linux", "macos", "windows"] as const) {
             encoding: "utf8",
           }).stdout,
         ).toBe(`${assignmentRejectedMarker}\nactor not allowed\n`);
+        await writeFile(join(home, jobStartedPath), "1760572800123\n");
+        expect(
+          spawnSync(executable, args, {
+            env: { ...process.env, HOME: home, USERPROFILE: home },
+            encoding: "utf8",
+          }).stdout,
+        ).toBe(
+          `${jobStartedMarker}\n1760572800123\n${assignmentRejectedMarker}\nactor not allowed\n`,
+        );
       } finally {
         await rm(home, { recursive: true, force: true });
       }
     },
   );
 }
+
+test.each(["5", "6"])(
+  "automatic cache writer fences workflow run %s before any job step",
+  async (runId) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cache-hook-"));
+    try {
+      await mkdir(join(home, "vectis-actions-runner/_vectis"), { recursive: true });
+      const path = join(home, "job-started.sh");
+      await writeFile(
+        join(home, "policy"),
+        renderRunnerPolicy({
+          repositoryId: 2,
+          actors: "any",
+          approval: "automatic",
+          cacheRun: { runId: 5, runAttempt: 1 },
+        }),
+      );
+      await writeFile(path, bashJobStartedHook());
+      const result = await runHook("bash", path, {
+        ...process.env,
+        HOME: home,
+        ...env,
+        GITHUB_RUN_ID: runId,
+      });
+      if (runId === "5") expect(result.status).toBe(0);
+      else {
+        expect(result.stdout).toContain(assignmentRejectedMarker);
+        expect(await readFile(join(home, assignmentRejectedPath), "utf8")).toBe(
+          "cache run mismatch\n",
+        );
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

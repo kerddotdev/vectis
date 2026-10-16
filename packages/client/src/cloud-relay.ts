@@ -1,6 +1,7 @@
+import { ScaleSetGrant, type CapacityMode } from "../../protocol/src/scale-sets.js";
 import { RunControlOutcome, type RunControlCommand } from "../../protocol/src/runs.js";
 import { ConvexError } from "convex/values";
-import type { FunctionReturnType } from "convex/server";
+import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import { isDeepStrictEqual } from "node:util";
 import { environmentRevision } from "./environment-revision.js";
 import {
@@ -43,11 +44,37 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
           error instanceof ConvexError &&
           Schema.is(
             Schema.Struct({
+              code: Schema.String,
+              message: Schema.optional(Schema.String),
+              nextStep: Schema.optional(Schema.String),
+              status: Schema.optional(Schema.Number),
+            }),
+          )(error.data) &&
+          error.data.code.startsWith("scale_set_")
+        ) {
+          const code =
+            error.data.code === "scale_set_unavailable" &&
+            [401, 403].includes(error.data.status ?? 0)
+              ? "scale_set_auth_failed"
+              : error.data.code;
+          reject(
+            new VectisError(
+              code,
+              error.data.message ?? "Scale set control was refused.",
+              error.data.nextStep,
+            ),
+          );
+        } else if (
+          error instanceof ConvexError &&
+          Schema.is(
+            Schema.Struct({
               code: Schema.Literals([
                 "public_runner_approval_required",
                 "private_runner_approval_required",
                 "repository_admin_required",
                 "github_app_not_installed",
+                "github_unavailable",
+                "github_rate_limited",
                 "machine_revoked",
                 "cloud_unconfigured",
                 "cloud_unavailable",
@@ -123,6 +150,17 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
   });
 }
 
+function decodeScaleSetGrant(value: unknown) {
+  try {
+    return Schema.decodeUnknownSync(ScaleSetGrant)(value);
+  } catch {
+    throw new VectisError(
+      "scale_set_protocol_invalid",
+      "The cloud returned an invalid scale set grant.",
+    );
+  }
+}
+
 const removalCodes = ["machine_rejected", "machine_revoked"];
 type JobMarker = { value: FunctionReturnType<typeof api.jobs.latest> };
 
@@ -146,6 +184,10 @@ export function startCloudRelay(
   let tokenRequest: Promise<string | null> | undefined;
   let lastHeartbeat = 0;
   let lastRunnerSlots: number | undefined;
+  let lastEnvironmentSlots: string | undefined;
+  let lastEnvironments: FunctionArgs<typeof api.machines.heartbeat>["environments"];
+  let lastEnvironmentInventory: string | undefined;
+  let pendingHeartbeat: Promise<void> | undefined;
   let rerun = false;
   let removed = false;
   let interval: ReturnType<typeof setInterval> | undefined;
@@ -201,7 +243,8 @@ export function startCloudRelay(
       },
     );
   };
-  async function reconcile() {
+  async function sendHeartbeat() {
+    requireConnection();
     if (!verified) {
       const identity = await interruptible(cloud.query(api.machines.self, {}), abort.signal);
       verified = identity.id === connection.machineId && identity.localId === connection.localId;
@@ -213,11 +256,37 @@ export function startCloudRelay(
         "This credential belongs to another local machine.",
       );
     const runnerSlots = snapshot.runnerCapacity?.available;
-    if (Date.now() - lastHeartbeat >= 30000 || runnerSlots !== lastRunnerSlots) {
+    const environmentSlots = snapshot.runnerCapacity?.environments?.slice(0, 100);
+    const environmentSlotsKey = JSON.stringify(environmentSlots);
+    const environments = await Promise.all(
+      snapshot.environments.slice(0, 100).map(async (environment) => {
+        const { id, name, os, cpu, memoryMiB, state } = environment;
+        const revision = await environmentRevision(environment);
+        return {
+          id,
+          name,
+          os,
+          cpu,
+          memoryMiB,
+          state: revision ? state : ("action_required" as const),
+          ...(revision ? { revision } : {}),
+        };
+      }),
+    );
+    environments.sort((left, right) => left.id.localeCompare(right.id));
+    const environmentInventoryKey = JSON.stringify(environments);
+    requireConnection();
+    if (
+      Date.now() - lastHeartbeat >= 30000 ||
+      runnerSlots !== lastRunnerSlots ||
+      environmentSlotsKey !== lastEnvironmentSlots ||
+      environmentInventoryKey !== lastEnvironmentInventory
+    ) {
       await interruptible(
         cloud.mutation(api.machines.heartbeat, {
           paused: snapshot.machine.paused,
           ...(runnerSlots === undefined ? {} : { runnerSlots }),
+          ...(environmentSlots === undefined ? {} : { environmentSlots }),
           runnerIdle:
             snapshot.preparationBusy !== true &&
             snapshot.instances.every((instance) => instance.status === "stopped") &&
@@ -235,27 +304,25 @@ export function startCloudRelay(
                   ].includes(operation.command) &&
                   ["accepted", "running"].includes(operation.status),
             ),
-          environments: await Promise.all(
-            snapshot.environments.slice(0, 100).map(async (environment) => {
-              const { id, name, os, cpu, memoryMiB, state } = environment;
-              const revision = await environmentRevision(environment);
-              return {
-                id,
-                name,
-                os,
-                cpu,
-                memoryMiB,
-                state: revision ? state : ("action_required" as const),
-                ...(revision ? { revision } : {}),
-              };
-            }),
-          ),
+          environments,
         }),
         abort.signal,
       );
       lastHeartbeat = Date.now();
       lastRunnerSlots = runnerSlots;
+      lastEnvironmentSlots = environmentSlotsKey;
+      lastEnvironments = environments;
+      lastEnvironmentInventory = environmentInventoryKey;
     }
+  }
+  function refreshHeartbeat() {
+    pendingHeartbeat ??= sendHeartbeat().finally(() => {
+      pendingHeartbeat = undefined;
+    });
+    return pendingHeartbeat;
+  }
+  async function reconcile() {
+    await refreshHeartbeat();
     const operations = await interruptible(cloud.query(api.operations.pending, {}), abort.signal);
     for (const operation of operations)
       await advanceRemoteOperation(
@@ -367,7 +434,7 @@ export function startCloudRelay(
   interval = setInterval(tick, 2000);
   authenticate();
   function requireConnection() {
-    if (!authenticated || abort.signal.aborted)
+    if (!authenticated || abort.signal.aborted || removed)
       throw new VectisError(
         "cloud_unavailable",
         "The machine cloud connection is unavailable.",
@@ -428,7 +495,7 @@ export function startCloudRelay(
       return Schema.decodeUnknownSync(CloudRepositoryReadiness)(
         await interruptible(
           cloud.action(api.githubRepositories.readiness, { input }),
-          AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]),
+          AbortSignal.any([abort.signal, AbortSignal.timeout(180000)]),
         ),
       );
     },
@@ -442,6 +509,15 @@ export function startCloudRelay(
     async connectRepository(input: RepositoryConnection, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();
+      const heartbeatSignal = AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]);
+      const reported = () => lastEnvironments?.some(({ id }) => id === input.environmentId);
+      if (!reported()) {
+        if (pendingHeartbeat) await interruptible(pendingHeartbeat, heartbeatSignal);
+        heartbeatSignal.throwIfAborted();
+        if (!reported()) await interruptible(refreshHeartbeat(), heartbeatSignal);
+      }
+      heartbeatSignal.throwIfAborted();
+      requireConnection();
       return interruptible(
         cloud.action(api.githubRepositories.connectMachine, {
           accountId: input.accountId,
@@ -451,7 +527,7 @@ export function startCloudRelay(
             ? {}
             : { repositoryOwner: input.repositoryOwner }),
         }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       ).catch((error: unknown) => {
         if (error instanceof VectisError) throw error;
         throw new VectisError(
@@ -475,6 +551,44 @@ export function startCloudRelay(
         AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
       );
     },
+    async setCapacityMode(bindingId: string, capacityMode: CapacityMode) {
+      requireConnection();
+      await interruptible(
+        cloud.mutation(api.repositoryBindings.setCapacityModeForMachine, {
+          bindingId,
+          capacityMode,
+        }),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
+    async openScaleSet(bindingId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      return decodeScaleSetGrant(
+        await interruptible(
+          cloud.action(api.githubScaleSets.open, { bindingId }),
+          AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+        ),
+      );
+    },
+    async refreshScaleSet(bindingId: string, generation: number, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      return decodeScaleSetGrant(
+        await interruptible(
+          cloud.action(api.githubScaleSets.refresh, { bindingId, generation }),
+          AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+        ),
+      );
+    },
+    async closeScaleSet(bindingId: string, generation: number, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      await interruptible(
+        cloud.action(api.githubScaleSets.close, { bindingId, generation }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
     async controlRun(command: RunControlCommand, key: string, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();
@@ -483,6 +597,13 @@ export function startCloudRelay(
         AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
       return Schema.decodeUnknownSync(RunControlOutcome)(result);
+    },
+    async setCacheVolume(bindingId: string, cacheVolume: { enabled: boolean; sizeGiB?: number }) {
+      requireConnection();
+      await interruptible(
+        cloud.mutation(api.repositoryBindings.setCacheVolume, { bindingId, ...cacheVolume }),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
     },
     async setAccess(bindingId: string, access: RepositoryAccess) {
       requireConnection();
@@ -509,7 +630,7 @@ export function startCloudRelay(
       requireConnection();
       const result = await interruptible(
         cloud.action(api.githubJobs.refresh, { bindingId, jobId }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
       return Schema.decodeUnknownSync(JobRefresh)(result);
     },
@@ -592,13 +713,13 @@ export function startCloudRelay(
       bindingId: string,
       key: string,
       signal: AbortSignal,
-      request?: { jobId?: number; automatic?: boolean },
+      request?: Parameters<RunnerBroker["prepareRunner"]>[3],
     ) {
       signal.throwIfAborted();
       requireConnection();
       const value = await interruptible(
         cloud.action(api.githubRunners.prepare, { bindingId, key, ...request }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
       return Schema.decodeUnknownSync(RunnerGrant)(value);
     },
@@ -607,7 +728,7 @@ export function startCloudRelay(
       requireConnection();
       const value = await interruptible(
         cloud.action(api.githubRunners.status, { id: leaseId }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
       return Schema.decodeUnknownSync(RunnerStatus)(value);
     },
@@ -616,7 +737,7 @@ export function startCloudRelay(
       requireConnection();
       await interruptible(
         cloud.action(api.githubRunners.release, { id }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
     },
     async repositories() {
@@ -641,6 +762,7 @@ export function startCloudRelay(
     },
     async close() {
       const pendingToken = tokenRequest;
+      const heartbeat = pendingHeartbeat;
       abort.abort();
       if (interval) clearInterval(interval);
       unsubscribe();
@@ -655,6 +777,7 @@ export function startCloudRelay(
       await cloud.close();
       await pendingToken?.catch(() => {});
       await active;
+      await heartbeat?.catch(() => {});
     },
   };
 }

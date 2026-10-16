@@ -1,7 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import type { AuthTokenFetcher } from "convex/browser";
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { ConvexError } from "convex/values";
 import { afterEach, expect, test, vi } from "vitest";
@@ -9,7 +10,7 @@ import { api } from "../../../convex/_generated/api.js";
 import { Store } from "../../../apps/server/src/store.js";
 import { VectisClient } from "./index.js";
 import { startCloudRelay } from "./cloud-relay.js";
-import { VectisError } from "../../protocol/src/index.js";
+import { VectisError, type Environment } from "../../protocol/src/index.js";
 
 type Subscription = {
   name: string;
@@ -20,7 +21,7 @@ type Subscription = {
 };
 const transport = vi.hoisted(() => {
   const subscriptions: Subscription[] = [];
-  const auth: { changed?: (authenticated: boolean) => void } = {};
+  const auth: { changed?: (authenticated: boolean) => void; fetchToken?: AuthTokenFetcher } = {};
   return {
     subscriptions,
     auth,
@@ -63,7 +64,8 @@ vi.mock("convex/browser", () => ({
       connectionState: transport.connectionState,
       subscribeToConnectionState: () => transport.disconnect,
     };
-    setAuth(_fetchToken: unknown, changed: (authenticated: boolean) => void) {
+    setAuth(fetchToken: AuthTokenFetcher, changed: (authenticated: boolean) => void) {
+      transport.auth.fetchToken = fetchToken;
       transport.auth.changed = changed;
     }
   },
@@ -75,12 +77,14 @@ afterEach(async () => {
   cleanup.length = 0;
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   transport.subscriptions.length = 0;
   delete transport.auth.changed;
+  delete transport.auth.fetchToken;
 });
 
-async function fixture() {
+async function fixture(get = async (): Promise<string | null> => null) {
   const home = await mkdtemp(join(tmpdir(), "vectis-relay-"));
   cleanup.push(() => rm(home, { recursive: true, force: true }));
   const store = new Store(join(home, "state.sqlite"));
@@ -100,7 +104,7 @@ async function fixture() {
       localId: store.snapshot().machine.id,
     },
     local,
-    { get: async () => null },
+    { get },
     vi.fn(),
     () => store.touch(),
     onJobObservations,
@@ -114,6 +118,7 @@ async function fixture() {
     return found;
   };
   return {
+    home,
     relay,
     local,
     onJobObservations,
@@ -121,6 +126,38 @@ async function fixture() {
     subscription,
     repositories: subscription("repositoryBindings:forMachine"),
   };
+}
+
+async function heartbeatFixture() {
+  const context = await fixture();
+  const { home, store, local } = context;
+  const environment: Environment = {
+    id: "linux",
+    name: "Linux",
+    os: "linux",
+    basePath: join(home, "base.img"),
+    cpu: 2,
+    memoryMiB: 2048,
+    state: "ready",
+  };
+  await writeFile(environment.basePath, "synthetic image");
+  store.put("environment", environment.id, environment);
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  transport.query.mockImplementation(async (query) =>
+    getFunctionName(query) === "machines:self"
+      ? { id: "machine1", localId: store.snapshot().machine.id }
+      : [],
+  );
+  return { ...context, environment };
+}
+
+async function nextRelayTick() {
+  const reconciliations = () =>
+    transport.query.mock.calls.filter(([query]) => getFunctionName(query) === "operations:pending")
+      .length;
+  const previous = reconciliations();
+  await vi.advanceTimersByTimeAsync(2000);
+  await vi.waitFor(() => expect(reconciliations()).toBeGreaterThan(previous));
 }
 
 const binding = (id: string) => ({
@@ -141,6 +178,24 @@ const job = {
   runnerName: null,
   updatedAt: 1,
 };
+
+test("relay auth callback returns a distinct token on immediate forced refresh", async () => {
+  vi.useFakeTimers();
+  await fixture(async () => "secret");
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ token: "original", expiresAt: Date.now() + 300000 }))
+    .mockResolvedValueOnce(Response.json({ token: "original", expiresAt: Date.now() + 300000 }))
+    .mockResolvedValueOnce(Response.json({ token: "fresh", expiresAt: Date.now() + 300000 }));
+  vi.stubGlobal("fetch", request);
+  const fetchToken = transport.auth.fetchToken;
+  if (!fetchToken) throw new Error("Missing auth callback.");
+  expect(await fetchToken({ forceRefreshToken: false })).toBe("original");
+  const refreshed = fetchToken({ forceRefreshToken: true });
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(await refreshed).toBe("fresh");
+  expect(request).toHaveBeenCalledTimes(3);
+});
 
 test("repository and job changes invalidate snapshots without repeating identical updates", async () => {
   const { relay, store, repositories, subscription } = await fixture();
@@ -320,13 +375,242 @@ test("lease observations use one subscription per set and release stale callback
   expect(transport.subscriptions.filter((item) => item.name === "jobs:forLeases")).toHaveLength(3);
 });
 
+test("environment registration sends a heartbeat on the next tick without waiting for the cadence", async () => {
+  vi.useFakeTimers();
+  const { store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+  store.put("environment", "new", { ...environment, id: "new" });
+  await vi.advanceTimersByTimeAsync(2000);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(2));
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: [
+      expect.objectContaining({ id: "linux" }),
+      expect.objectContaining({ id: "new" }),
+    ],
+  });
+});
+
+test("connecting a new environment reports it before invoking the cloud action", async () => {
+  vi.useFakeTimers();
+  const { relay, store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+  store.put("environment", "new", { ...environment, id: "new" });
+  transport.action.mockImplementation(async () => {
+    expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+      environments: expect.arrayContaining([expect.objectContaining({ id: "new" })]),
+    });
+    return "binding";
+  });
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "new" },
+      new AbortController().signal,
+    ),
+  ).resolves.toBe("binding");
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+});
+
+test.each<Partial<Environment>>([
+  { name: "Renamed" },
+  { os: "windows" },
+  { cpu: 4 },
+  { memoryMiB: 4096 },
+  { state: "action_required" },
+])("reported environment changes send an early heartbeat: %j", async (change) => {
+  vi.useFakeTimers();
+  const { store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  store.put("environment", environment.id, { ...environment, ...change });
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: [expect.objectContaining({ id: environment.id, ...change })],
+  });
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+});
+
+test("image revisions, missing images and environment removal send early heartbeats", async () => {
+  vi.useFakeTimers();
+  const { store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  const first = transport.mutation.mock.calls.at(-1)?.[1];
+  await writeFile(environment.basePath, "replacement image with a different size");
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).not.toEqual(first);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: [expect.objectContaining({ state: "ready", revision: expect.any(String) })],
+  });
+  await rm(environment.basePath);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: [expect.objectContaining({ state: "action_required" })],
+  });
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).not.toHaveProperty("environments.0.revision");
+  store.remove("environment", environment.id);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(4);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({ environments: [] });
+});
+
+test("unchanged inventories, ordering and known connections add no heartbeat before the cadence", async () => {
+  vi.useFakeTimers();
+  const { relay, store, local, environment } = await heartbeatFixture();
+  store.put("environment", "second", { ...environment, id: "second" });
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  vi.mocked(local.status).mockImplementation(async () => {
+    const snapshot = store.snapshot();
+    return { ...snapshot, environments: [...snapshot.environments].reverse() };
+  });
+  await nextRelayTick();
+  await relay.connectRepository(
+    { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+    new AbortController().signal,
+  );
+  await vi.advanceTimersByTimeAsync(20000);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(6000);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(2));
+});
+
+test("concurrent connections wait for the same acknowledged inventory heartbeat", async () => {
+  vi.useFakeTimers();
+  const { relay } = await heartbeatFixture();
+  let finishHeartbeat: () => void = () => {};
+  const heartbeat = new Promise<void>((resolve) => {
+    finishHeartbeat = resolve;
+  });
+  transport.mutation.mockReturnValueOnce(heartbeat);
+  transport.auth.changed?.(true);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+  const connect = () =>
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      new AbortController().signal,
+    );
+  const first = connect();
+  const second = connect();
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.action).not.toHaveBeenCalled();
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  finishHeartbeat();
+  await expect(Promise.all([first, second])).resolves.toEqual(["binding", "binding"]);
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+});
+
+test("a connection refreshes once after an in-flight heartbeat with an older inventory", async () => {
+  vi.useFakeTimers();
+  const { relay, store, environment } = await heartbeatFixture();
+  let finishHeartbeat: () => void = () => {};
+  const heartbeat = new Promise<void>((resolve) => {
+    finishHeartbeat = resolve;
+  });
+  transport.mutation.mockReturnValueOnce(heartbeat);
+  transport.auth.changed?.(true);
+  await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+  store.put("environment", "new", { ...environment, id: "new" });
+  const connection = relay.connectRepository(
+    { accountId: "account", repositoryName: "repo", environmentId: "new" },
+    new AbortController().signal,
+  );
+  expect(transport.action).not.toHaveBeenCalled();
+  finishHeartbeat();
+  await expect(connection).resolves.toBe("binding");
+  expect(transport.mutation).toHaveBeenCalledTimes(2);
+  expect(transport.mutation.mock.calls.at(-1)?.[1]).toMatchObject({
+    environments: expect.arrayContaining([expect.objectContaining({ id: "new" })]),
+  });
+});
+
+test("failed inventory heartbeats prevent connect and are retried without marking inventory sent", async () => {
+  vi.useFakeTimers();
+  const { relay, store, environment } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  store.put("environment", "new", { ...environment, id: "new" });
+  const failure = new Error("Heartbeat unavailable");
+  transport.mutation.mockRejectedValueOnce(failure);
+  const connect = () =>
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "new" },
+      new AbortController().signal,
+    );
+  await expect(connect()).rejects.toBe(failure);
+  expect(transport.action).not.toHaveBeenCalled();
+  await expect(connect()).resolves.toBe("binding");
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  await nextRelayTick();
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+});
+
+test("an unknown environment gets one bounded inventory check without duplicate heartbeats", async () => {
+  vi.useFakeTimers();
+  const { relay, local } = await heartbeatFixture();
+  transport.auth.changed?.(true);
+  await nextRelayTick();
+  const reads = vi.mocked(local.status).mock.calls.length;
+  transport.action.mockRejectedValueOnce(new ConvexError({ code: "environment_unavailable" }));
+  await expect(
+    relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "missing" },
+      new AbortController().signal,
+    ),
+  ).rejects.toMatchObject({ code: "environment_unavailable" });
+  expect(local.status).toHaveBeenCalledTimes(reads + 1);
+  expect(transport.mutation).toHaveBeenCalledTimes(1);
+  expect(transport.action).toHaveBeenCalledOnce();
+});
+
+test.each(["cancel", "close", "timeout"])(
+  "a pending heartbeat releases the connect wait on %s without invoking the action",
+  async (reason) => {
+    vi.useFakeTimers();
+    const { relay } = await heartbeatFixture();
+    transport.mutation.mockImplementationOnce(async () => new Promise(() => {}));
+    transport.auth.changed?.(true);
+    await vi.waitFor(() => expect(transport.mutation).toHaveBeenCalledTimes(1));
+    const abort = new AbortController();
+    const timeout = new AbortController();
+    if (reason === "timeout") vi.spyOn(AbortSignal, "timeout").mockReturnValueOnce(timeout.signal);
+    const connection = relay.connectRepository(
+      { accountId: "account", repositoryName: "repo", environmentId: "linux" },
+      abort.signal,
+    );
+    const rejection = expect(connection).rejects.toThrow();
+    if (reason === "cancel") abort.abort(new Error("Stop connecting"));
+    else if (reason === "close") await relay.close();
+    else {
+      expect(AbortSignal.timeout).toHaveBeenCalledWith(10000);
+      timeout.abort(new DOMException("Heartbeat timed out", "TimeoutError"));
+    }
+    await rejection;
+    expect(transport.action).not.toHaveBeenCalled();
+    expect(transport.mutation).toHaveBeenCalledTimes(1);
+  },
+);
+
 test("slot changes send a heartbeat on the next tick without waiting for the cadence", async () => {
   vi.useFakeTimers();
   const { store, local } = await fixture();
   let available = 2;
+  let macSlots = 1;
   vi.spyOn(local, "status").mockImplementation(async () => ({
     ...store.snapshot(),
-    runnerCapacity: { max: 5, active: 1, available },
+    runnerCapacity: {
+      max: 5,
+      active: 1,
+      available,
+      environments: [{ environmentId: "mac", available: macSlots }],
+    },
   }));
   transport.query.mockImplementation(async (query) =>
     getFunctionName(query) === "machines:self"
@@ -336,19 +620,31 @@ test("slot changes send a heartbeat on the next tick without waiting for the cad
   transport.auth.changed?.(true);
   await vi.advanceTimersByTimeAsync(0);
   expect(transport.mutation).toHaveBeenCalledTimes(1);
-  expect(transport.mutation.mock.calls[0]?.[1]).toMatchObject({ runnerSlots: 2, runnerIdle: true });
+  expect(transport.mutation.mock.calls[0]?.[1]).toMatchObject({
+    runnerSlots: 2,
+    runnerIdle: true,
+    environmentSlots: [{ environmentId: "mac", available: 1 }],
+  });
   await vi.advanceTimersByTimeAsync(2000);
   expect(transport.mutation).toHaveBeenCalledTimes(1);
   available = 0;
   await vi.advanceTimersByTimeAsync(2000);
   expect(transport.mutation).toHaveBeenCalledTimes(2);
   expect(transport.mutation.mock.calls[1]?.[1]).toMatchObject({ runnerSlots: 0, runnerIdle: true });
+  macSlots = 0;
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  expect(transport.mutation.mock.calls[2]?.[1]).toMatchObject({
+    runnerSlots: 0,
+    environmentSlots: [{ environmentId: "mac", available: 0 }],
+  });
   vi.mocked(local.status).mockImplementation(async () => store.snapshot());
   await vi.advanceTimersByTimeAsync(2000);
-  expect(transport.mutation).toHaveBeenCalledTimes(3);
-  expect(transport.mutation.mock.calls[2]?.[1]).not.toHaveProperty("runnerSlots");
+  expect(transport.mutation).toHaveBeenCalledTimes(4);
+  expect(transport.mutation.mock.calls[3]?.[1]).not.toHaveProperty("runnerSlots");
+  expect(transport.mutation.mock.calls[3]?.[1]).not.toHaveProperty("environmentSlots");
   await vi.advanceTimersByTimeAsync(2000);
-  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  expect(transport.mutation).toHaveBeenCalledTimes(4);
 });
 
 test("identity is verified once per authentication, not on every tick", async () => {
@@ -502,6 +798,42 @@ test("relay shutdown interrupts runner status polling", async () => {
   await rejected;
 });
 
+test.each([
+  { type: "machine.configure", maxRunners: 8, memoryBudgetMiB: 24576 },
+  { type: "environment.configure", id: "linux", warmPool: 2 },
+])("remote $type configuration replays settings unchanged", async (command) => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  const submit = vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-settings",
+    key: "remote:settings",
+    command: command.type,
+    status: "succeeded",
+    message: "Applied",
+    createdAt: "",
+    updatedAt: "",
+  });
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [{ _id: "settings", phase: "running", commandJson: JSON.stringify(command) }];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(submit).toHaveBeenCalledWith(command, "remote:settings", expect.any(AbortSignal));
+  expect(
+    transport.mutation.mock.calls.some(
+      ([mutation, args]) =>
+        getFunctionName(mutation) === "operations:acknowledge" &&
+        args.id === "settings" &&
+        args.phase === "succeeded",
+    ),
+  ).toBe(true);
+});
+
 test("remote acknowledgements redact older hosts' task errors before truncating or sending", async () => {
   vi.useFakeTimers();
   const { store, local } = await fixture();
@@ -551,6 +883,47 @@ test("remote acknowledgements redact older hosts' task errors before truncating 
   expect(JSON.stringify(acknowledgement)).not.toContain("private local details");
 });
 
+test("remote runner failures forward the cache privilege code without private result details", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-cache",
+    key: "remote:cache",
+    command: "runner.run",
+    status: "failed",
+    message:
+      "This environment cannot mount cache volumes: the guest user has no passwordless sudo.",
+    createdAt: "",
+    updatedAt: "",
+    result: { code: "cache_volume_requires_guest_sudo", diagnostics: "private guest details" },
+  });
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [
+        {
+          _id: "cache",
+          phase: "running",
+          commandJson: JSON.stringify({ type: "runner.run", bindingId: "binding" }),
+        },
+      ];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const acknowledgement = transport.mutation.mock.calls.find(
+    ([mutation]) => getFunctionName(mutation) === "operations:acknowledge",
+  )?.[1];
+  expect(acknowledgement).toMatchObject({ phase: "failed", resultJson: expect.any(String) });
+  if (typeof acknowledgement?.resultJson !== "string") throw new Error("Missing acknowledgement");
+  expect(JSON.parse(acknowledgement.resultJson)).toMatchObject({
+    code: "cache_volume_requires_guest_sudo",
+  });
+  expect(JSON.stringify(acknowledgement)).not.toContain("private guest details");
+});
+
 test("job log relay forwards cursors to the action, decodes results and preserves coded failures", async () => {
   const { relay } = await fixture();
   const input = { bindingId: "binding1", jobId: 4, after: 10 };
@@ -590,7 +963,7 @@ test.each([
   "cloud_unconfigured",
   "cloud_unavailable",
 ])("connection relay preserves the coded %s refusal even without cloud prose", async (code) => {
-  const { relay } = await fixture();
+  const { relay } = await heartbeatFixture();
   transport.auth.changed?.(true);
   transport.action.mockRejectedValueOnce(new ConvexError({ code }));
   await expect(
@@ -614,7 +987,7 @@ test.each([
   new Error("Connection lost after submit"),
   new ConvexError({ code: "unexpected_failure" }),
 ])("an uncertain connection outcome remains unconfirmed", async (error) => {
-  const { relay } = await fixture();
+  const { relay } = await heartbeatFixture();
   transport.auth.changed?.(true);
   transport.action.mockRejectedValueOnce(error);
   await expect(
@@ -725,3 +1098,191 @@ test("runner release preserves the busy code and guidance as a VectisError", asy
   await expect(failure).rejects.toBeInstanceOf(VectisError);
   await expect(failure).rejects.toMatchObject(data);
 });
+
+test("cache settings use the authenticated binding mutation and discovery preserves the setting", async () => {
+  const { relay, repositories } = await fixture();
+  transport.auth.changed?.(true);
+  const value = {
+    ...binding("binding1"),
+    installationId: 12,
+    cacheVolume: { enabled: true, sizeGiB: 30 },
+  };
+  repositories.deliver([value]);
+  expect(relay.repositorySnapshot).toEqual([value]);
+  await relay.setCacheVolume("binding1", { enabled: true, sizeGiB: 30 });
+  expect(
+    transport.mutation.mock.calls.some(
+      ([mutation, args]) =>
+        getFunctionName(mutation) === "repositoryBindings:setCacheVolume" &&
+        isDeepStrictEqual(args, { bindingId: "binding1", enabled: true, sizeGiB: 30 }),
+    ),
+  ).toBe(true);
+});
+
+test("scale set relay decodes grants, forwards generation and keeps credentials out of results on close", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  const grant = {
+    bindingId: "binding1",
+    generation: 3,
+    scaleSetId: 42,
+    scaleSetName: "vectis-linux",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    messageQueueUrl: "https://queue.test/messages",
+    messageQueueAccessToken: "queue-token",
+  };
+  const signal = new AbortController().signal;
+  transport.action
+    .mockResolvedValueOnce(grant)
+    .mockResolvedValueOnce({ ...grant, messageQueueAccessToken: "refreshed" })
+    .mockResolvedValueOnce(null);
+  expect(await relay.openScaleSet("binding1", signal)).toEqual(grant);
+  expect(await relay.refreshScaleSet("binding1", 3, signal)).toMatchObject({
+    messageQueueAccessToken: "refreshed",
+  });
+  expect(await relay.closeScaleSet("binding1", 3, signal)).toBeUndefined();
+  expect(
+    transport.action.mock.calls.map(([action, args]) => [getFunctionName(action), args]),
+  ).toEqual([
+    ["githubScaleSets:open", { bindingId: "binding1" }],
+    ["githubScaleSets:refresh", { bindingId: "binding1", generation: 3 }],
+    ["githubScaleSets:close", { bindingId: "binding1", generation: 3 }],
+  ]);
+  transport.action.mockResolvedValueOnce({ ...grant, generation: "invalid" });
+  await expect(relay.openScaleSet("binding1", signal)).rejects.toThrow();
+});
+
+test.each([
+  "scale_set_session_conflict",
+  "scale_set_policy_unsupported",
+  "scale_set_superseded",
+  "scale_set_identity_conflict",
+])("scale set relay maps code-only %s errors", async (code) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(new ConvexError({ code }));
+  await expect(relay.openScaleSet("binding1", new AbortController().signal)).rejects.toBeInstanceOf(
+    VectisError,
+  );
+  transport.action.mockRejectedValueOnce(new ConvexError({ code }));
+  await expect(
+    relay.refreshScaleSet("binding1", 1, new AbortController().signal),
+  ).rejects.toMatchObject({ code });
+});
+
+test("scale set relay distinguishes cloud authorization failures and bounds interrupted waits", async () => {
+  const { relay } = await fixture();
+  await expect(relay.openScaleSet("binding1", new AbortController().signal)).rejects.toMatchObject({
+    code: "cloud_unavailable",
+  });
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(
+    new ConvexError({ code: "scale_set_unavailable", status: 401 }),
+  );
+  await expect(relay.openScaleSet("binding1", new AbortController().signal)).rejects.toMatchObject({
+    code: "scale_set_auth_failed",
+  });
+  transport.action.mockImplementationOnce(async () => new Promise(() => {}));
+  const abort = new AbortController();
+  const rejected = expect(relay.openScaleSet("binding1", abort.signal)).rejects.toThrow(
+    "Stop scale set open",
+  );
+  abort.abort(new Error("Stop scale set open"));
+  await rejected;
+});
+
+test("capacity mode relay uses the machine-authorized mutation and runner registration forwards scaleSet", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  await relay.setCapacityMode("binding1", "scale_set");
+  expect(transport.mutation.mock.calls.map(([ref, args]) => [getFunctionName(ref), args])).toEqual([
+    [
+      "repositoryBindings:setCapacityModeForMachine",
+      { bindingId: "binding1", capacityMode: "scale_set" },
+    ],
+  ]);
+  const grant = { state: "pending", id: "lease1" };
+  transport.action.mockResolvedValueOnce(grant);
+  expect(
+    await relay.prepareRunner("binding1", "runner-key", new AbortController().signal, {
+      automatic: true,
+      scaleSet: { generation: 3 },
+    }),
+  ).toEqual(grant);
+  expect(transport.action.mock.calls.map(([ref, args]) => [getFunctionName(ref), args])).toEqual([
+    [
+      "githubRunners:prepare",
+      { bindingId: "binding1", key: "runner-key", automatic: true, scaleSet: { generation: 3 } },
+    ],
+  ]);
+});
+
+test("remote replay carries capacity mode through the same idempotent local command path", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  const command = {
+    type: "repository.capacity-mode",
+    bindingId: "binding1",
+    mode: "scale_set",
+  } as const;
+  const submit = vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-operation",
+    key: "remote:remote-operation",
+    command: command.type,
+    status: "succeeded",
+    message: "Changed.",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [{ _id: "remote-operation", phase: "running", commandJson: JSON.stringify(command) }];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(submit).toHaveBeenCalledWith(command, "remote:remote-operation", expect.any(AbortSignal));
+  expect(
+    transport.mutation.mock.calls
+      .filter(([ref]) => getFunctionName(ref) === "operations:acknowledge")
+      .map((call) => call[1]),
+  ).toMatchObject([{ id: "remote-operation", phase: "succeeded" }]);
+});
+
+test.each([true, false])(
+  "runner grants preserve cache authority and denial reasons: %s",
+  async (cacheWrite) => {
+    const { relay } = await fixture();
+    transport.auth.changed?.(true);
+    const grant = {
+      state: "ready",
+      id: "lease1",
+      runnerId: 3,
+      encodedConfig: "c2VjcmV0",
+      environmentId: "linux",
+      os: "linux",
+      cacheWrite,
+      ...(cacheWrite ? {} : { cacheWriteReason: "metadata_access_denied" }),
+      access: {
+        repositoryId: 1,
+        actors: "any",
+        approval: "automatic",
+        ...(cacheWrite ? { cacheRun: { runId: 5, runAttempt: 1 } } : {}),
+      },
+    };
+    transport.action.mockResolvedValueOnce(grant);
+    expect(
+      await relay.prepareRunner("binding1", "cache-job", new AbortController().signal, {
+        jobId: 9,
+      }),
+    ).toEqual(grant);
+    expect(transport.action.mock.calls.at(-1)?.[1]).toEqual({
+      bindingId: "binding1",
+      key: "cache-job",
+      jobId: 9,
+    });
+  },
+);

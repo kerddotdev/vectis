@@ -3,9 +3,12 @@ import { internalMutation, internalQuery, mutation, query } from "./_generated/s
 import type { QueryCtx, MutationCtx } from "./_generated/server.js";
 import type { Doc, Id } from "./_generated/dataModel.js";
 import { Schema } from "effect";
+import { CacheVolume, defaultCacheSizeGiB } from "../packages/protocol/src/cache-volume.js";
 import { RepositoryAccess } from "../packages/protocol/src/repository-access.js";
 import { repositoryAccess } from "./githubValidators.js";
 import { human, machine } from "./auth.js";
+import { scheduleScaleSetCleanup } from "./runnerScaleSets.js";
+import { assertScaleSetPolicy } from "./scaleSetPolicy.js";
 import { workflowLabel } from "../packages/github/src/runner-labels.js";
 
 const authority = {
@@ -70,6 +73,8 @@ async function saveBinding(ctx: MutationCtx, args: ObjectType<typeof bindingFiel
   const record = { ...args, enabled: true, verifiedAt: Date.now() };
   if (existing) {
     if (existing.owner !== args.owner) throw new ConvexError({ code: "repository_access_denied" });
+    if (existing.installationId !== args.installationId || existing.accountId !== args.accountId)
+      await scheduleScaleSetCleanup(ctx, existing._id);
     await ctx.db.patch("repositoryBindings", existing._id, record);
     return existing._id;
   }
@@ -111,10 +116,13 @@ export const forMachine = query({
         visible.push({
           id: binding._id,
           repositoryId: binding.repositoryId,
+          installationId: binding.installationId,
+          ...(binding.cacheVolume ? { cacheVolume: binding.cacheVolume } : {}),
           repositoryName: `${binding.repositoryOwner ?? account.login}/${binding.repositoryName}`,
           environmentId: binding.environmentId,
           runsOn: workflowLabel(binding.environmentId),
           automatic: binding.automatic ?? false,
+          capacityMode: binding.capacityMode ?? "demand",
           ...(binding.access ? { access: binding.access } : {}),
         });
     }
@@ -128,6 +136,7 @@ export const disable = mutation({
     const record = await ctx.db.get("repositoryBindings", args.id);
     if (!record || record.owner !== owner) throw new ConvexError({ code: "binding_missing" });
     await ctx.db.patch("repositoryBindings", args.id, { enabled: false, automatic: false });
+    await scheduleScaleSetCleanup(ctx, record._id);
   },
 });
 
@@ -148,6 +157,32 @@ export const setAutomatic = mutation({
     if (account?.owner !== target.owner)
       throw new ConvexError({ code: "repository_access_denied" });
     await ctx.db.patch("repositoryBindings", binding._id, { automatic: args.enabled });
+  },
+});
+
+export const setCacheVolume = mutation({
+  args: { bindingId: v.string(), enabled: v.boolean(), sizeGiB: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const target = await machine(ctx);
+    const id = ctx.db.normalizeId("repositoryBindings", args.bindingId);
+    const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
+    if (
+      !binding ||
+      !binding.enabled ||
+      binding.machineId !== target._id ||
+      binding.owner !== target.owner
+    )
+      throw new ConvexError({ code: "repository_access_denied" });
+    const account = await ctx.db.get("githubAccounts", binding.accountId);
+    if (account?.owner !== target.owner)
+      throw new ConvexError({ code: "repository_access_denied" });
+    const cacheVolume = {
+      enabled: args.enabled,
+      sizeGiB: args.sizeGiB ?? binding.cacheVolume?.sizeGiB ?? defaultCacheSizeGiB,
+    };
+    if (!Schema.is(CacheVolume)(cacheVolume))
+      throw new ConvexError({ code: "invalid_cache_volume" });
+    await ctx.db.patch("repositoryBindings", binding._id, { cacheVolume });
   },
 });
 
@@ -179,6 +214,7 @@ export const setAccess = mutation({
           ? ("any" as const)
           : { ids: [...new Set(policy.value.actors.ids)] },
     };
+    if (binding.capacityMode === "scale_set") assertScaleSetPolicy(access);
     await ctx.db.patch("repositoryBindings", binding._id, { access });
   },
 });
@@ -236,6 +272,7 @@ export const disconnectForMachine = mutation({
     if (!binding || binding.machineId !== target._id || binding.owner !== target.owner)
       throw new ConvexError({ code: "repository_access_denied" });
     await ctx.db.patch("repositoryBindings", binding._id, { enabled: false, automatic: false });
+    await scheduleScaleSetCleanup(ctx, binding._id);
   },
 });
 
@@ -304,6 +341,7 @@ export const readinessAuthority = internalQuery({
             automatic: binding.automatic ?? false,
             repositoryId: binding.repositoryId,
             installationId: binding.installationId,
+            cacheVolumeEnabled: binding.cacheVolume?.enabled ?? false,
           }
         : null,
       accounts: (binding ? (bindingAccount ? [bindingAccount] : []) : accounts).map(
@@ -314,5 +352,30 @@ export const readinessAuthority = internalQuery({
       ),
       app: app ? { appId: app.appId, clientId: app.clientId, privateKey: app.privateKey } : null,
     };
+  },
+});
+
+export const setCapacityModeForMachine = mutation({
+  args: {
+    bindingId: v.string(),
+    capacityMode: v.union(v.literal("demand"), v.literal("scale_set")),
+  },
+  handler: async (ctx, args) => {
+    const target = await machine(ctx);
+    const id = ctx.db.normalizeId("repositoryBindings", args.bindingId);
+    const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
+    if (
+      !binding ||
+      !binding.enabled ||
+      binding.machineId !== target._id ||
+      binding.owner !== target.owner
+    )
+      throw new ConvexError({ code: "repository_access_denied" });
+    const account = await ctx.db.get("githubAccounts", binding.accountId);
+    if (account?.owner !== target.owner)
+      throw new ConvexError({ code: "repository_access_denied" });
+    if (args.capacityMode === "scale_set") assertScaleSetPolicy(binding.access);
+    await ctx.db.patch("repositoryBindings", binding._id, { capacityMode: args.capacityMode });
+    if (args.capacityMode === "demand") await scheduleScaleSetCleanup(ctx, binding._id);
   },
 });

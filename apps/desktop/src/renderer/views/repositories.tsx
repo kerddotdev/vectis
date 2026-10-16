@@ -32,6 +32,7 @@ import { readinessFailure, summarizeReadiness } from "@/lib/readiness";
 import { request, useStateApi } from "@/state";
 import { ConnectRepository } from "./connect-repository";
 import { RepositoryAccessEditor } from "./repository-access";
+import { RepositoryCapacity } from "./repository-capacity";
 import { RepositoryJobs } from "./repository-jobs";
 
 type Binding = MachineRepositories[number];
@@ -294,6 +295,26 @@ export function Repositories() {
                           </div>
                         );
                       })}
+                    </div>
+                  </Section>
+                  <Section
+                    title="Capacity"
+                    hint={
+                      <Hint label="About capacity modes">
+                        Demand starts a runner for each queued job. Scale set registers a GitHub
+                        runner scale set for this Mac, and GitHub assigns jobs to it. Workflows stay
+                        the same. Scale sets are a GitHub preview.
+                      </Hint>
+                    }
+                  >
+                    <div className="flex flex-col divide-y divide-border rounded-xl ring-1 ring-border ring-inset">
+                      {bindings.map((binding) => (
+                        <RepositoryCapacity
+                          key={binding.id}
+                          binding={binding}
+                          repositoryName={first.repositoryName}
+                        />
+                      ))}
                     </div>
                   </Section>
                   <Section title="Access">

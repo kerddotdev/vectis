@@ -3,7 +3,7 @@ import { Schema } from "effect";
 import { redact } from "./redact.js";
 import type { FunctionArgs, FunctionReturnType } from "convex/server";
 import type { api } from "../../../convex/_generated/api.js";
-import { decodeCommand } from "../../protocol/src/index.js";
+import { decodeCommand, VectisError } from "../../protocol/src/index.js";
 import type { VectisClient } from "./index.js";
 
 export type RemoteOperation = FunctionReturnType<typeof api.operations.pending>[number];
@@ -11,7 +11,7 @@ export type Acknowledgement = FunctionArgs<typeof api.operations.acknowledge>;
 
 export async function advanceRemoteOperation(
   remote: RemoteOperation,
-  local: Pick<VectisClient, "submit" | "status">,
+  local: Pick<VectisClient, "submit" | "operationByKey">,
   acknowledge: (args: Acknowledgement) => Promise<unknown>,
   signal: AbortSignal,
 ) {
@@ -32,9 +32,10 @@ export async function advanceRemoteOperation(
   }
   if (remote.phase !== "claimed" && remote.phase !== "running") return;
   if (remote.cancelRequested) {
-    const operation = (await local.status(signal)).operations.find(
-      (item) => item.key === `remote:${remote._id}`,
-    );
+    const operation = await local.operationByKey(`remote:${remote._id}`, signal).catch((error) => {
+      if (error instanceof VectisError && error.code === "operation_missing") return undefined;
+      throw error;
+    });
     if (!operation) {
       if (remote.phase === "claimed") await acknowledge({ id: remote._id, phase: "cancelled" });
       else
@@ -80,6 +81,12 @@ export async function advanceRemoteOperation(
       operationId: operation.id,
       status: operation.status,
       message: redact(operation.message).slice(0, 1000),
+      ...(typeof operation.result === "object" &&
+      operation.result !== null &&
+      "code" in operation.result &&
+      operation.result.code === "cache_volume_requires_guest_sudo"
+        ? { code: operation.result.code }
+        : {}),
       resultAvailableLocally: operation.result !== undefined,
     }),
   });

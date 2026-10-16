@@ -3,9 +3,38 @@ import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { runnerStartScript } from "./runner-release.js";
+import { runnerStartScript, runnerVersion } from "./runner-release.js";
 
 const access = { repositoryId: 2, actors: "any", approval: "automatic" } as const;
+
+test.each(["linux", "macos"] as const)(
+  "the baked %s runner runs in the guest home while the assignment gate retains its stable private path",
+  async (os) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-baked-runner-"));
+    try {
+      const target = join(home, ".vectis-runner", runnerVersion);
+      await mkdir(join(target, "bin"), { recursive: true });
+      await writeFile(join(target, "bin/Runner.Listener"), '#!/bin/bash\nprintf "%s\\n" "$PWD"\n', {
+        mode: 0o700,
+      });
+      const result = spawnSync("bash", ["-s"], {
+        input: runnerStartScript(os, "c2VjcmV0", access, { preinstalled: true }),
+        env: { ...process.env, HOME: home },
+        encoding: "utf8",
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe(target);
+      expect((await stat(join(home, "vectis-actions-runner/_vectis/policy"))).mode & 0o777).toBe(
+        0o600,
+      );
+      await expect(stat(join(home, "vectis-actions-runner/run.sh"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
 
 test("rejects malformed JIT configuration before generating guest shell commands", () => {
   for (const config of ["", "token'; command", "$(command)", "line\nbreak", "a".repeat(60001)])
@@ -16,10 +45,17 @@ test("rejects malformed JIT configuration before generating guest shell commands
 test("jobs keep the guest umask while the assignment gate stays private", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-runner-umask-"));
   try {
-    await mkdir(join(home, "vectis-actions-runner"));
-    await writeFile(join(home, "vectis-actions-runner/run.sh"), "#!/bin/bash\numask\n", {
-      mode: 0o700,
-    });
+    await mkdir(join(home, "vectis-actions-runner/bin"), { recursive: true });
+    await mkdir(join(home, "vectis-actions-runner/_vectis"), { recursive: true });
+    await writeFile(join(home, "vectis-actions-runner/_vectis/job-started"), "1234\n");
+    await writeFile(join(home, "vectis-actions-runner/_vectis/job-started.tmp"), "1234\n");
+    await writeFile(
+      join(home, "vectis-actions-runner/bin/Runner.Listener"),
+      '#!/bin/bash\ntest ! -e "$HOME/vectis-actions-runner/_vectis/job-started" || exit 99\ntest ! -e "$HOME/vectis-actions-runner/_vectis/job-started.tmp" || exit 99\numask\n',
+      {
+        mode: 0o700,
+      },
+    );
     await writeFile(join(home, "start.sh"), runnerStartScript("linux", "c2VjcmV0", access));
     const result = spawnSync("bash", ["-c", 'umask 022; exec bash "$0"', join(home, "start.sh")], {
       env: { ...process.env, HOME: home },
@@ -33,4 +69,38 @@ test("jobs keep the guest umask while the assignment gate stays private", async 
   } finally {
     await rm(home, { recursive: true, force: true });
   }
+});
+
+test.each(["linux", "macos"] as const)(
+  "%s exposes fatal and deprecated listener exit codes without run.sh rewriting them",
+  async (os) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-runner-exit-"));
+    try {
+      const directory = join(home, "vectis-actions-runner");
+      await mkdir(join(directory, "bin"), { recursive: true });
+      await writeFile(join(directory, "run.sh"), "#!/bin/bash\nexit 0\n", { mode: 0o700 });
+      await writeFile(
+        join(directory, "bin/Runner.Listener"),
+        '#!/bin/bash\ntest "$ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE" = 1 || exit 99\nexit "$VECTIS_TEST_RUNNER_EXIT"\n',
+        { mode: 0o700 },
+      );
+      for (const code of [0, 1, 5]) {
+        const result = spawnSync("bash", ["-c", runnerStartScript(os, "c2VjcmV0", access)], {
+          env: { ...process.env, HOME: home, VECTIS_TEST_RUNNER_EXIT: String(code) },
+          encoding: "utf8",
+        });
+        expect(result.status, result.stderr).toBe(code);
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test("Windows enables deprecated-version errors and propagates the native listener exit", () => {
+  const script = runnerStartScript("windows", "c2VjcmV0", access);
+  expect(script).toContain("$env:ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE = '1'");
+  expect(script).toContain("Runner.Listener.exe run --jitconfig");
+  expect(script).toContain("$runnerExit = $LASTEXITCODE");
+  expect(script).toContain("exit $runnerExit");
 });

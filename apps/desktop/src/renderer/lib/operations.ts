@@ -1,5 +1,8 @@
+import { commandLabels as sharedCommandLabels } from "../../command-labels.js";
+
 export const preparationCommands = [
   "environment.prepare-linux",
+  "environment.provision",
   "environment.resume",
   "environment.install-macos",
   "environment.resume-macos",
@@ -19,6 +22,7 @@ export const cancellableCommands = [
   "environment.install-windows",
   "environment.resume-windows",
   "environment.prepare-linux",
+  "environment.provision",
   "environment.resume",
   "runner.run",
   "run.rerun-failed",
@@ -30,11 +34,19 @@ export const cancellableCommands = [
   "migration.publish",
   "repository.connect",
 ];
-export { commandLabels } from "../../command-labels.js";
+export const commandLabels: Record<string, string> = {
+  ...sharedCommandLabels,
+  "repository.cache": "Configure repository cache",
+  "cache.clear": "Clear repository cache",
+  "repository.capacity-mode": "Change runner capacity mode",
+};
 // A setting is confirmed after it happened, so its message is what changed, not what was asked.
 export const settingLabels: Record<string, string> = {
+  "repository.capacity-mode": "Runner capacity mode updated",
   "repository.automatic": "Automatic runners updated",
   "repository.access": "Repository access updated",
+  "repository.cache": "Repository cache updated",
+  "cache.clear": "Repository cache cleared",
   "environment.configure": "Environment updated",
   "environment.register": "Environment registered",
   "environment.remove": "Environment removed",
@@ -42,5 +54,5 @@ export const settingLabels: Record<string, string> = {
   "instance.reconcile": "VM reconciled",
   "operation.cancel": "Operation closed",
   "machine.pause": "VM intake updated",
-  "machine.configure": "Concurrent VMs updated",
+  "machine.configure": "VM capacity updated",
 };

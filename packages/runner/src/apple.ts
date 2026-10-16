@@ -1,5 +1,20 @@
 import type { ChildProcess } from "node:child_process";
 import { VectisError } from "../../protocol/src/index.js";
+import { requestVmCommand } from "./vm-command.js";
+
+export function requestAppleVmShutdown(child: ChildProcess, timeoutMs = 5000) {
+  return requestVmCommand(
+    child,
+    "shutdown\n",
+    (message) => {
+      if (!("event" in message)) return undefined;
+      if (message.event === "vm.shutdown_requested") return true;
+      if (message.event === "vm.shutdown_unavailable" || message.event === "vm.error") return false;
+      return undefined;
+    },
+    timeoutMs,
+  );
+}
 
 export function waitForAppleVm(
   child: ChildProcess,

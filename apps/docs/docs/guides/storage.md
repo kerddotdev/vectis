@@ -45,7 +45,17 @@ Override just one start without changing defaults:
 vectis environment start ubuntu --cpu 2 --memory-mib 4096 --wait --json
 ```
 
-Running instances keep the resources and location they started with. Changing a path does not move existing disks. Vectis validates the per-instance request and the combined CPU and memory reservations. Memory reservations may use at most 75 percent of host RAM; startup also checks available memory.
+Running instances keep the resources and location they started with. Changing a path does not move existing disks. CPU and memory settings are per-VM ceilings, fixed until the VM stops. Vectis allows CPU overcommit: their sum may exceed host cores, while each VM must fit the host core count. Unused guest memory is allocated lazily. For a suitable host, generous ceilings such as Linux 8 vCPUs / 12288 MiB, Windows 8 / 16384 MiB, and macOS 6 / 12288 MiB let builds grow without reserving the full ceiling at admission. A single VM ceiling still cannot exceed 75 percent of host RAM.
+
+## Shared memory budget
+
+`vectis machine configure --memory-budget-mib 36864` sets the shared admission budget, for example 36 GiB on a 48 GiB host. The allowed range is 2048 MiB to total host RAM; an unset budget defaults to 75 percent of host RAM. Combine it with `--max-runners <N>` or change either independently. These machine settings persist across service restarts and apply to local, MCP and remote commands.
+
+Admission counts every non-stopped VM at the larger of its measured process RSS and a startup floor: 2048 MiB for Linux, 4096 MiB for macOS or Windows, capped by its memory ceiling. Fresh VMs without a PID and accepted runners reserve that estimate before boot. An unavailable measurement falls back to the configured ceiling. Footprints and host pressure are cached for five seconds.
+
+A new VM starts only if its estimate fits the remaining budget and host memory pressure is normal. Warning or critical returns `memory_pressure`; insufficient budget returns `memory_budget_exceeded`, both with next steps. Unknown pressure is treated as normal and exposed as `pressureKnown: false`. Startup separately checks available host memory against the same estimate, rather than the full ceiling. Inspect `vectis status --json` for `runnerCapacity.budget` and per-environment slots.
+
+This budget gates new starts; running VMs can grow beyond it and are not stopped when it is lowered or pressure rises. Memory touched by a guest may remain allocated until the disposable VM exits. Free host memory or stop idle VMs before retrying a refused start. The two-macOS-VM limit remains unchanged.
 
 If a selected directory disappears, Vectis reports `storage_unavailable`. Reconnect the drive before retrying. It does not silently recreate a missing selected directory on the system disk. Storage is currently identified by path, so verify that the intended drive is mounted there.
 

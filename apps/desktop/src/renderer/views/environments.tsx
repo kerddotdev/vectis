@@ -15,7 +15,13 @@ import {
 } from "@/components/layout";
 import { Reason, Resources } from "@/components/hint";
 import { OsTile } from "@/components/os-icon";
-import { formatMemory } from "@/lib/format";
+import { formatDateTime, formatMemory } from "@/lib/format";
+import {
+  derivedImageDirectory,
+  isPoolInstance,
+  setupScriptLimitBytes,
+  setupScriptTooLarge,
+} from "@/lib/vm-capacity";
 import {
   canRestrictNetwork,
   initialDraft,
@@ -51,7 +57,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useStateApi } from "@/state";
-import { PrepareEnvironment, RegisterEnvironment } from "./prepare-environment";
+import { PrepareEnvironment, RegisterEnvironment, TextField } from "./prepare-environment";
 
 export function Environments() {
   const { snapshot, machineId } = useStateApi();
@@ -118,11 +124,17 @@ function EnvironmentRow({ environment }: { environment: EnvironmentView }) {
   const network = networkDisplay(environment);
   const { submit, snapshot } = useStateApi();
   const [configuring, setConfiguring] = useState(false);
-  const running = snapshot?.instances.filter(
+  const [deriving, setDeriving] = useState(false);
+  const active = (snapshot?.instances ?? []).filter(
     (instance) =>
       instance.environmentId === environment.id &&
       (instance.status === "starting" || instance.status === "running"),
-  ).length;
+  );
+  const warm = active.filter(isPoolInstance).length;
+  const running = active.length - warm;
+  const parentId = environment.image?.parentId;
+  const parentName = snapshot?.environments.find((item) => item.id === parentId)?.name;
+  const parent = parentName ?? parentId;
   return (
     <ExpandableRow
       id={environment.id}
@@ -132,6 +144,8 @@ function EnvironmentRow({ environment }: { environment: EnvironmentView }) {
         <span className="inline-flex items-center gap-3">
           <Resources cpu={environment.cpu} memoryMiB={environment.memoryMiB} />
           {!!running && <span>{running} running</span>}
+          {!!warm && <span>{warm} warm</span>}
+          {parent && <span>Derived from {parent}</span>}
         </span>
       }
       actions={
@@ -168,8 +182,15 @@ function EnvironmentRow({ environment }: { environment: EnvironmentView }) {
               <DropdownMenuItem onClick={() => setConfiguring(true)}>
                 Resources and storage…
               </DropdownMenuItem>
+              <DropdownMenuItem
+                disabled={environment.state !== "ready"}
+                onClick={() => setDeriving(true)}
+              >
+                Create derived environment…
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+          <DeriveEnvironment parent={environment} open={deriving} onOpenChange={setDeriving} />
           <ConfigureEnvironment
             environment={environment}
             open={configuring}
@@ -178,6 +199,7 @@ function EnvironmentRow({ environment }: { environment: EnvironmentView }) {
         </>
       }
     >
+      <WarmPoolField environment={environment} />
       <Details
         items={[
           ["Guest", osNames[environment.os]],
@@ -189,6 +211,25 @@ function EnvironmentRow({ environment }: { environment: EnvironmentView }) {
             environment.os === "linux" && (environment.x64 === "rosetta" ? "Rosetta on" : "Off"),
           ],
           ["Environment ID", <Mono key="id">{environment.id}</Mono>],
+          [
+            "Derived from",
+            parentId &&
+              (parentName ? (
+                <span key="parent">
+                  {parentName} <Mono>{parentId}</Mono>
+                </span>
+              ) : (
+                <Mono key="parent">{parentId}</Mono>
+              )),
+          ],
+          [
+            "Runner",
+            environment.image &&
+              (environment.image.runnerVersion
+                ? `Preinstalled, version ${environment.image.runnerVersion}`
+                : "Not preinstalled"),
+          ],
+          ["Provisioned", environment.image && formatDateTime(environment.image.provisionedAt)],
           ["Base image", <Mono key="base">{environment.basePath}</Mono>],
           [
             "VM directory",
@@ -350,5 +391,190 @@ function ConfigureEnvironment({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+const warmPoolSizes = ["0", "1", "2", "3", "4"] as const;
+
+function WarmPoolField({ environment }: { environment: EnvironmentView }) {
+  const { submit } = useStateApi();
+  const saved = environment.warmPool ?? 0;
+  const [pending, setPending] = useState<number>();
+  const ready = environment.state === "ready";
+  const change = async (warmPool: number) => {
+    setPending(warmPool);
+    await submit(
+      { type: "environment.configure", id: environment.id, warmPool },
+      warmPool
+        ? `Warm pool for ${environment.name} set to ${warmPool}`
+        : `Warm pool for ${environment.name} turned off`,
+    );
+    setPending(undefined);
+  };
+  const label = `${environment.id}-warm-pool`;
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+      <div className="min-w-0">
+        <p id={label} className="text-sm font-medium">
+          Warm pool
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          Keeps booted VMs waiting so jobs start faster. Each warm VM uses memory while idle and
+          never holds job credentials.
+        </p>
+      </div>
+      <Tabs
+        value={String(pending ?? saved)}
+        onValueChange={(value: string) => {
+          const size = Number(value);
+          if (size !== (pending ?? saved)) void change(size);
+        }}
+      >
+        <TabsList aria-labelledby={label}>
+          {warmPoolSizes.map((size) => (
+            <TabsTrigger
+              key={size}
+              value={size}
+              className="w-9 tabular-nums"
+              disabled={!ready || pending !== undefined}
+              aria-label={size === "0" ? "Off" : `${size} warm ${size === "1" ? "VM" : "VMs"}`}
+            >
+              {size === "0" ? "Off" : size}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+      </Tabs>
+    </div>
+  );
+}
+
+function DeriveEnvironment({
+  parent,
+  open,
+  onOpenChange,
+}: {
+  parent: EnvironmentView;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[calc(100vh-4rem)] overflow-y-auto sm:max-w-xl">
+        <DialogHeader>
+          <DialogTitle>Create derived environment</DialogTitle>
+          <DialogDescription>
+            Starts from a copy of {parent.name} and saves the result as a new environment.{" "}
+            {parent.name} itself does not change.
+            {parent.os === "windows" &&
+              " Windows also gets Git with GNU tar, zstd, PowerShell 7 and a Defender policy exclusion."}{" "}
+            Other VMs must be stopped while it is provisioned.
+          </DialogDescription>
+        </DialogHeader>
+        <DeriveEnvironmentForm parent={parent} onDone={() => onOpenChange(false)} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function DeriveEnvironmentForm({
+  parent,
+  onDone,
+}: {
+  parent: EnvironmentView;
+  onDone: () => void;
+}) {
+  const { submit } = useStateApi();
+  const [id, setId] = useState(`${parent.id}-custom`);
+  const [imageDirectory, setImageDirectory] = useState("");
+  const [setupScript, setSetupScript] = useState("");
+  const [runner, setRunner] = useState(true);
+  const [pending, setPending] = useState(false);
+  const tooLarge = setupScriptTooLarge(setupScript);
+  return (
+    <form
+      className="flex flex-col gap-5"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (tooLarge) return;
+        const data = new FormData(event.currentTarget);
+        const name = String(data.get("name") ?? "").trim();
+        setPending(true);
+        void submit({
+          type: "environment.provision",
+          id,
+          from: parent.id,
+          imageDirectory,
+          runner,
+          ...(name ? { name } : {}),
+          ...(setupScript.trim() ? { setupScript } : {}),
+        })
+          .then((value) => value !== undefined && onDone())
+          .finally(() => setPending(false));
+      }}
+    >
+      <fieldset disabled={pending} className="contents">
+        <FieldGroup className="gap-4">
+          <div className="grid grid-cols-2 gap-4">
+            <Field>
+              <FieldLabel htmlFor={`${parent.id}-derived-id`}>Environment ID</FieldLabel>
+              <Input
+                id={`${parent.id}-derived-id`}
+                required
+                pattern="[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}"
+                value={id}
+                onChange={(event) => setId(event.target.value)}
+              />
+            </Field>
+            <TextField label="Name" name="name" defaultValue={`${parent.name} (custom)`} required />
+          </div>
+          <PathField
+            label="Image directory"
+            chooser="chooseDirectory"
+            required
+            value={imageDirectory}
+            onChange={setImageDirectory}
+            fromChooser={(picked) => derivedImageDirectory(picked, id)}
+            description="A new folder for the image. Choosing a folder adds the environment ID as a new folder inside it."
+          />
+          <Field>
+            <FieldLabel htmlFor={`${parent.id}-setup-script`}>Setup script (optional)</FieldLabel>
+            <textarea
+              id={`${parent.id}-setup-script`}
+              value={setupScript}
+              onChange={(event) => setSetupScript(event.target.value)}
+              rows={6}
+              spellCheck={false}
+              aria-invalid={tooLarge || undefined}
+              placeholder="# Commands to run once in the guest"
+              className="min-h-24 w-full resize-y rounded-2xl border border-input bg-input/30 px-3 py-2 font-mono text-[12px] transition-colors outline-none placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-[3px] aria-invalid:ring-destructive/20"
+            />
+            <FieldDescription>
+              {tooLarge
+                ? `The script is larger than ${setupScriptLimitBytes / 1024} KiB.`
+                : `Runs once inside the guest with ${parent.os === "windows" ? "Windows PowerShell" : "bash"}. If it fails, no environment is created.`}
+            </FieldDescription>
+          </Field>
+          <Field orientation="horizontal">
+            <div className="flex flex-1 flex-col gap-1">
+              <FieldLabel htmlFor={`${parent.id}-derived-runner`}>Preinstall runner</FieldLabel>
+              <FieldDescription>
+                Installs the GitHub Actions runner version this Vectis release uses, so jobs skip
+                the download.
+              </FieldDescription>
+            </div>
+            <Switch
+              id={`${parent.id}-derived-runner`}
+              checked={runner}
+              onCheckedChange={setRunner}
+            />
+          </Field>
+        </FieldGroup>
+        <div className="flex justify-end">
+          <Button type="submit" disabled={tooLarge}>
+            Create environment
+          </Button>
+        </div>
+      </fieldset>
+    </form>
   );
 }

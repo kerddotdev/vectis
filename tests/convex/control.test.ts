@@ -27,7 +27,10 @@ beforeEach(() => {
   vi.stubEnv("CLERK_JWT_ISSUER_DOMAIN", "https://clerk.test");
   vi.stubEnv("VECTIS_MACHINE_ISSUER", "https://machines.test");
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.useRealTimers();
+});
 const identity = (subject: string) => ({
   issuer: "https://clerk.test",
   subject,
@@ -141,6 +144,54 @@ test("machine secrets are hashed and exchange for short-lived signed JWTs until 
   expect((await exchange()).status).toBe(401);
 });
 
+test("machine tokens issued in the same second have unique signed JWT IDs", async () => {
+  vi.useFakeTimers();
+  const now = Math.floor(Date.now() / 1000);
+  vi.setSystemTime(now * 1000);
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  vi.stubEnv(
+    "VECTIS_MACHINE_PRIVATE_KEY",
+    privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  );
+  const t = convexTest(schema, modules);
+  const owner = t.withIdentity(identity("owner"));
+  const machineId = await owner.mutation(api.machines.enroll, { localId: "host", name: "Host" });
+  const issue = () =>
+    t.action(internal.machineTokens.signToken, { machineId, credentialVersion: 1 });
+  const first = await issue();
+  const second = await issue();
+  expect(second.token).not.toBe(first.token);
+  const claims = [first, second].map(({ token, expiresAt }) => {
+    const [header, payload, signature] = token.split(".");
+    if (!header || !payload || !signature) throw new Error("Invalid token shape.");
+    expect(
+      verify(
+        "RSA-SHA256",
+        Buffer.from(`${header}.${payload}`),
+        createPublicKey(privateKey),
+        Buffer.from(signature, "base64url"),
+      ),
+    ).toBe(true);
+    const decoded: unknown = JSON.parse(Buffer.from(payload, "base64url").toString());
+    expect(decoded).toMatchObject({
+      iss: "https://machines.test",
+      aud: "vectis-machine",
+      sub: machineId,
+      credentialVersion: 1,
+      iat: now - 5,
+      exp: now + 300,
+      jti: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+      ),
+    });
+    expect(expiresAt).toBe((now + 300) * 1000);
+    if (!decoded || typeof decoded !== "object" || !("jti" in decoded))
+      throw new Error("Missing JWT ID.");
+    return decoded;
+  });
+  expect(claims[0]?.jti).not.toBe(claims[1]?.jti);
+});
+
 test("lost local replies and relay restart reuse the durable local operation", async () => {
   const t = convexTest(schema, modules);
   const owner = t.withIdentity(identity("relay-owner"));
@@ -176,7 +227,7 @@ test("lost local replies and relay restart reuse the durable local operation", a
       advanceRemoteOperation(
         await pending(),
         {
-          status: (...args) => local.status(...args),
+          operationByKey: (...args) => local.operationByKey(...args),
           submit: async (...args) => {
             await local.submit(...args);
             throw new Error("Connection lost after the service accepted the command.");
@@ -339,8 +390,8 @@ test.each([
   }));
   const local = {
     submit,
-    status: async () => {
-      throw new Error("Unexpected status read");
+    operationByKey: async () => {
+      throw new Error("Unexpected operation lookup");
     },
   };
   const pending = async () => {

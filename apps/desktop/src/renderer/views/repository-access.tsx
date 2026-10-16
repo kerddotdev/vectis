@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { PlusIcon, XIcon } from "lucide-react";
+import { restrictiveAccess } from "../../../../../packages/github/src/access-policy.js";
 import type { MachineRepositories } from "../../../../../packages/protocol/src/repositories.js";
 import type { RepositoryAccess } from "../../../../../packages/protocol/src/repository-access.js";
 import { Mono } from "@/components/layout";
@@ -28,6 +29,7 @@ export function RepositoryAccessEditor({
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
   const ids = draft.actors === "any" ? [] : draft.actors.ids;
+  const blockedByScaleSet = binding.capacityMode === "scale_set" && restrictiveAccess(draft);
   function add() {
     const result = addActorId(ids, text);
     if ("error" in result) return setError(result.error);
@@ -148,6 +150,12 @@ export function RepositoryAccessEditor({
           Jobs wait under Needs you until you start them.
         </p>
       </div>
+      {blockedByScaleSet && (
+        <p className="text-xs text-attention">
+          This environment uses a scale set, which needs open access. Switch it to Demand under
+          Capacity first.
+        </p>
+      )}
       <div className="flex items-center justify-between gap-3">
         <p className="max-w-[52ch] text-xs text-muted-foreground">
           Vectis checks the job again inside the VM after GitHub assigns it and stops the runner if
@@ -155,7 +163,7 @@ export function RepositoryAccessEditor({
         </p>
         <Button
           size="sm"
-          disabled={saving || !canSaveAccess(saved, draft)}
+          disabled={saving || blockedByScaleSet || !canSaveAccess(saved, draft)}
           onClick={() => void save()}
         >
           {saving ? "Saving" : "Save access"}

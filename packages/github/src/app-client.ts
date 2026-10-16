@@ -1,5 +1,18 @@
-import { createPrivateKey, sign } from "node:crypto";
+import { createHash, createPrivateKey, sign } from "node:crypto";
 import { Schema } from "effect";
+import {
+  githubRequest,
+  GitHubApiError,
+  GitHubPermissionError,
+  GitHubRateLimitError,
+} from "./api-request.js";
+export {
+  GitHubApiError,
+  GitHubPermissionError,
+  GitHubRateLimitError,
+  GitHubUnavailableError,
+  GitHubUncertainError,
+} from "./api-request.js";
 import { downloadJobLog } from "./job-logs.js";
 
 import type { ReadinessCheck } from "../../protocol/src/readiness.js";
@@ -10,7 +23,24 @@ const Installation = Schema.Struct({
   account: Schema.Struct({ id: Schema.Int, type: Schema.String }),
   suspended_at: Schema.NullOr(Schema.String),
 });
-const AccessToken = Schema.Struct({ token: Schema.NonEmptyString });
+const AccessToken = Schema.Struct({
+  token: Schema.NonEmptyString,
+  expires_at: Schema.optionalKey(Schema.String),
+});
+const tokens = new Map<string, { token: string; expiresAt: number }>();
+const installations = new Map<
+  string,
+  { installation: typeof Installation.Type; expiresAt: number }
+>();
+const cacheLimit = 256;
+function pruneCache<T extends { expiresAt: number }>(cache: Map<string, T>) {
+  for (const [key, entry] of cache) if (entry.expiresAt <= Date.now()) cache.delete(key);
+  while (cache.size >= cacheLimit) {
+    const key = cache.keys().next().value;
+    if (key === undefined) break;
+    cache.delete(key);
+  }
+}
 export class GitHubApprovalError extends Error {
   readonly code;
   readonly nextStep;
@@ -71,34 +101,34 @@ function githubReadinessFailure(id: string, error: unknown): ReadinessCheck {
   return {
     id,
     status: "unknown",
-    code: "github_unavailable",
+    code: error instanceof GitHubRateLimitError ? error.code : "github_unavailable",
     message: "GitHub access could not be verified.",
     nextStep: "Check GitHub availability and retry readiness.",
     target: { area: "github" },
   };
 }
 
-export class GitHubApiError extends Error {
-  constructor(readonly status: number) {
-    super(`GitHub API request failed (${status}).`);
-  }
-}
-export class GitHubPermissionError extends GitHubApiError {
-  readonly code = "github_app_permission_required";
-  readonly nextStep =
-    "Approve the updated Vectis GitHub App permissions on GitHub (Settings -> Applications), then retry.";
-  constructor(status = 403) {
-    super(status);
-    this.message = "The Vectis GitHub App needs updated Actions write permission.";
-  }
+export function createGitHubAppJwt(app: { clientId: string; privateKey: string }) {
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const data = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: app.clientId, iat: now - 60, exp: now + 300 })}`;
+  return `${data}.${sign("RSA-SHA256", Buffer.from(data), createPrivateKey(app.privateKey)).toString("base64url")}`;
 }
 export class GitHubAppClient {
-  constructor(private readonly app: { appId: number; clientId: string; privateKey: string }) {}
+  private readonly cacheScope: string;
+  constructor(
+    private readonly app: { appId: number; clientId: string; privateKey: string },
+    private readonly options: { budgetMs?: number } = {},
+  ) {
+    if (
+      options.budgetMs !== undefined &&
+      (!Number.isFinite(options.budgetMs) || options.budgetMs <= 0)
+    )
+      throw new Error("GitHub request budget must be positive and finite.");
+    this.cacheScope = createHash("sha256").update(JSON.stringify(app)).digest("hex");
+  }
   private jwt() {
-    const now = Math.floor(Date.now() / 1000);
-    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-    const data = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: this.app.clientId, iat: now - 60, exp: now + 300 })}`;
-    return `${data}.${sign("RSA-SHA256", Buffer.from(data), createPrivateKey(this.app.privateKey)).toString("base64url")}`;
+    return createGitHubAppJwt(this.app);
   }
   async request(
     token: string,
@@ -117,7 +147,17 @@ export class GitHubAppClient {
     return this.send(token, path, "POST", body, undefined, responseBody);
   }
   async downloadJobLog(token: string, path: string, after?: number) {
-    return downloadJobLog(token, path, after);
+    try {
+      return await downloadJobLog(token, path, after);
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 401) this.invalidateToken(token);
+      throw error;
+    }
+  }
+  private invalidateToken(token: string) {
+    for (const [key, entry] of tokens) if (entry.token === token) tokens.delete(key);
+    for (const key of installations.keys())
+      if (key.startsWith(this.cacheScope + ":")) installations.delete(key);
   }
   async delete(token: string, path: string): Promise<void> {
     await this.send(token, path, "DELETE");
@@ -130,57 +170,40 @@ export class GitHubAppClient {
     signal?: AbortSignal,
     responseBody: "json" | "discard" = "json",
   ): Promise<{ status: number; body: unknown }> {
-    if (!path.startsWith("/") || path.startsWith("//") || path.includes(".."))
-      throw new Error("Invalid GitHub API path.");
-    const response = await fetch(`https://api.github.com${path}`, {
+    return githubRequest({
+      token,
+      path,
       method,
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2026-03-10",
-        "Content-Type": "application/json",
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      redirect: "error",
-      signal: signal
-        ? AbortSignal.any([signal, AbortSignal.timeout(15000)])
-        : AbortSignal.timeout(15000),
+      body,
+      signal,
+      responseBody,
+      budgetMs: this.options.budgetMs ?? 45000,
+      invalidate: () => this.invalidateToken(token),
     });
-    if (response.ok && responseBody === "discard") {
-      await response.body?.cancel().catch(() => {});
-      return { status: response.status, body: null };
-    }
-    if (response.status === 204) return { status: response.status, body: null };
-    const reader = response.body?.getReader();
-    if (!reader) {
-      if (!response.ok) throw new GitHubApiError(response.status);
-      if (response.status === 202 || response.status === 201)
-        return { status: response.status, body: null };
-      throw new Error("GitHub returned no response body.");
-    }
-    let size = 0;
-    const chunks: Uint8Array[] = [];
-    try {
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        size += value.length;
-        if (size > 1024 * 1024) {
-          await reader.cancel();
-          throw new Error("GitHub response exceeded its limit.");
-        }
-        chunks.push(value);
-      }
-    } finally {
-      reader.releaseLock();
-    }
-    const text = Buffer.concat(chunks).toString("utf8");
-    if (!response.ok) {
-      if (response.status === 403 && text.includes("Resource not accessible by integration"))
-        throw new GitHubPermissionError();
-      throw new GitHubApiError(response.status);
-    }
-    return { status: response.status, body: text ? JSON.parse(text) : null };
+  }
+  private async installationToken(
+    installationId: number,
+    repository: { repositoryId: number } | { owner: string; repo: string },
+    permissions: Record<string, "read" | "write">,
+  ) {
+    pruneCache(tokens);
+    const key = JSON.stringify([this.cacheScope, installationId, repository, permissions]);
+    const cached = tokens.get(key);
+    if (cached) return cached;
+    const access = Schema.decodeUnknownSync(AccessToken)(
+      await this.request(this.jwt(), `/app/installations/${installationId}/access_tokens`, {
+        ...("repositoryId" in repository
+          ? { repository_ids: [repository.repositoryId] }
+          : { repositories: [repository.repo] }),
+        permissions,
+      }),
+    );
+    const entry = {
+      token: access.token,
+      expiresAt: access.expires_at ? Date.parse(access.expires_at) - 300000 : 0,
+    };
+    if (entry.expiresAt > Date.now()) tokens.set(key, entry);
+    return entry;
   }
   private async repositoryContext(input: {
     owner: string;
@@ -207,16 +230,19 @@ export class GitHubAppClient {
     )
       throw new Error("Invalid repository name.");
     const path = `/repos/${input.owner}/${input.repo}`;
-    const jwt = this.jwt();
-    const installation = Schema.decodeUnknownSync(Installation)(
-      await this.request(jwt, `${path}/installation`).catch((error: unknown) => {
-        // GitHub answers 404 both for a repository the App cannot see and for one that does not
-        // exist, so the message has to cover the installation without claiming the repository.
-        if (error instanceof GitHubApiError && error.status === 404)
-          throw new GitHubInstallationError(input.owner, input.repo);
-        throw error;
-      }),
-    );
+    pruneCache(installations);
+    const lookupKey = `${this.cacheScope}:${path.toLowerCase()}`;
+    const installation =
+      installations.get(lookupKey)?.installation ??
+      Schema.decodeUnknownSync(Installation)(
+        await this.request(this.jwt(), `${path}/installation`).catch((error: unknown) => {
+          // GitHub answers 404 both for a repository the App cannot see and for one that does not
+          // exist, so the message has to cover the installation without claiming the repository.
+          if (error instanceof GitHubApiError && error.status === 404)
+            throw new GitHubInstallationError(input.owner, input.repo);
+          throw error;
+        }),
+      );
     if (
       installation.app_id !== this.app.appId ||
       !["User", "Organization"].includes(installation.account.type) ||
@@ -226,41 +252,40 @@ export class GitHubAppClient {
       throw new GitHubInstallationError(input.owner, input.repo);
     if (input.installationId !== undefined && input.installationId !== installation.id)
       throw new GitHubAccessError("installation_changed");
-    const { token } = Schema.decodeUnknownSync(AccessToken)(
-      await this.request(jwt, `/app/installations/${installation.id}/access_tokens`, {
-        ...(input.repositoryId === undefined
-          ? { repositories: [input.repo] }
-          : { repository_ids: [input.repositoryId] }),
-        permissions:
-          input.purpose === "actions-write"
-            ? { actions: "write", metadata: "read" }
-            : input.purpose === "jobs"
-              ? { actions: "read", metadata: "read" }
-              : input.purpose === "migration-read"
-                ? { contents: "read", metadata: "read" }
-                : input.purpose === "migration-write"
-                  ? {
-                      contents: "write",
-                      workflows: "write",
-                      pull_requests: "write",
-                      metadata: "read",
-                    }
-                  : {
-                      administration: input.purpose === "readiness" ? "read" : "write",
-                      metadata: "read",
-                    },
-      }).catch((error: unknown) => {
-        if (
-          input.purpose === "actions-write" &&
-          error instanceof GitHubApiError &&
-          (error.status === 403 || error.status === 422)
-        )
-          throw new GitHubPermissionError(error.status);
-        if (error instanceof GitHubApiError && [403, 404, 422].includes(error.status))
-          throw new GitHubAccessError("repository_access_denied");
-        throw error;
-      }),
-    );
+    const { token, expiresAt } = await this.installationToken(
+      installation.id,
+      input.repositoryId === undefined
+        ? { owner: input.owner, repo: input.repo }
+        : { repositoryId: input.repositoryId },
+      input.purpose === "actions-write"
+        ? { actions: "write", metadata: "read" }
+        : input.purpose === "jobs"
+          ? { actions: "read", metadata: "read" }
+          : input.purpose === "migration-read"
+            ? { contents: "read", metadata: "read" }
+            : input.purpose === "migration-write"
+              ? {
+                  contents: "write",
+                  workflows: "write",
+                  pull_requests: "write",
+                  metadata: "read",
+                }
+              : {
+                  administration: input.purpose === "readiness" ? "read" : "write",
+                  metadata: "read",
+                },
+    ).catch((error: unknown) => {
+      if (error instanceof GitHubRateLimitError) throw error;
+      if (
+        input.purpose === "actions-write" &&
+        error instanceof GitHubApiError &&
+        (error.status === 403 || error.status === 422)
+      )
+        throw new GitHubPermissionError(error.status);
+      if (error instanceof GitHubApiError && [403, 404, 422].includes(error.status))
+        throw new GitHubAccessError("repository_access_denied");
+      throw error;
+    });
     const repository = Schema.decodeUnknownSync(
       Schema.Struct({
         id: Schema.Int,
@@ -269,6 +294,7 @@ export class GitHubAppClient {
       }),
     )(
       await this.request(token, path).catch((error: unknown) => {
+        if (error instanceof GitHubRateLimitError) throw error;
         if (error instanceof GitHubApiError && [403, 404].includes(error.status))
           throw new GitHubAccessError("repository_access_denied");
         throw error;
@@ -279,6 +305,7 @@ export class GitHubAppClient {
       repository.owner.id !== installation.account.id
     )
       throw new GitHubAccessError("repository_access_denied");
+    if (expiresAt > Date.now()) installations.set(lookupKey, { installation, expiresAt });
     return { token, path, installation, repository };
   }
   private async checkAdmin(
@@ -294,6 +321,7 @@ export class GitHubAppClient {
       )(
         await this.request(token, `${path}/collaborators/${input.githubLogin}/permission`).catch(
           (error: unknown) => {
+            if (error instanceof GitHubRateLimitError) throw error;
             if (error instanceof GitHubApiError && [403, 404].includes(error.status))
               throw new GitHubAdminError();
             throw error;
@@ -337,15 +365,10 @@ export class GitHubAppClient {
       let policyContext = context;
       // Starting runs consumes host capacity; cancellation never needs the fork approval policy.
       if (input.purpose === "migration-write" || input.purpose === "actions-write") {
-        const { token } = Schema.decodeUnknownSync(AccessToken)(
-          await this.request(
-            this.jwt(),
-            `/app/installations/${context.installation.id}/access_tokens`,
-            {
-              repository_ids: [context.repository.id],
-              permissions: { administration: "read", metadata: "read" },
-            },
-          ),
+        const { token } = await this.installationToken(
+          context.installation.id,
+          { repositoryId: context.repository.id },
+          { administration: "read", metadata: "read" },
         );
         policyContext = { ...context, token };
       }

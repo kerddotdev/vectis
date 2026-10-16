@@ -1,6 +1,8 @@
 "use node";
+import { readCacheWrite } from "../packages/github/src/cache-write.js";
+import { generateScaleSetJit } from "./githubScaleSets.js";
 import { runnerRequest } from "./runnerLeases.js";
-import { repositoryAccess } from "./githubAccess.js";
+import { githubErrors, repositoryAccess } from "./githubAccess.js";
 import { runnerLabels } from "../packages/github/src/runner-labels.js";
 import { ConvexError, v } from "convex/values";
 import { Schema } from "effect";
@@ -28,6 +30,7 @@ export const prepare = action({
       preparing: true,
       ...(args.jobId === undefined ? {} : { jobId: args.jobId }),
       ...(args.automatic === undefined ? {} : { automatic: args.automatic }),
+      ...(args.scaleSet ? { scaleSet: args.scaleSet } : {}),
     });
     const client = new GitHubAppClient(authority.app);
     const access = await repositoryAccess(client, {
@@ -55,9 +58,18 @@ export const prepare = action({
           id: lease._id,
           runnerId: lease.runnerId,
           encodedConfig: lease.encodedConfig,
+          cacheWrite: lease.cacheWrite ?? false,
+          ...(lease.cacheWriteReason ? { cacheWriteReason: lease.cacheWriteReason } : {}),
           environmentId: lease.environmentId,
           os: lease.os,
-          ...(lease.access ? { access: lease.access } : {}),
+          ...(lease.access
+            ? {
+                access: {
+                  ...lease.access,
+                  ...(lease.cacheRun ? { cacheRun: lease.cacheRun } : {}),
+                },
+              }
+            : {}),
         };
       if (lease.phase === "released") return { state: "released", id: lease._id };
       if (lease.phase === "preparing" && Date.now() - lease.updatedAt < 60000)
@@ -65,32 +77,98 @@ export const prepare = action({
       await ctx.runMutation(internal.runnerLeases.attention, { id: lease._id });
       return { state: "action_required", id: lease._id };
     }
+    const cacheJob = authority.cacheJob;
+    const cache =
+      !args.scaleSet && cacheJob
+        ? await (async () => {
+            try {
+              const jobs = await repositoryAccess(client, {
+                owner: authority.binding.repositoryOwner ?? authority.account.login,
+                repo: authority.binding.repositoryName,
+                repositoryId: authority.binding.repositoryId,
+                githubUserId: authority.account.githubId,
+                githubLogin: authority.account.login,
+                purpose: "jobs",
+              });
+              if (jobs.installationId !== access.installationId)
+                return { cacheWrite: false, cacheWriteReason: "installation_changed" };
+              return await readCacheWrite(
+                (path) => client.request(jobs.token, jobs.path + path),
+                authority.binding.repositoryId,
+                cacheJob.runId,
+                cacheJob.runAttempt,
+              );
+            } catch {
+              return { cacheWrite: false, cacheWriteReason: "metadata_unavailable" };
+            }
+          })()
+        : {
+            cacheWrite: false,
+            cacheWriteReason: args.scaleSet
+              ? "scale_set_run_unknown"
+              : authority.binding.cacheVolume?.enabled
+                ? "job_unknown"
+                : "cache_disabled",
+          };
     let runnerId: number | undefined;
     try {
-      const registration = Schema.decodeUnknownSync(Registration)(
-        await client.request(access.token, `${access.path}/actions/runners/generate-jitconfig`, {
-          name: `vectis-${lease._id}`,
-          runner_group_id: 1,
-          labels: runnerLabels(lease.os, lease.environmentId),
-          work_folder: "_work",
-        }),
-      );
+      const scaleSetRegistration = args.scaleSet
+        ? await generateScaleSetJit(
+            ctx,
+            {
+              bindingId: args.bindingId,
+              generation: args.scaleSet.generation,
+              runnerName: `vectis-${lease._id}`,
+            },
+            authority,
+            access,
+          )
+        : undefined;
+      const registration = scaleSetRegistration
+        ? {
+            runner: scaleSetRegistration.runner,
+            encoded_jit_config: scaleSetRegistration.encodedJITConfig,
+          }
+        : Schema.decodeUnknownSync(Registration)(
+            await client.request(
+              access.token,
+              `${access.path}/actions/runners/generate-jitconfig`,
+              {
+                name: `vectis-${lease._id}`,
+                runner_group_id: 1,
+                labels: runnerLabels(lease.os, lease.environmentId),
+                work_folder: "_work",
+              },
+            ),
+          );
       runnerId = registration.runner.id;
       if (registration.runner.name !== `vectis-${lease._id}`)
         throw new Error("Runner identity mismatch.");
+      if (args.scaleSet) {
+        const registered = Schema.decodeUnknownSync(Runner)(
+          await client.request(access.token, `${access.path}/actions/runners/${runnerId}`),
+        );
+        if (registered.id !== runnerId || registered.name !== `vectis-${lease._id}`)
+          throw new Error("Runner identity mismatch.");
+      }
       await ctx.runMutation(internal.runnerLeases.ready, {
         id: lease._id,
         runnerId,
         encodedConfig: registration.encoded_jit_config,
+        ...cache,
       });
       return {
         state: "ready",
         id: lease._id,
         runnerId,
         encodedConfig: registration.encoded_jit_config,
+        cacheWrite: cache.cacheWrite,
+        ...(cache.cacheWriteReason ? { cacheWriteReason: cache.cacheWriteReason } : {}),
         environmentId: lease.environmentId,
         os: lease.os,
-        ...(lease.access ? { access: lease.access } : {}),
+        ...(lease.access
+          ? { access: { ...lease.access, ...(cache.cacheRun ? { cacheRun: cache.cacheRun } : {}) } }
+          : {}),
       };
     } catch {
       await ctx.runMutation(internal.runnerLeases.attention, {
@@ -104,113 +182,115 @@ export const prepare = action({
 
 export const release = action({
   args: { id: v.string() },
-  handler: async (ctx, args): Promise<{ state: "released"; id: string }> => {
-    const lease = await ctx.runQuery(internal.runnerLeases.owned, args);
-    if (lease.phase === "released") return { state: "released", id: lease._id };
-    if (lease.phase === "preparing" && Date.now() - lease.updatedAt < 60000)
-      throw new ConvexError({
-        code: "runner_lease_pending",
-        nextStep: "Wait for registration to finish before reconciling this lease.",
-      });
-    const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
-      bindingId: lease.bindingId,
-      preparing: false,
-    });
-    const client = new GitHubAppClient(authority.app);
-    const access = await repositoryAccess(client, {
-      owner: authority.binding.repositoryOwner ?? authority.account.login,
-      repo: authority.binding.repositoryName,
-      repositoryId: authority.binding.repositoryId,
-      githubUserId: authority.account.githubId,
-      githubLogin: authority.account.login,
-      purpose: "cleanup",
-    });
-    const expectedName = `vectis-${lease._id}`;
-    let runnerId = lease.runnerId;
-    if (runnerId === undefined) {
-      let searched = false;
-      for (let page = 1; page <= 10; page++) {
-        const pool = Schema.decodeUnknownSync(Pool)(
-          await client.request(
-            access.token,
-            `${access.path}/actions/runners?per_page=100&page=${page}`,
-          ),
-        );
-        const matches = pool.runners.filter((runner) => runner.name === expectedName);
-        if (matches.length > 1) throw new ConvexError({ code: "runner_identity_conflict" });
-        if (matches[0]) {
-          runnerId = matches[0].id;
-          searched = true;
-          break;
-        }
-        if (page * 100 >= pool.total_count) {
-          searched = true;
-          break;
-        }
-      }
-      if (!searched)
+  handler: async (ctx, args): Promise<{ state: "released"; id: string }> =>
+    githubErrors(async () => {
+      const lease = await ctx.runQuery(internal.runnerLeases.owned, args);
+      if (lease.phase === "released") return { state: "released", id: lease._id };
+      if (lease.phase === "preparing" && Date.now() - lease.updatedAt < 60000)
         throw new ConvexError({
-          code: "runner_reconciliation_limit",
-          nextStep: "Inspect the repository runner pool before retrying cleanup.",
+          code: "runner_lease_pending",
+          nextStep: "Wait for registration to finish before reconciling this lease.",
         });
-    }
-    if (runnerId !== undefined) {
-      const path = `${access.path}/actions/runners/${runnerId}`;
-      try {
-        const runner = Schema.decodeUnknownSync(Runner)(await client.request(access.token, path));
-        if (runner.id !== runnerId || runner.name !== expectedName)
-          throw new ConvexError({ code: "runner_identity_conflict" });
-        try {
-          await client.delete(access.token, path);
-        } catch (error) {
-          if (error instanceof GitHubApiError && error.status === 422)
-            throw new ConvexError({
-              code: "runner_busy",
-              message: "GitHub still shows this runner on a job.",
-              nextStep:
-                "Vectis retries cleanup automatically after GitHub releases the job, usually within 15 minutes.",
-            });
-          throw error;
+      const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
+        bindingId: lease.bindingId,
+        preparing: false,
+      });
+      const client = new GitHubAppClient(authority.app);
+      const access = await repositoryAccess(client, {
+        owner: authority.binding.repositoryOwner ?? authority.account.login,
+        repo: authority.binding.repositoryName,
+        repositoryId: authority.binding.repositoryId,
+        githubUserId: authority.account.githubId,
+        githubLogin: authority.account.login,
+        purpose: "cleanup",
+      });
+      const expectedName = `vectis-${lease._id}`;
+      let runnerId = lease.runnerId;
+      if (runnerId === undefined) {
+        let searched = false;
+        for (let page = 1; page <= 10; page++) {
+          const pool = Schema.decodeUnknownSync(Pool)(
+            await client.request(
+              access.token,
+              `${access.path}/actions/runners?per_page=100&page=${page}`,
+            ),
+          );
+          const matches = pool.runners.filter((runner) => runner.name === expectedName);
+          if (matches.length > 1) throw new ConvexError({ code: "runner_identity_conflict" });
+          if (matches[0]) {
+            runnerId = matches[0].id;
+            searched = true;
+            break;
+          }
+          if (page * 100 >= pool.total_count) {
+            searched = true;
+            break;
+          }
         }
-      } catch (error) {
-        if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
+        if (!searched)
+          throw new ConvexError({
+            code: "runner_reconciliation_limit",
+            nextStep: "Inspect the repository runner pool before retrying cleanup.",
+          });
       }
-    }
-    await ctx.runMutation(internal.runnerLeases.released, { id: lease._id });
-    return { state: "released", id: lease._id };
-  },
+      if (runnerId !== undefined) {
+        const path = `${access.path}/actions/runners/${runnerId}`;
+        try {
+          const runner = Schema.decodeUnknownSync(Runner)(await client.request(access.token, path));
+          if (runner.id !== runnerId || runner.name !== expectedName)
+            throw new ConvexError({ code: "runner_identity_conflict" });
+          try {
+            await client.delete(access.token, path);
+          } catch (error) {
+            if (error instanceof GitHubApiError && error.status === 422)
+              throw new ConvexError({
+                code: "runner_busy",
+                message: "GitHub still shows this runner on a job.",
+                nextStep:
+                  "Vectis retries cleanup automatically after GitHub releases the job, usually within 15 minutes.",
+              });
+            throw error;
+          }
+        } catch (error) {
+          if (!(error instanceof GitHubApiError && error.status === 404)) throw error;
+        }
+      }
+      await ctx.runMutation(internal.runnerLeases.released, { id: lease._id });
+      return { state: "released", id: lease._id };
+    }),
 });
 
 export const status = action({
   args: { id: v.string() },
-  handler: async (ctx, args): Promise<RunnerStatus> => {
-    const lease = await ctx.runQuery(internal.runnerLeases.owned, args);
-    const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
-      bindingId: lease.bindingId,
-      preparing: false,
-    });
-    if (lease.phase === "released") return { missing: true };
-    if (lease.runnerId === undefined)
-      throw new ConvexError({ code: "runner_registration_incomplete" });
-    const client = new GitHubAppClient(authority.app);
-    const access = await repositoryAccess(client, {
-      owner: authority.binding.repositoryOwner ?? authority.account.login,
-      repo: authority.binding.repositoryName,
-      repositoryId: authority.binding.repositoryId,
-      githubUserId: authority.account.githubId,
-      githubLogin: authority.account.login,
-      purpose: "cleanup",
-    });
-    try {
-      const runner = Schema.decodeUnknownSync(RunnerState)(
-        await client.request(access.token, `${access.path}/actions/runners/${lease.runnerId}`),
-      );
-      if (runner.id !== lease.runnerId || runner.name !== `vectis-${lease._id}`)
-        throw new ConvexError({ code: "runner_identity_conflict" });
-      return { busy: runner.busy, status: runner.status };
-    } catch (error) {
-      if (error instanceof GitHubApiError && error.status === 404) return { missing: true };
-      throw error;
-    }
-  },
+  handler: async (ctx, args): Promise<RunnerStatus> =>
+    githubErrors(async () => {
+      const lease = await ctx.runQuery(internal.runnerLeases.owned, args);
+      const authority = await ctx.runQuery(internal.runnerLeases.authorize, {
+        bindingId: lease.bindingId,
+        preparing: false,
+      });
+      if (lease.phase === "released") return { missing: true };
+      if (lease.runnerId === undefined)
+        throw new ConvexError({ code: "runner_registration_incomplete" });
+      const client = new GitHubAppClient(authority.app);
+      const access = await repositoryAccess(client, {
+        owner: authority.binding.repositoryOwner ?? authority.account.login,
+        repo: authority.binding.repositoryName,
+        repositoryId: authority.binding.repositoryId,
+        githubUserId: authority.account.githubId,
+        githubLogin: authority.account.login,
+        purpose: "cleanup",
+      });
+      try {
+        const runner = Schema.decodeUnknownSync(RunnerState)(
+          await client.request(access.token, `${access.path}/actions/runners/${lease.runnerId}`),
+        );
+        if (runner.id !== lease.runnerId || runner.name !== `vectis-${lease._id}`)
+          throw new ConvexError({ code: "runner_identity_conflict" });
+        return { busy: runner.busy, status: runner.status };
+      } catch (error) {
+        if (error instanceof GitHubApiError && error.status === 404) return { missing: true };
+        throw error;
+      }
+    }),
 });

@@ -231,6 +231,11 @@ else {
             case "status":
               data = await (await client()).status();
               break;
+            case "activity":
+              data = await (
+                await client()
+              ).activity(Schema.decodeUnknownSync(Schema.NonEmptyString)(input));
+              break;
             case "jobs": {
               const bindingId = Schema.decodeUnknownSync(Schema.NonEmptyString)(input);
               data = await (await client()).jobs(bindingId);

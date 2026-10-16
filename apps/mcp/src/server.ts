@@ -11,6 +11,7 @@ import {
   Identifier,
   capabilities,
   VectisError,
+  type Snapshot,
 } from "../../../packages/protocol/src/index.js";
 import { githubConnection } from "../../../packages/client/src/github.js";
 import {
@@ -47,6 +48,73 @@ const activitiesInput = Schema.Struct({
 const activitiesSchema = Schema.toJsonSchemaDocument(activitiesInput);
 const activitySchema = Schema.toJsonSchemaDocument(operationInput);
 const logSchema = Schema.toJsonSchemaDocument(LogRequest);
+const statusHistoryLimit = 20;
+
+function compactStatus(snapshot: Snapshot) {
+  const activities = snapshot.activities ?? [];
+  const counts = (items: readonly { status: string }[]) => {
+    const statuses: Record<string, number> = {};
+    for (const item of items) statuses[item.status] = (statuses[item.status] ?? 0) + 1;
+    return { total: items.length, byStatus: statuses };
+  };
+  return {
+    protocolVersion: snapshot.protocolVersion,
+    version: snapshot.version,
+    revision: snapshot.revision,
+    machine: snapshot.machine,
+    cloud: snapshot.cloud,
+    runnerCapacity: snapshot.runnerCapacity,
+    ...(snapshot.scaleSets === undefined ? {} : { scaleSets: snapshot.scaleSets }),
+    preparationBusy: snapshot.preparationBusy,
+    environments: snapshot.environments.map(({ id, name, os, state, cpu, memoryMiB, network }) => ({
+      id,
+      name,
+      os,
+      state,
+      cpu,
+      memoryMiB,
+      network,
+    })),
+    instances: snapshot.instances
+      .filter((instance) => instance.status !== "stopped")
+      .map(({ id, environmentId, status, createdAt }) => ({
+        id,
+        environmentId,
+        status,
+        createdAt,
+      })),
+    counts: {
+      scope: "bounded status window",
+      operations: counts(snapshot.operations),
+      activities: counts(activities),
+      instances: counts(snapshot.instances),
+    },
+    operations: [...snapshot.operations]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, statusHistoryLimit)
+      .map(({ id, activityId, command, status, updatedAt, message }) => ({
+        id,
+        activityId,
+        command,
+        status,
+        updatedAt,
+        message: message.slice(0, 300),
+      })),
+    activities: [...activities]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(0, statusHistoryLimit)
+      .map(({ id, kind, status, updatedAt, rootOperationId, message }) => ({
+        id,
+        kind,
+        status,
+        updatedAt,
+        rootOperationId,
+        message: message.slice(0, 300),
+      })),
+    details:
+      "Use vectis_activities to list recent and unfinished activities, vectis_activity for an activity's steps, and vectis_operation for full operation results.",
+  };
+}
 const tools = [
   {
     name: "vectis_github_accounts",
@@ -107,7 +175,7 @@ const tools = [
   {
     name: "vectis_status",
     description:
-      "Read the selected machine, environments, instances and operations. Requires a running Vectis service.",
+      "Read a compact machine summary, environments, non-stopped instances, counts within the bounded status window and the newest 20 operations and activities. Use vectis_activities, vectis_activity and vectis_operation for details.",
     inputSchema: emptyInput,
     annotations: { readOnlyHint: true },
   },
@@ -135,7 +203,7 @@ const tools = [
   {
     name: "vectis_activities",
     description:
-      "List what this machine was asked to do, newest first. An activity groups the operations of one intent: a guest preparation with its setup steps, or a runner with its VM. Filter by kind, status, repository or limit.",
+      "List unfinished activities and the newest 100 terminal activities, newest first, without fetching machine status. An activity groups the operations of one intent. Filter by kind, status, repository or limit; fetch older retained activity IDs with vectis_activity.",
     inputSchema: { ...activitiesSchema.schema, $defs: activitiesSchema.definitions },
     annotations: { readOnlyHint: true },
   },
@@ -323,7 +391,7 @@ export function createMcpServer(
           result = await (await connect()).doctor();
           break;
         case "vectis_status":
-          result = await (await connect()).status();
+          result = compactStatus(await (await connect()).status());
           break;
         case "vectis_operation": {
           const input = Schema.decodeUnknownSync(operationInput, { onExcessProperty: "error" })(
@@ -416,7 +484,7 @@ export function createMcpServer(
           );
       }
       return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
+        content: [],
         structuredContent: { result },
       };
     } catch (error) {
@@ -431,7 +499,7 @@ export function createMcpServer(
       const result = { code: issue.code, message: issue.message, nextStep: issue.nextStep };
       return {
         isError: true,
-        content: [{ type: "text", text: JSON.stringify(result) }],
+        content: [],
         structuredContent: { error: result },
       };
     }

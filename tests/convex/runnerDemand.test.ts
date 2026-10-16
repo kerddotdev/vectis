@@ -77,6 +77,7 @@ async function fixture() {
     paused = false,
     runnerIdle = true,
     runnerSlots?: number,
+    environmentSlots?: Array<{ environmentId: string; available: number }>,
   ) => {
     const host = ids.hosts[index];
     if (!host) throw new Error("Missing test host");
@@ -90,6 +91,7 @@ async function fixture() {
         paused,
         runnerIdle,
         ...(runnerSlots === undefined ? {} : { runnerSlots }),
+        ...(environmentSlots === undefined ? {} : { environmentSlots }),
       });
   };
   const operations = () => t.run(async (ctx) => ctx.db.query("operations").collect());
@@ -155,16 +157,45 @@ test("unfinished, cancelled and action-required demand is not retried, and failu
   const retry = (await operations()).find((item) => item._id !== first._id);
   expect(retry?.key).toMatch(/:2$/);
 });
-test("failed and successful retries share the same three attempts", async () => {
+test("successful runners serving other jobs do not consume the three-failure budget", async () => {
   const { t, heartbeat, operations } = await fixture();
-  for (const phase of ["failed", "succeeded", "failed", "failed"] as const) {
+  for (const phase of ["succeeded", "succeeded", "failed", "failed", "failed"] as const) {
     await heartbeat(0);
-    await t.run(async (ctx) => {
-      for (const operation of await ctx.db.query("operations").collect())
-        await ctx.db.patch("operations", operation._id, { phase, updatedAt: Date.now() - 60000 });
-    });
+    const latest = (await operations()).at(-1);
+    if (!latest) throw new Error("Missing attempt");
+    await t.run((ctx) =>
+      ctx.db.patch("operations", latest._id, { phase, updatedAt: Date.now() - 60000 }),
+    );
   }
-  expect(await operations()).toHaveLength(3);
+  await heartbeat(0);
+  expect(await operations()).toHaveLength(5);
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").unique())).toMatchObject({
+    attempt: 5,
+    failures: 2,
+  });
+});
+
+test("missing cache privileges fail the job demand without spending another automatic attempt", async () => {
+  const { t, heartbeat, operations, jobId } = await fixture();
+  await heartbeat(0);
+  const first = (await operations())[0];
+  if (!first) throw new Error("Missing demand");
+  await t.run(async (ctx) =>
+    ctx.db.patch("operations", first._id, {
+      phase: "failed",
+      updatedAt: Date.now() - 600000,
+      resultJson: JSON.stringify({ status: "failed", code: "cache_volume_requires_guest_sudo" }),
+    }),
+  );
+  await heartbeat(0);
+  await heartbeat(1);
+  await t.run(async (ctx) => ctx.db.patch("githubJobs", jobId, { updatedAt: Date.now() }));
+  await heartbeat(0);
+  expect(await operations()).toHaveLength(1);
+  expect((await operations())[0]?.phase).toBe("failed");
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").unique())).toMatchObject({
+    attempt: 1,
+  });
 });
 
 test("repository scans are deduplicated across machines and retry on later heartbeats", async () => {
@@ -716,6 +747,9 @@ test("an offline unclaimed request expires and another machine reserves the unch
     resultAvailableLocally: false,
   });
   await heartbeat(1);
+  expect(await operations()).toHaveLength(1);
+  vi.advanceTimersByTime(60000);
+  await heartbeat(1);
   const retry = (await operations()).find((operation) => operation._id !== first._id);
   expect(retry).toMatchObject({ machineId: secondHost.machineId, phase: "accepted" });
   expect(decodeCommand(JSON.parse(retry?.commandJson ?? "{}"))).toMatchObject({
@@ -784,6 +818,7 @@ test("an online request expires at the ten-minute cap and can retry an unchanged
     resultAvailableLocally: false,
   });
   expect(first?.updatedAt).toBe((first?.createdAt ?? 0) + 600000);
+  vi.advanceTimersByTime(60000);
   await heartbeat(1);
   expect(await operations()).toHaveLength(2);
 });
@@ -890,5 +925,184 @@ test("an allowed actor and triggering actor receive automatic capacity", async (
     await ctx.db.patch("githubJobs", jobId, { actorId: 7, triggeringActorId: 8, runAttempt: 1 });
   });
   await heartbeat(0, false, true, 1);
+  expect(await operations()).toHaveLength(1);
+});
+
+test("macOS environment slots admit two queued jobs and a freed slot admits the third without spending its attempts", async () => {
+  const { t, heartbeat, operations, hosts } = await fixture();
+  await addJobs(t, 2);
+  await heartbeat(0, false, false, 5, [{ environmentId: "mac", available: 2 }]);
+  expect(await operations()).toHaveLength(2);
+  await heartbeat(0, false, false, 5, [{ environmentId: "mac", available: 2 }]);
+  expect(await operations()).toHaveLength(2);
+  const initial = await t.run((ctx) => ctx.db.query("runnerDemands").collect());
+  expect(initial.map((demand) => demand.attempt)).toEqual([1, 1]);
+  await t.run(async (ctx) => {
+    for (const operation of await ctx.db.query("operations").collect())
+      await ctx.db.patch("operations", operation._id, {
+        phase: "running",
+        updatedAt: Date.now() - 1000,
+      });
+    const job = await ctx.db
+      .query("githubJobs")
+      .withIndex("by_job", (q) => q.eq("installationId", 3).eq("repositoryId", 2).eq("jobId", 4))
+      .unique();
+    if (!job) throw new Error("Missing job");
+    await ctx.db.patch("githubJobs", job._id, { status: "completed" });
+    const first = initial[0];
+    if (!first) throw new Error("Missing demand");
+    await ctx.db.patch("operations", first.operationId, { phase: "succeeded" });
+  });
+  await heartbeat(0, false, false, 5, [{ environmentId: "mac", available: 1 }]);
+  expect(await operations()).toHaveLength(3);
+  const demands = await t.run((ctx) => ctx.db.query("runnerDemands").collect());
+  expect(demands).toHaveLength(3);
+  expect(demands.every((demand) => demand.attempt === 1 && demand.failures === 0)).toBe(true);
+  expect(demands.every((demand) => demand.bindingId === hosts[0]?.bindingId)).toBe(true);
+});
+
+test.each(["accepted", "claimed", "running"] as const)(
+  "%s automatic runners reserve their binding's environment as well as total capacity",
+  async (phase) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const { t, heartbeat, operations } = await fixture();
+    await heartbeat(0, false, false, 5, [{ environmentId: "mac", available: 1 }]);
+    const first = (await operations())[0];
+    if (!first) throw new Error("Missing demand");
+    await addJobs(t, 2);
+    await t.run((ctx) => ctx.db.patch("operations", first._id, { phase, updatedAt: Date.now() }));
+    await heartbeat(0, false, false, 5, [{ environmentId: "mac", available: 1 }]);
+    expect(await operations()).toHaveLength(1);
+  },
+);
+
+test("missing or zero environment capacity blocks admission, while a legacy heartbeat restores scalar scheduling", async () => {
+  const { t, heartbeat, operations } = await fixture();
+  await addJobs(t, 2);
+  await heartbeat(0, false, false, 3, []);
+  await heartbeat(0, false, false, 3, [{ environmentId: "linux", available: 3 }]);
+  await heartbeat(0, false, false, 3, [{ environmentId: "mac", available: 0 }]);
+  expect(await operations()).toHaveLength(0);
+  await heartbeat(0, false, false, 3);
+  expect(await operations()).toHaveLength(3);
+});
+
+test("action-required demand retries on another eligible machine after ten minutes and counts as a failure", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const { t, heartbeat, operations, hosts } = await fixture();
+  await heartbeat(0);
+  const first = (await operations())[0];
+  if (!first) throw new Error("Missing demand");
+  await t.run((ctx) =>
+    ctx.db.patch("operations", first._id, { phase: "action_required", updatedAt: Date.now() }),
+  );
+  vi.setSystemTime(Date.now() + 599999);
+  await heartbeat(1);
+  expect(await operations()).toHaveLength(1);
+  vi.setSystemTime(Date.now() + 1);
+  await heartbeat(1);
+  expect(await operations()).toHaveLength(2);
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").unique())).toMatchObject({
+    attempt: 2,
+    failures: 1,
+    bindingId: hosts[1]?.bindingId,
+  });
+});
+
+test("retained demand whose operation was deleted retries after ten minutes without inventing a failure", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const { t, heartbeat, operations } = await fixture();
+  await heartbeat(0);
+  const first = (await operations())[0];
+  if (!first) throw new Error("Missing demand");
+  await t.run((ctx) => ctx.db.delete("operations", first._id));
+  await heartbeat(1);
+  expect(await operations()).toHaveLength(0);
+  vi.setSystemTime(Date.now() + 600000);
+  await heartbeat(1);
+  expect(await operations()).toHaveLength(1);
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").unique())).toMatchObject({
+    attempt: 2,
+    failures: 0,
+  });
+});
+
+test("successful mismatched jobs still stop after ten total runner attempts", async () => {
+  const { t, heartbeat, operations } = await fixture();
+  for (let attempt = 0; attempt < 11; attempt++) {
+    await heartbeat(0);
+    const latest = (await operations()).at(-1);
+    if (!latest) throw new Error("Missing demand");
+    await t.run((ctx) => ctx.db.patch("operations", latest._id, { phase: "succeeded" }));
+  }
+  expect(await operations()).toHaveLength(10);
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").unique())).toMatchObject({
+    attempt: 10,
+    failures: 0,
+  });
+});
+
+test("legacy demands without a failure counter keep successful attempts outside the failure budget", async () => {
+  const { t, heartbeat, operations } = await fixture();
+  await heartbeat(0);
+  await t.run(async (ctx) => {
+    const demand = await ctx.db.query("runnerDemands").unique();
+    if (!demand) throw new Error("Missing demand");
+    await ctx.db.patch("runnerDemands", demand._id, { attempt: 3, failures: undefined });
+    await ctx.db.patch("operations", demand.operationId, { phase: "succeeded" });
+  });
+  await heartbeat(0);
+  expect(await operations()).toHaveLength(2);
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").unique())).toMatchObject({
+    attempt: 4,
+    failures: 0,
+  });
+});
+
+test.each([-1, 17, 1.5, NaN, Infinity])(
+  "heartbeat rejects invalid scalar capacity %s",
+  async (slots) => {
+    const { heartbeat, operations } = await fixture();
+    await expect(heartbeat(0, false, true, slots)).rejects.toThrow("invalid_runner_capacity");
+    expect(await operations()).toHaveLength(0);
+  },
+);
+
+test.each([
+  [{ environmentId: "mac", available: -1 }],
+  [{ environmentId: "mac", available: 17 }],
+  [{ environmentId: "mac", available: 1.5 }],
+  [{ environmentId: "mac", available: NaN }],
+  [{ environmentId: "mac", available: Infinity }],
+  [
+    { environmentId: "mac", available: 1 },
+    { environmentId: "mac", available: 2 },
+  ],
+  Array.from({ length: 101 }, (_, index) => ({ environmentId: `env${index}`, available: 1 })),
+])("heartbeat rejects invalid environment slots %#", async (...slots) => {
+  const { heartbeat, operations } = await fixture();
+  await expect(heartbeat(0, false, true, 5, slots)).rejects.toThrow("invalid_runner_capacity");
+  expect(await operations()).toHaveLength(0);
+});
+
+test("scale set bindings leave queued jobs visible without creating demand operations", async () => {
+  const { t, hosts, heartbeat, operations, jobId } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  await t.run((ctx) =>
+    ctx.db.patch("repositoryBindings", host.bindingId, { capacityMode: "scale_set" }),
+  );
+  await heartbeat(0, false, true, 3);
+  expect(await operations()).toEqual([]);
+  expect(await t.run((ctx) => ctx.db.get("githubJobs", jobId))).toMatchObject({ status: "queued" });
+  const device = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: host.machineId,
+    credentialVersion: 0,
+  });
+  expect(await device.query(api.jobs.list, { bindingId: host.bindingId })).toMatchObject([
+    { jobId: 4, status: "queued" },
+  ]);
+  await heartbeat(1, false, true, 1);
   expect(await operations()).toHaveLength(1);
 });

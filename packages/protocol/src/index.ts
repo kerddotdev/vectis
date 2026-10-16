@@ -1,7 +1,9 @@
 import { Schema } from "effect";
 import { RerunFailed, CancelRun, DispatchWorkflow } from "./runs.js";
+import { CacheSizeGiB } from "./cache-volume.js";
 import { RepositoryAccess } from "./repository-access.js";
 import { Identifier } from "./identifier.js";
+import { CapacityMode, ScaleSetState } from "./scale-sets.js";
 import { MachineRepositories, RepositoryConnection } from "./repositories.js";
 
 export { Identifier } from "./identifier.js";
@@ -63,6 +65,13 @@ export const Preparation = Schema.Struct({
   ]),
 });
 export type Preparation = typeof Preparation.Type;
+const WarmPoolSize = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4 }));
+export const EnvironmentImage = Schema.Struct({
+  parentId: Schema.optional(Identifier),
+  revision: Schema.NonEmptyString,
+  runnerVersion: Schema.optional(Schema.NonEmptyString),
+  provisionedAt: Schema.String,
+});
 export const Environment = Schema.Struct({
   id: Identifier,
   name: Schema.NonEmptyString,
@@ -71,6 +80,7 @@ export const Environment = Schema.Struct({
   storagePath: Schema.optional(Schema.NonEmptyString),
   cpu: Schema.Int,
   memoryMiB: Schema.Int,
+  warmPool: Schema.optional(WarmPoolSize),
   state: Schema.Literals(["ready", "action_required"]),
   sshHost: Schema.optional(Schema.String),
   sshPort: Schema.optional(Schema.Int),
@@ -84,6 +94,7 @@ export const Environment = Schema.Struct({
   firmwarePath: Schema.optional(Schema.String),
   firmwareVarsPath: Schema.optional(Schema.String),
   tpmStatePath: Schema.optional(Schema.String),
+  image: Schema.optional(EnvironmentImage),
 });
 export type Environment = typeof Environment.Type;
 export const OperationStatus = Schema.Literals([
@@ -145,13 +156,20 @@ export const Operation = Schema.Struct({
   result: Schema.optional(Schema.Unknown),
 });
 export type Operation = typeof Operation.Type;
+export const ActivityDetail = Schema.Struct({
+  activity: Activity,
+  operations: Schema.Array(Operation),
+});
+export type ActivityDetail = typeof ActivityDetail.Type;
 export const defaultMaxRunners = 5;
 const MaxRunners = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 16 }));
+const MemoryBudgetMiB = Schema.Int.check(Schema.isGreaterThanOrEqualTo(2048));
 export const Machine = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   paused: Schema.Boolean,
   maxRunners: Schema.optional(MaxRunners),
+  memoryBudgetMiB: Schema.optional(MemoryBudgetMiB),
 });
 export const Instance = Schema.Struct({
   id: Identifier,
@@ -160,11 +178,13 @@ export const Instance = Schema.Struct({
   cpu: Schema.optional(Schema.Int),
   memoryMiB: Schema.optional(Schema.Int),
   status: Schema.Literals(["starting", "running", "stopped", "interrupted"]),
+  role: Schema.optional(Schema.Literals(["warming", "warm"])),
   pid: Schema.Int,
   macAddress: Schema.optional(Schema.String),
   sshHost: Schema.optional(Schema.String),
   sshPort: Schema.optional(Schema.Int),
   createdAt: Schema.String,
+  stoppedAt: Schema.optional(Schema.String),
   knownHostsPath: Schema.optional(Schema.String),
 });
 export type Instance = typeof Instance.Type;
@@ -173,12 +193,31 @@ export const CloudStatus = Schema.Struct({
   message: Schema.optional(Schema.String),
 });
 export type CloudStatus = typeof CloudStatus.Type;
+export const EnvironmentSlots = Schema.Struct({
+  environmentId: Identifier,
+  available: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type EnvironmentSlots = typeof EnvironmentSlots.Type;
+export const RunnerCapacity = Schema.Struct({
+  max: Schema.Int,
+  active: Schema.Int,
+  available: Schema.Int,
+  environments: Schema.optional(Schema.Array(EnvironmentSlots)),
+  budget: Schema.optional(
+    Schema.Struct({
+      memoryBudgetMiB: Schema.Number,
+      memoryCommittedMiB: Schema.Number,
+      hostMemoryMiB: Schema.Number,
+      pressure: Schema.Literals(["normal", "warning", "critical"]),
+      pressureKnown: Schema.optional(Schema.Boolean),
+    }),
+  ),
+});
+export type RunnerCapacity = typeof RunnerCapacity.Type;
 export const Snapshot = Schema.Struct({
   revision: Schema.optional(Schema.String),
   preparationBusy: Schema.optional(Schema.Boolean),
-  runnerCapacity: Schema.optional(
-    Schema.Struct({ max: Schema.Int, active: Schema.Int, available: Schema.Int }),
-  ),
+  runnerCapacity: Schema.optional(RunnerCapacity),
   protocolVersion: Schema.Literal(1),
   version: Schema.optional(Schema.String),
   machine: Machine,
@@ -193,6 +232,7 @@ export const Snapshot = Schema.Struct({
   activities: Schema.optional(Schema.Array(Activity)),
   cloud: Schema.optional(CloudStatus),
   repositories: Schema.optional(MachineRepositories),
+  scaleSets: Schema.optional(Schema.Array(ScaleSetState)),
 });
 export type Snapshot = typeof Snapshot.Type;
 export const Command = Schema.Union([
@@ -212,6 +252,20 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("repository.disconnect"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.install-macos"), ...MacInstallation.fields }),
   Schema.Struct({ type: Schema.Literal("environment.prepare-linux"), ...LinuxPreparation.fields }),
+  Schema.Struct({
+    type: Schema.Literal("environment.provision"),
+    id: Identifier,
+    from: Identifier,
+    name: Schema.optional(Schema.NonEmptyString),
+    imageDirectory: Schema.NonEmptyString,
+    setupScript: Schema.optional(
+      Schema.String.check(
+        Schema.isMaxLength(65536),
+        Schema.makeFilter((script) => new TextEncoder().encode(script).length <= 65536),
+      ),
+    ),
+    runner: Schema.optional(Schema.Boolean),
+  }),
   Schema.Struct({ type: Schema.Literal("environment.resume"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.resume-macos"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.open-macos-setup"), id: Identifier }),
@@ -236,6 +290,13 @@ export const Command = Schema.Union([
     ...RepositoryAccess.fields,
   }),
   Schema.Struct({
+    type: Schema.Literal("repository.cache"),
+    bindingId: Identifier,
+    enabled: Schema.Boolean,
+    sizeGiB: Schema.optional(CacheSizeGiB),
+  }),
+  Schema.Struct({ type: Schema.Literal("cache.clear"), bindingId: Identifier }),
+  Schema.Struct({
     type: Schema.Literal("repository.automatic"),
     bindingId: Identifier,
     enabled: Schema.Boolean,
@@ -251,16 +312,29 @@ export const Command = Schema.Union([
     bindingId: Identifier,
     automatic: Schema.optional(Schema.Literal(true)),
     jobId: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+    // Present when a scale set listener requested this runner; the JIT config then comes from that
+    // scale set and GitHub assigns the job.
+    scaleSet: Schema.optional(Schema.Struct({ generation: Schema.Int })),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("repository.capacity-mode"),
+    bindingId: Identifier,
+    mode: CapacityMode,
   }),
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("activity.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
-  Schema.Struct({ type: Schema.Literal("machine.configure"), maxRunners: MaxRunners }),
+  Schema.Struct({
+    type: Schema.Literal("machine.configure"),
+    maxRunners: Schema.optional(MaxRunners),
+    memoryBudgetMiB: Schema.optional(MemoryBudgetMiB),
+  }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
   Schema.Struct({
     type: Schema.Literal("environment.configure"),
     id: Identifier,
+    warmPool: Schema.optional(WarmPoolSize),
     x64: Schema.optional(Schema.Literals(["rosetta", "off"])),
     egress: Schema.optional(Egress),
     cpu: Schema.optional(Schema.Int),
@@ -396,6 +470,13 @@ export const capabilities = [
       "Download and verify Ubuntu 24.04 ARM64, prepare guest SSH and Docker, and register the environment. Requires an idle Apple Silicon host and the Apple helper.",
   },
   {
+    name: "environment.provision",
+    kind: "command",
+    activity: "intent",
+    description:
+      "Clone a ready environment into a new absolute host image directory, preinstall the pinned runner by default, and optionally run a guest setup script. Requires an idle host. The parent stays immutable; cancellation removes owned partial output.",
+  },
+  {
     name: "environment.resume",
     kind: "command",
     activity: "continuation",
@@ -434,6 +515,24 @@ export const capabilities = [
     activity: "setting",
     description:
       "Set which numeric GitHub actor IDs may use this binding and whether manual host approval is required.",
+  },
+  {
+    name: "repository.cache",
+    kind: "command",
+    activity: "setting",
+    description: "Enable or disable a repository cache block device and set its size cap.",
+  },
+  {
+    name: "cache.clear",
+    kind: "command",
+    activity: "setting",
+    description: "Delete a repository cache volume when no job uses it.",
+  },
+  {
+    name: "repository.capacity-mode",
+    kind: "command",
+    activity: "setting",
+    description: "Choose demand scheduling or preview scale set capacity for a repository binding.",
   },
   {
     name: "repository.automatic",
@@ -521,7 +620,7 @@ export const capabilities = [
     name: "machine.configure",
     kind: "command",
     activity: "setting",
-    description: "Set the maximum number of concurrent runners on this machine (1-16, default 5).",
+    description: "Set concurrent runners (1-16, default 5) and the shared VM memory budget in MiB.",
   },
   {
     name: "machine.pause",
@@ -546,7 +645,7 @@ export const capabilities = [
     kind: "command",
     activity: "setting",
     description:
-      "Set CPU, memory, an absolute VM storage directory, egress or opt-in Rosetta x86_64 support for future instances. Internet-only egress is supported only on Windows; open allows host and local network access. Rosetta is Linux-only and does not change ARM64 runner labels.",
+      "Set CPU, memory, an absolute VM storage directory, egress, opt-in Rosetta x86_64 support or an opt-in warm pool (0-4 SSH-ready VMs, default 0). Warm VMs use RAM but hold no job credentials. Internet-only egress is supported only on Windows; open allows host and local network access. Rosetta is Linux-only and does not change ARM64 runner labels.",
   },
   {
     name: "environment.start",

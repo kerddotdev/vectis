@@ -7,6 +7,8 @@ import { StorageReport } from "../../protocol/src/storage.js";
 import { ServiceLog } from "../../protocol/src/logs.js";
 import {
   ApiError,
+  Activity,
+  ActivityDetail,
   Operation,
   Snapshot,
   VectisError,
@@ -14,20 +16,6 @@ import {
   type Connection,
   type ShutdownOptions,
 } from "../../protocol/src/index.js";
-
-// An activity and its operations both come from the snapshot, so every surface reads them the
-// same way, locally and through remote control.
-export function activitiesOf(snapshot: Snapshot) {
-  return snapshot.activities ?? [];
-}
-export function activityOf(snapshot: Snapshot, id: string) {
-  const activity = activitiesOf(snapshot).find((item) => item.id === id);
-  if (!activity) throw new VectisError("activity_missing", "The activity was not found.");
-  return {
-    activity,
-    operations: snapshot.operations.filter((operation) => operation.activityId === id),
-  };
-}
 
 export class VectisClient {
   constructor(readonly connection: Pick<Connection, "url" | "token">) {
@@ -127,15 +115,24 @@ export class VectisClient {
     );
   }
   async operation(id: string, signal?: AbortSignal) {
-    const operation = (await this.status(signal)).operations.find((item) => item.id === id);
-    if (!operation) throw new VectisError("operation_missing", "The operation was not found.");
-    return operation;
+    return Schema.decodeUnknownSync(Operation)(
+      await this.request(`/v1/operations/${encodeURIComponent(id)}`, undefined, signal),
+    );
+  }
+  async operationByKey(key: string, signal?: AbortSignal) {
+    return Schema.decodeUnknownSync(Operation)(
+      await this.request(`/v1/operations?${new URLSearchParams({ key })}`, undefined, signal),
+    );
   }
   async activities(signal?: AbortSignal) {
-    return activitiesOf(await this.status(signal));
+    return Schema.decodeUnknownSync(Schema.Array(Activity))(
+      await this.request("/v1/activities", undefined, signal),
+    );
   }
   async activity(id: string, signal?: AbortSignal) {
-    return activityOf(await this.status(signal), id);
+    return Schema.decodeUnknownSync(ActivityDetail)(
+      await this.request(`/v1/activities/${encodeURIComponent(id)}`, undefined, signal),
+    );
   }
   async settle(command: Command, key: string, signal?: AbortSignal): Promise<Operation> {
     const operation = await this.submit(command, key, signal);
@@ -144,7 +141,7 @@ export class VectisClient {
   }
   async wait(id: string, signal: AbortSignal = AbortSignal.timeout(120000)): Promise<Operation> {
     while (!signal.aborted) {
-      const snapshot = await this.status(signal).catch((error) => {
+      const operation = await this.operation(id, signal).catch((error) => {
         if (signal.aborted)
           throw new VectisError(
             "wait_cancelled",
@@ -152,8 +149,6 @@ export class VectisClient {
           );
         throw error;
       });
-      const operation = snapshot.operations.find((item) => item.id === id);
-      if (!operation) throw new VectisError("operation_missing", "The operation was not found.");
       if (operation.status !== "accepted" && operation.status !== "running") return operation;
       await new Promise<void>((resolve, reject) => {
         const onAbort = () => {

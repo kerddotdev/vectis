@@ -5,6 +5,31 @@ import { join } from "node:path";
 import { Schema } from "effect";
 import { VectisError } from "../../protocol/src/index.js";
 
+export class PreparationProcessError extends VectisError {
+  constructor(
+    code: string,
+    message: string,
+    readonly diagnostics: string,
+  ) {
+    super(
+      code,
+      message,
+      "Inspect the private preparation log and resume setup after fixing network or runtime prerequisites.",
+    );
+  }
+}
+
+function completeLines(text: string, truncated: boolean) {
+  return truncated ? (text.includes("\n") ? text.slice(text.indexOf("\n") + 1) : "") : text;
+}
+
+function serialDiagnostics(serial: string, truncated: boolean) {
+  const bytes = Buffer.from(redact(completeLines(serial, truncated)), "utf8");
+  let start = Math.max(0, bytes.length - 4096);
+  while (((bytes[start] ?? 0) & 0xc0) === 0x80) start++;
+  return bytes.subarray(start).toString("utf8");
+}
+
 export async function preparationStopped(directory: string, id: string) {
   try {
     const receipt = Schema.decodeUnknownSync(
@@ -29,6 +54,7 @@ export async function runPreparationGuest(
     cpu: number;
     memoryMiB: number;
     marker: string;
+    failureMarker?: string;
   },
   signal: AbortSignal,
 ) {
@@ -45,6 +71,7 @@ export async function runPreparationGuest(
         join(input.directory, "seed.iso"),
       ],
       markerStream: "stderr",
+      retainAbortDiagnostics: true,
     },
     signal,
   );
@@ -56,7 +83,9 @@ export async function runPreparationProcess(
     id: string;
     args: readonly string[];
     marker: string;
+    failureMarker?: string;
     markerStream: "stdout" | "stderr";
+    retainAbortDiagnostics?: boolean;
     onRunning?: (macAddress: string) => void;
   },
   signal: AbortSignal,
@@ -76,6 +105,7 @@ export async function runPreparationProcess(
   let serial = "";
   let serialTruncated = false;
   let prepared = false;
+  let guestFailed = false;
   let events = "";
   let eventsTruncated = false;
   let pendingEvents = "";
@@ -112,8 +142,13 @@ export async function runPreparationProcess(
   child.stderr.setEncoding("utf8");
   child.stderr.on("data", (chunk: string) => {
     serialTruncated ||= serial.length + chunk.length > 65536;
-    serial = (serial + chunk).slice(-65536);
+    serial += chunk;
+    if (input.failureMarker && serial.includes(input.failureMarker)) {
+      guestFailed = true;
+      stop();
+    }
     if (input.markerStream === "stderr" && serial.includes(input.marker)) prepared = true;
+    serial = serial.slice(-65536);
   });
   const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
   let force: ReturnType<typeof setTimeout> | undefined;
@@ -132,8 +167,6 @@ export async function runPreparationProcess(
     signal.removeEventListener("abort", stop);
     clearTimeout(force);
     child.stdin.destroy();
-    const completeLines = (text: string, truncated: boolean) =>
-      truncated ? (text.includes("\n") ? text.slice(text.indexOf("\n") + 1) : "") : text;
     await writeFile(
       join(directory, "preparation.log"),
       redact(completeLines(events, eventsTruncated)) +
@@ -146,11 +179,28 @@ export async function runPreparationProcess(
     if (child.pid)
       await writeFile(receipt, JSON.stringify({ instanceId: id, pid: child.pid }), { mode: 0o600 });
   }
-  signal.throwIfAborted();
+  const diagnostics = serialDiagnostics(serial, serialTruncated);
+  if (guestFailed)
+    throw new PreparationProcessError(
+      "guest_preparation_failed",
+      "The guest reported a preparation failure.",
+      diagnostics,
+    );
+  if (signal.aborted) {
+    if (!input.retainAbortDiagnostics) signal.throwIfAborted();
+    const timedOut = signal.reason instanceof Error && signal.reason.name === "TimeoutError";
+    throw new PreparationProcessError(
+      timedOut ? "preparation_timeout" : "preparation_cancelled",
+      timedOut
+        ? "Guest preparation exceeded its time limit and can be resumed."
+        : "Preparation stopped and can be resumed.",
+      diagnostics,
+    );
+  }
   if (failed || child.exitCode !== 0 || !prepared)
-    throw new VectisError(
+    throw new PreparationProcessError(
       "guest_preparation_failed",
       "The guest did not confirm successful preparation.",
-      "Inspect the private preparation log and resume setup after fixing network or runtime prerequisites.",
+      diagnostics,
     );
 }

@@ -1,3 +1,6 @@
+import { runnerPreinstallScript } from "./provision-scripts.js";
+import { windowsToolchainScript } from "./windows-toolchain.js";
+import { windowsDefenderCommands } from "./windows-defender.js";
 import { VectisError } from "../../protocol/src/index.js";
 
 function xml(value: string) {
@@ -11,16 +14,6 @@ function xml(value: string) {
 function component(name: string, contents: string) {
   return `<component name="${name}" processorArchitecture="arm64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">${contents}</component>`;
 }
-
-// Windows installation runs unattended from start to finish, so nobody is ever inside the guest to
-// add git, and actions/checkout needs it. MinGit is the portable build GitHub's own runner images
-// use; everything else a workflow needs comes from its own steps.
-export const windowsGit = {
-  version: "2.55.0.5",
-  url: "https://github.com/git-for-windows/git/releases/download/v2.55.0.windows.5/MinGit-2.55.0.5-arm64.zip",
-  sha256: "05843f9d6e60306c3ab886799e2c67200caab921571f10512df3493049179ddb",
-  bytes: 37650057,
-};
 
 const bootstrap = `$ErrorActionPreference='Stop'; $media=@(Get-Volume | Where-Object FileSystemLabel -eq 'VECTIS_SETUP'); if($media.Count -ne 1){throw 'Setup media unavailable'}; & ($media[0].DriveLetter + ':\\prepare.ps1')`;
 export const windowsBootstrapCommand = `powershell.exe -NoProfile -ExecutionPolicy Bypass -EncodedCommand ${Buffer.from(bootstrap, "utf16le").toString("base64")}`;
@@ -61,6 +54,22 @@ ${component("Microsoft-Windows-International-Core", language)}
 ${component("Microsoft-Windows-Shell-Setup", `<OOBE><HideEULAPage>true</HideEULAPage><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><ProtectYourPC>3</ProtectYourPC></OOBE><UserAccounts><LocalAccounts><LocalAccount wcm:action="add">${password}<Name>vectis</Name><DisplayName>Vectis CI</DisplayName><Group>Administrators</Group></LocalAccount></LocalAccounts></UserAccounts><AutoLogon>${password}<Enabled>true</Enabled><LogonCount>1</LogonCount><Username>vectis</Username></AutoLogon><FirstLogonCommands><SynchronousCommand wcm:action="add"><Order>1</Order><Description>Prepare the Vectis guest</Description><CommandLine>${windowsBootstrapCommand}</CommandLine></SynchronousCommand></FirstLogonCommands>`)}
 </settings></unattend>
 `;
+  const defenderCommands = windowsDefenderCommands();
+  const defenderScripts = defenderCommands.map((command, index) => ({
+    ...command,
+    name: `defender-${index}.cmd`,
+    contents: `@echo off\r\n${command.script}\r\n`,
+  }));
+  const defenderSetup = defenderScripts
+    .map((file, index) => {
+      const invoke = `& cmd.exe /d /c ('"' + (Join-Path $PSScriptRoot '${file.name}') + '"')`;
+      return `${invoke}\nif ($LASTEXITCODE -ne 0) { ${
+        file.allowFailure
+          ? `Write-Warning 'vectis-provision: optional Defender command ${index} failed'`
+          : `throw 'Defender command ${index} failed. Inspect the preceding guest error.'`
+      } }`;
+    })
+    .join("\n");
   const script = String.raw`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $root = 'C:\ProgramData\Vectis'
@@ -107,35 +116,20 @@ Subsystem sftp sftp-server.exe
   Start-Service sshd
   Set-ExecutionPolicy -Scope Process RemoteSigned -Force
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
-  $stage = 'git-download'
-  $gitArchive = Join-Path $env:TEMP 'vectis-mingit.zip'
-  Invoke-WebRequest -UseBasicParsing -Uri '${windowsGit.url}' -OutFile $gitArchive
-  $stage = 'git-checksum'
-  if ((Get-FileHash -Algorithm SHA256 $gitArchive).Hash.ToLowerInvariant() -ne '${windowsGit.sha256}') { throw 'Git checksum mismatch' }
-  $stage = 'git-installation'
-  $gitRoot = 'C:\Program Files\MinGit'
-  Expand-Archive -Path $gitArchive -DestinationPath $gitRoot -Force
-  Remove-Item $gitArchive -Force
-  $gitCommand = Join-Path $gitRoot 'cmd'
-  $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-  if ($machinePath -notlike "*$gitCommand*") { [Environment]::SetEnvironmentVariable('Path', "$machinePath;$gitCommand", 'Machine') }
-  $stage = 'git-verification'
-  $gitVersion = & (Join-Path $gitCommand 'git.exe') --version 2>&1
-  if ($LASTEXITCODE -ne 0) { throw "Git is not usable: $($gitVersion -join ' ')" }
-  $stage = 'toolchain'
-  $system = Get-ComputerInfo -Property WindowsProductName,WindowsVersion,OsBuildNumber
-  [pscustomobject]@{
-    WindowsProductName = $system.WindowsProductName
-    WindowsVersion = $system.WindowsVersion
-    OsBuildNumber = $system.OsBuildNumber
-    Git = $gitVersion
-  } | ConvertTo-Json | Set-Content (Join-Path $root 'toolchain.json')
+  $stage = 'windows-defender'
+${defenderSetup}
+  $stage = 'windows-toolchain'
+${windowsToolchainScript()}
+  $stage = 'runner-preinstall'
+${runnerPreinstallScript("windows")}
   $stage = 'completion'
   Remove-Item C:\Windows\Panther\unattend.xml,C:\Windows\Panther\Unattend\unattend.xml,C:\Windows\System32\Sysprep\unattend.xml -Force -ErrorAction SilentlyContinue
   Remove-Item (Join-Path $root 'failed') -Force -ErrorAction SilentlyContinue
   'SETUP_ID' | Set-Content (Join-Path $root 'prepared') -Encoding ascii
 } catch {
   $failure = $_
+  $errorRecord = ($failure | Out-String -Width 4096)
+  [Console]::Error.WriteLine($errorRecord.Substring(0, [Math]::Min($errorRecord.Length, 16384)))
   $message = $failure.Exception.Message
   try {
     [pscustomobject]@{
@@ -148,5 +142,5 @@ Subsystem sftp sftp-server.exe
   exit 1
 }
 `;
-  return { answer, script: script.replace("SETUP_ID", input.id) };
+  return { answer, script: script.replace("SETUP_ID", input.id), defenderScripts };
 }

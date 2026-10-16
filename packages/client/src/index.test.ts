@@ -79,3 +79,37 @@ test("cancelling an operation wait aborts its in-flight HTTP request", async () 
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test("wait polls only its operation endpoint and returns the observed terminal result", async () => {
+  const paths: Array<string | undefined> = [];
+  const statuses = ["accepted", "running", "succeeded"];
+  const server = createServer((request, response) => {
+    paths.push(request.url);
+    response.setHeader("Content-Type", "application/json");
+    response.end(
+      JSON.stringify({
+        id: "one-operation",
+        key: "one",
+        command: "machine.pause",
+        status: statuses.shift() ?? "succeeded",
+        message: "Observed",
+        createdAt: "2026-10-16T00:00:00Z",
+        updatedAt: "2026-10-16T00:00:00Z",
+        result: { verified: true },
+      }),
+    );
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing server address");
+  const client = new VectisClient({ url: `http://127.0.0.1:${address.port}`, token: "synthetic" });
+  try {
+    expect(await client.wait("one-operation")).toMatchObject({
+      status: "succeeded",
+      result: { verified: true },
+    });
+    expect(paths).toEqual(Array(3).fill("/v1/operations/one-operation"));
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

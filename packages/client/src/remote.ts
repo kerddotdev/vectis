@@ -1,7 +1,12 @@
 import { RepositoryReadiness, RepositoryReadinessInput } from "../../protocol/src/readiness.js";
 import { randomUUID } from "node:crypto";
 import { ServiceLog } from "../../protocol/src/logs.js";
-import { Snapshot, Operation as OperationSchema } from "../../protocol/src/index.js";
+import {
+  Activity,
+  ActivityDetail,
+  Snapshot,
+  Operation as OperationSchema,
+} from "../../protocol/src/index.js";
 import { LocalQuery } from "../../protocol/src/controller.js";
 import { Diagnostics } from "../../protocol/src/diagnostics.js";
 import { StorageReport } from "../../protocol/src/storage.js";
@@ -17,7 +22,6 @@ import {
   type Operation,
 } from "../../protocol/src/index.js";
 import { ControllerClient } from "./controller.js";
-import { activitiesOf, activityOf } from "./index.js";
 
 const Record = Schema.Struct({
   _id: Identifier,
@@ -176,10 +180,19 @@ export class RemoteClient {
     return Schema.decodeUnknownSync(Snapshot)(await this.inspect({ name: "status" }, signal));
   }
   async activities(signal?: AbortSignal) {
-    return activitiesOf(await this.status(signal));
+    return Schema.decodeUnknownSync(Schema.Array(Activity))(
+      await this.inspect({ name: "activities" }, signal),
+    );
   }
   async activity(id: string, signal?: AbortSignal) {
-    return activityOf(await this.status(signal), id);
+    return Schema.decodeUnknownSync(ActivityDetail)(
+      await this.inspect({ name: "activity", id }, signal),
+    );
+  }
+  async operationByKey(key: string, signal?: AbortSignal) {
+    return Schema.decodeUnknownSync(OperationSchema)(
+      await this.inspect({ name: "operation.key", key }, signal),
+    );
   }
   async storage() {
     return Schema.decodeUnknownSync(StorageReport)(await this.inspect({ name: "storage" }));

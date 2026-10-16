@@ -16,6 +16,8 @@ Start with `vectis repository readiness --binding <binding-id> --json` (MCP `vec
 7. **Can the GitHub App reach the repository?** The App must be installed on the owner with access to the repository. Link GitHub again on the connect page to refresh what Vectis sees.
 8. **Did Vectis miss the job?** Run `vectis job scan <binding-id> --wait`.
 
+Jobs with more than 100 labels or a label longer than 100 characters are recorded but cannot match Vectis runners. Unknown GitHub job statuses are retained as waiting until a scan or refresh supplies a known status.
+
 ## An operation failed or needs you
 
 Every operation ends with a status, a message and, when you need to act, a `nextStep`:
@@ -27,17 +29,27 @@ vectis logs --lines 200 --json
 
 Displayed logs, stored operation details and retained runner and preparation diagnostics redact recognized credentials.
 
+For slow runners, inspect `result.phases` on the runner operation, either directly or inside `vectis activity get <activity-id> --json`. Compare `vm_start`, `guest_ready`, `runner_install` and `registration` to find startup costs; `cleanup` measures the stop and release attempt. Each duration is `endedAt - startedAt`. A missing end is still running or interrupted, and older records may omit phases. Job timing starts at the first GitHub busy observation, normally polled every 30 seconds, so short jobs can be missed. These local timings do not measure the full GitHub queue. See [Read phase timings](/docs/guides/runners#read-phase-timings) for the complete phase list, overlap and retention rules.
+
 The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means completion is unconfirmed; follow its `nextStep`. Runner cleanup may still be retried automatically.
+
+GitHub reads, runner deletion and installation token creation retry transient failures up to four attempts within a 45-second budget per request. Retries respect GitHub rate limit headers. `github_unavailable` means GitHub remained unavailable; `github_rate_limited` means the rate limit could not be cleared within that budget. Wait and retry. Side-effecting POST requests are never automatically retried; an ambiguous run command keeps `run_command_unconfirmed`, and an ambiguous runner registration still requires reconciliation.
 
 An operation that stays in **Needs you** after you have read it, usually because the service restarted before it finished, can be closed with **Dismiss** in the app or `vectis operation cancel <operation-id>`. It ends as `cancelled` and nothing else changes. Two cases keep their own way out instead: an interrupted runner is reconciled once its VM is confirmed stopped, and an image preparation is resumed or discarded.
 
-For `runner_cleanup_required`, Vectis retries cleanup about every minute while connected to the cloud, for up to 30 minutes from the operation's last update. GitHub can keep a stopped runner busy until it releases the job, usually within 15 minutes; `runner_busy` means cleanup must wait. Failed retries leave the operation `action_required` and preserve its original update time. After the retry window, or for other interrupted runner states, use `vectis runner reconcile <operation-id>` once the VM is confirmed stopped.
+After a restart, interrupted runners report `runner_recovery_pending`. Once the VM is verified stopped or absent, Vectis automatically reconciles the cloud lease and releases the runner. Recovery also covers `runner_cleanup_required` and `runner_registration_uncertain`. Connected retries use exponential backoff from 1 minute to 30 minutes for up to 24 hours, preserving the schedule across service restarts. GitHub can keep a stopped runner busy until it releases the job, usually within 15 minutes; `runner_busy` means cleanup must wait. An unconfirmed VM exit or cloud release keeps the operation `action_required`. After the retry window, use `vectis runner reconcile <operation-id>` once the VM is confirmed stopped; the result includes this next step.
 
-If Vectis refused the assigned job, the cleanup result keeps the original reason in `cause`. Successful reconciliation ends that runner operation as `failed` with `runner_assignment_rejected` and the original refusal message. Other interrupted runners end as `cancelled`; check GitHub separately for the job result.
+If Vectis refused the assigned job, the cleanup result keeps the original reason in `cause`. Successful reconciliation ends that runner operation as `failed` with `runner_assignment_rejected` and the original refusal message. Offline runners end as retryable `failed` with `runner_offline`, including after delayed cleanup. Other interrupted runners end as `cancelled` with `runner_interrupted`; check GitHub separately for the job result. A request interrupted before startup began ends as `failed` with `runner_interrupted`.
 
 `vectis status --json` groups related operations into `activities`. A preparation keeps one activity across setup attempts; a runner activity includes its VM start and cleanup. Preparation status follows the latest attempt, while a runner follows its root operation. A successful discard cancels the preparation activity; the discard operation itself stays `succeeded`. Operation IDs and request keys stay unchanged.
 
+Status includes every unfinished operation and activity, including `action_required`, plus the newest 100 terminal operations and 100 terminal activities. It includes every non-stopped instance and the newest 20 stopped instances. These are display windows, not the complete retained history. Use `vectis operation get <id> --json` or `vectis activity get <id> --json` for an older retained record; waits poll only the requested operation. `vectis activity list` reads activity summaries directly. The desktop fetches an opened activity's full steps separately.
+
+Stopped instance records older than 24 hours are removed beyond the newest 20, using their stop time when available and creation time for older records. This removes only stopped records, not guest files, unfinished work or request-key receipts. Replaying a retained stop request still returns its original operation; an expired operation's key remains reserved.
+
 Runner activities keep two separate optional facts: `subject.requestedJob` is the job that requested capacity, and `subject.actualJob` is the job observed on that registered runner. GitHub can assign a different job. Each may include `name`, `workflowName` and `htmlUrl` when GitHub provides them; a missing actual job means its identity is still unknown. Job failure does not make a successful runner lifecycle fail, and job success does not hide a cleanup failure.
+
+Idle runners drain after 5 minutes when their requested job no longer needs capacity; manual runners without a requested job use the same window. GitHub reporting offline or missing for 2 consecutive minutes, or continuous status read failures for 15 minutes, stops a listening runner with `runner_offline`. Registration attempts with confirmed cleanup can fail retryably with `runner_registration_failed`; unresolved registration still requires reconciliation.
 
 Actual job observation continues after the runner operation finishes and across service restarts. The service watches up to 20 of the newest eligible leases for activities created within the last 48 hours, stopping when the actual job completes. Already stored observations remain in activity history.
 

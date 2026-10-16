@@ -1,6 +1,11 @@
+import { ScaleSetListener } from "./scale-set-listener.js";
+import type { ScaleSetBroker, CapacityMode } from "../../../packages/protocol/src/scale-sets.js";
+import { startProvision, recoverProvisions } from "./provision-task.js";
 import type { RunControlBroker } from "../../../packages/protocol/src/runs.js";
 import { unconfirmedRunCommand } from "../../../packages/github/src/run-control.js";
 import { repositoryReadiness } from "./repository-readiness.js";
+import { cacheGuestPrivilege, recordCacheGuestPrivilege } from "./cache-guest-privilege.js";
+import { cachePrivilegeError } from "../../../packages/runner/src/cache-guest.js";
 import type {
   CloudRepositoryReadiness,
   RepositoryReadiness,
@@ -51,26 +56,37 @@ import { Schema } from "effect";
 import {
   Command,
   ActivityJob,
+  ActivityBase,
   Environment,
   Preparation,
   VectisError,
-  type Operation,
+  Operation,
   type Snapshot,
+  type Instance,
 } from "../../../packages/protocol/src/index.js";
 import { previewMigration } from "../../../packages/migration/src/index.js";
+import { CacheVolumes, type CacheDisk } from "../../../packages/runner/src/cache-volume.js";
+import { defaultCacheSizeGiB } from "../../../packages/protocol/src/cache-volume.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { Store } from "./store.js";
 import { activityFor, decidingMember, type ActivityLink } from "./activities.js";
 import { retainActivities } from "./activity-retention.js";
 import { observeRunnerJobs, watchRunnerJobs } from "./runner-job-observations.js";
 import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
+import { WarmPool } from "./warm-pool.js";
 
 import type { RepositoryAccess } from "../../../packages/protocol/src/repository-access.js";
 import { jobAccess, restrictiveAccess } from "../../../packages/github/src/access-policy.js";
 
+const CacheRecord = Schema.Struct({ bindingId: Schema.String, directory: Schema.String });
+const CacheUse = Schema.Struct({ bindingId: Schema.String, instanceId: Schema.String });
+
 export class Service {
+  private readonly cacheVolumes: CacheVolumes;
+  private readonly cacheDisks = new Map<string, CacheDisk>();
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
+  private instanceStops = new Map<string, Promise<void>>();
   private preparing: string | undefined;
   private tasks = new Map<string, { abort: AbortController; done: Promise<void> }>();
   private cleanupTimer: ReturnType<typeof setInterval> | undefined;
@@ -78,10 +94,14 @@ export class Service {
   private cleanupAbort = new AbortController();
   private retentionTimer: ReturnType<typeof setInterval> | undefined;
   private stopWatchingJobs: () => void;
+  private readonly warmPool: WarmPool;
+  private warmStarts = new Map<string, AbortSignal>();
+  private readonly scaleSetListener: ScaleSetListener;
   constructor(
     readonly store: Store,
     readonly runtime: VmRuntime,
     readonly runnerConnection: () => RunnerBroker &
+      Partial<ScaleSetBroker> &
       RunControlBroker & {
         analyzeMigration(bindingId: string, signal: AbortSignal): Promise<MigrationAnalysis>;
         publishMigration(previewId: string, signal: AbortSignal): Promise<MigrationPublication>;
@@ -89,6 +109,11 @@ export class Service {
         connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
         disconnectRepository(bindingId: string): Promise<void>;
         setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+        setCacheVolume?(
+          bindingId: string,
+          settings: { enabled: boolean; sizeGiB?: number },
+        ): Promise<void>;
+        setCapacityMode?(bindingId: string, mode: CapacityMode): Promise<void>;
         jobLogs(input: JobLogRequest, signal?: AbortSignal): Promise<JobLogs>;
         setAccess(bindingId: string, access: RepositoryAccess): Promise<void>;
         scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
@@ -103,8 +128,119 @@ export class Service {
       connected: () => false,
     },
   ) {
+    this.cacheVolumes = new CacheVolumes(runtime.options.home);
     store.recover();
     this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
+    const host = { cpus: cpus().length, memoryBytes: totalmem() };
+    this.warmPool = new WarmPool(store, {
+      start: (environment, key, signal) => this.startWarm(environment, key, signal),
+      stop: async (instance) => {
+        const current = this.store.snapshot().instances.find((item) => item.id === instance.id);
+        if (!current || current.status === "stopped") return;
+        await this.runtime.stop(instance.id);
+        if (
+          this.store.snapshot().instances.find((item) => item.id === instance.id)?.status !==
+          "stopped"
+        )
+          throw new VectisError("reconciliation_required", "Warm VM cleanup is unconfirmed.");
+      },
+      admission: (snapshot, environment, count) =>
+        instanceAdmissionError(snapshot, environment, host, count),
+      capacity: (snapshot) =>
+        runnerCapacity(snapshot, host, {
+          lookup: {
+            start: (id) => this.runnerStart(id),
+            instance: (id) => this.store.instance(id),
+          },
+        }),
+      onError: (error) => console.error("Warm pool maintenance failed:", redact(inspect(error))),
+    });
+    this.scaleSetListener = new ScaleSetListener({
+      store,
+      snapshot: () => this.snapshot(),
+      repositories: repositorySnapshot,
+      connected: runnerCleanup.connected,
+      broker: () => {
+        const broker = runnerConnection();
+        if (!broker.openScaleSet || !broker.refreshScaleSet || !broker.closeScaleSet)
+          throw new VectisError(
+            "scale_set_unsupported",
+            "This cloud connection does not support scale sets.",
+          );
+        return {
+          openScaleSet: broker.openScaleSet,
+          refreshScaleSet: broker.refreshScaleSet,
+          closeScaleSet: broker.closeScaleSet,
+        };
+      },
+      submit: (key, command) => this.submit(key, command),
+    });
+  }
+  private async startWarm(
+    environment: Environment,
+    key: string,
+    signal: AbortSignal,
+  ): Promise<Instance> {
+    signal.throwIfAborted();
+    const operation = this.submit(key, { type: "environment.start", id: environment.id });
+    this.warmStarts.set(operation.id, signal);
+    const cancel = () => this.tasks.get(operation.id)?.abort.abort();
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      await this.waitForOperation(operation.id);
+      const instance = this.store.snapshot().instances.find((item) => item.id === operation.id);
+      if (!instance || instance.status !== "running")
+        throw new VectisError("warm_vm_missing", "The warm VM did not start.");
+      return instance;
+    } catch (error) {
+      const task = this.tasks.get(operation.id);
+      task?.abort.abort();
+      try {
+        await task?.done;
+        const instance = this.store.snapshot().instances.find((item) => item.id === operation.id);
+        if (instance?.status === "running") await this.runtime.stop(instance.id);
+      } finally {
+        const remaining = this.store.snapshot().instances.find((item) => item.id === operation.id);
+        if (remaining && remaining.status !== "stopped")
+          this.store.put("instance", remaining.id, { ...remaining, role: undefined });
+      }
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", cancel);
+      this.warmStarts.delete(operation.id);
+    }
+  }
+  private rememberCache(binding: MachineRepositories[number]) {
+    const environment = this.store
+      .snapshot()
+      .environments.find((item) => item.id === binding.environmentId);
+    if (!environment || binding.installationId === undefined) return;
+    const directory = this.cacheVolumes.directory(environment, binding);
+    const id = createHash("sha256").update(directory).digest("hex");
+    this.store.put("cacheVolume", id, { bindingId: binding.id, directory });
+  }
+  private cacheDirectories(bindingId: string) {
+    return this.store
+      .list("cacheVolume")
+      .map((value) => Schema.decodeUnknownSync(CacheRecord)(value))
+      .filter((record) => record.bindingId === bindingId)
+      .map((record) => record.directory);
+  }
+  repositoriesChanged() {
+    this.queue = this.queue
+      .then(async () => {
+        if (this.closing) return;
+        const repositories = this.repositorySnapshot();
+        if (repositories === undefined) return;
+        const ids = new Set(repositories.map((binding) => binding.id));
+        for (const value of this.store.list("cacheVolume")) {
+          const record = Schema.decodeUnknownSync(CacheRecord)(value);
+          if (!ids.has(record.bindingId)) await this.cacheVolumes.disconnect(record.directory);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("Repository cache cleanup failed:", redact(inspect(error)));
+      });
   }
   async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
     return this.runnerConnection().jobLogs(input, signal);
@@ -112,24 +248,51 @@ export class Service {
   observeJobs(observations: JobObservations) {
     observeRunnerJobs(this.store, observations);
   }
+  private state(): Snapshot {
+    const current = this.store.snapshot();
+    return {
+      ...current,
+      preparationBusy:
+        current.preparationBusy === true ||
+        this.preparing !== undefined ||
+        this.store.list("provision").length > 0,
+    };
+  }
   snapshot(): Snapshot {
     const repositories = this.repositorySnapshot();
-    const snapshot = this.store.snapshot();
+    const snapshot = this.state();
     return {
       ...snapshot,
       environments: snapshot.environments.map((environment) => ({
         ...environment,
         network: environmentNetwork(environment),
       })),
-      runnerCapacity: runnerCapacity(snapshot, { cpus: cpus().length, memoryBytes: totalmem() }),
+      runnerCapacity: runnerCapacity(
+        snapshot,
+        { cpus: cpus().length, memoryBytes: totalmem() },
+        {
+          lookup: {
+            start: (id) => this.runnerStart(id),
+            instance: (id) => this.store.instance(id),
+          },
+        },
+      ),
       ...(repositories === undefined ? {} : { repositories }),
+      ...(this.scaleSetListener.states().length
+        ? { scaleSets: this.scaleSetListener.states() }
+        : {}),
     };
   }
   repositoryReadiness(
     input: RepositoryReadinessInput,
     readCloud: (input: RepositoryReadinessInput) => Promise<CloudRepositoryReadiness>,
   ): Promise<RepositoryReadiness> {
-    return repositoryReadiness(input, () => this.store.snapshot().environments, readCloud);
+    return repositoryReadiness(
+      input,
+      () => this.store.snapshot().environments,
+      readCloud,
+      (environment) => cacheGuestPrivilege(this.store, environment),
+    );
   }
   async initialize() {
     await recoverWindowsInstallations(this.store);
@@ -158,6 +321,7 @@ export class Service {
       )
         this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
     }
+    await recoverProvisions(this.store);
     if (!this.closing && !this.retentionTimer) {
       const sweep = () => retainActivities(this.store, (id) => this.tasks.has(id));
       sweep();
@@ -174,6 +338,13 @@ export class Service {
       this.retentionTimer.unref();
     }
     if (!this.closing && !this.cleanupTimer) {
+      this.cleanupSweep = this.retryRunnerCleanup(true)
+        .catch((error: unknown) => {
+          console.error("Runner recovery failed:", redact(inspect(error)));
+        })
+        .finally(() => {
+          this.cleanupSweep = undefined;
+        });
       this.cleanupTimer = setInterval(() => {
         if (this.closing || this.cleanupSweep || !this.runnerCleanup.connected()) return;
         this.cleanupSweep = this.retryRunnerCleanup()
@@ -186,24 +357,90 @@ export class Service {
       }, this.runnerCleanup.intervalMs ?? 60000);
       this.cleanupTimer.unref();
     }
+    if (!this.closing) this.warmPool.start();
+    if (!this.closing) this.scaleSetListener.start();
   }
-  private async retryRunnerCleanup() {
+  private async retryRunnerCleanup(restarted = false) {
+    const metadata = Schema.Struct({
+      recovery: Schema.Struct({
+        startedAt: Schema.Number,
+        attempts: Schema.Number,
+        nextAttemptAt: Schema.Number,
+      }),
+    });
     for (const operation of this.store.snapshot().operations) {
       if (this.closing || !this.runnerCleanup.connected()) break;
       if (
         operation.command !== "runner.run" ||
         operation.status !== "action_required" ||
-        this.tasks.has(operation.id) ||
-        !(Date.now() - Date.parse(operation.updatedAt) < 30 * 60 * 1000) ||
-        !Schema.is(Schema.Struct({ code: Schema.Literal("runner_cleanup_required") }))(
-          operation.result,
+        this.tasks.has(operation.id)
+      )
+        continue;
+      const result = operation.result;
+      if (!Schema.is(Schema.Struct({ code: Schema.optional(Schema.String) }))(result)) continue;
+      if (
+        ![
+          "runner_cleanup_required",
+          "runner_recovery_pending",
+          "runner_registration_uncertain",
+        ].includes(result.code ?? "runner_recovery_pending")
+      )
+        continue;
+      const recovery = Schema.is(metadata)(result)
+        ? result.recovery
+        : {
+            startedAt: Date.parse(operation.updatedAt),
+            attempts: 0,
+            nextAttemptAt:
+              Date.parse(operation.updatedAt) + (this.runnerCleanup.intervalMs ?? 60000),
+          };
+      const now = Date.now();
+      if (now - recovery.startedAt >= 24 * 60 * 60 * 1000) {
+        if (
+          operation.message !==
+          "Automatic runner recovery expired after 24 hours; cleanup is still unconfirmed."
         )
+          this.store.update(operation, {
+            message:
+              "Automatic runner recovery expired after 24 hours; cleanup is still unconfirmed.",
+            result: {
+              ...result,
+              recovery,
+              nextStep:
+                "Confirm the owned VM stopped, then run vectis runner reconcile with this operation ID.",
+            },
+          });
+        continue;
+      }
+      if (
+        now < recovery.nextAttemptAt &&
+        !(restarted && result.code === "runner_recovery_pending" && !Schema.is(metadata)(result))
       )
         continue;
       try {
+        const progress = Schema.is(RunnerProgress)(result) ? result : undefined;
+        const start = this.runnerStart(operation.id);
+        const instanceId = progress?.instanceId ?? start?.id;
+        const instance = instanceId === undefined ? undefined : this.store.instance(instanceId);
+        if (
+          instance?.status === "interrupted" &&
+          (await this.runtime.reconcile(instance.id, instance.directory))
+        )
+          this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
         await this.reconcileRunner(operation.id);
       } catch {
-        // Keep the original update time so failures cannot extend the retry window.
+        const current = this.store.operation(operation.id);
+        if (current?.status === "action_required")
+          this.store.update(current, {
+            result: {
+              ...result,
+              recovery: {
+                ...recovery,
+                attempts: recovery.attempts + 1,
+                nextAttemptAt: Date.now() + Math.min(60000 * 2 ** recovery.attempts, 30 * 60000),
+              },
+            },
+          });
       }
     }
   }
@@ -225,6 +462,8 @@ export class Service {
     if (key.length > 200) throw new VectisError("invalid_request", "The request key is too long.");
     const fingerprint = createHash("sha256").update(JSON.stringify(command)).digest("hex");
     const accepted = this.store.accept(key, fingerprint, command.type, link, operationId);
+    if (accepted.fresh && command.type === "runner.run" && command.scaleSet)
+      this.store.put("scale-set-reservation", key, { bindingId: command.bindingId, key });
     if (accepted.fresh)
       this.queue = this.queue.then(() => this.execute(accepted.operation, command));
     return accepted.operation;
@@ -234,6 +473,12 @@ export class Service {
       throw new VectisError(
         "operation_not_cancellable",
         "No active cancellable task has this operation ID.",
+      );
+    if (waiting.command === "environment.provision" && this.store.get("provision", waiting.id))
+      throw new VectisError(
+        "operation_not_cancellable",
+        "This provisioning attempt still owns output requiring cleanup.",
+        "Reconcile its interrupted instance, then restart the service to retry owned output cleanup.",
       );
     if (waiting.command === "runner.run")
       throw new VectisError(
@@ -253,10 +498,18 @@ export class Service {
     });
     return { operationId: waiting.id, closed: true };
   }
+  private runnerStart(id: string) {
+    try {
+      return this.store.operationByKey(`${id}:start`);
+    } catch (error) {
+      if (!(error instanceof VectisError) || error.code !== "operation_missing") throw error;
+    }
+  }
   private async reconcileRunner(id: string) {
     this.cleanupAbort.signal.throwIfAborted();
-    const snapshot = this.store.snapshot();
-    const interrupted = snapshot.operations.find((item) => item.id === id);
+    const value = this.store.get("operation", id);
+    const interrupted =
+      value === undefined ? undefined : Schema.decodeUnknownSync(Operation)(value);
     if (
       !interrupted ||
       interrupted.command !== "runner.run" ||
@@ -267,11 +520,41 @@ export class Service {
         "reconciliation_required",
         "Only an interrupted runner operation can be reconciled.",
       );
+    const start = this.runnerStart(interrupted.id);
+    if (!Schema.is(RunnerProgress)(interrupted.result)) {
+      const value = this.store.get("activity", interrupted.activityId ?? interrupted.id);
+      const activity =
+        value === undefined ? undefined : Schema.decodeUnknownSync(ActivityBase)(value);
+      if (
+        !start &&
+        activity?.bindingId &&
+        activity.rootOperationId === interrupted.id &&
+        Schema.is(Schema.Struct({ code: Schema.Literal("runner_recovery_pending") }))(
+          interrupted.result,
+        )
+      ) {
+        this.store.update(interrupted, {
+          status: "failed",
+          message: "The service restarted before runner startup or registration began.",
+          result: { code: "runner_interrupted" },
+        });
+        return { operationId: interrupted.id };
+      }
+    }
     const progress = Schema.decodeUnknownSync(RunnerProgress)(interrupted.result);
-    const start = snapshot.operations.find((item) => item.key === `${interrupted.id}:start`);
-    const instance = snapshot.instances.find(
-      (item) => item.id === (progress.instanceId ?? start?.id),
-    );
+    const recoveryCause = Schema.is(
+      Schema.Struct({
+        recoveryCause: Schema.Struct({
+          code: Schema.Literal("runner_offline"),
+          message: Schema.String,
+        }),
+      }),
+    )(interrupted.result)
+      ? interrupted.result.recoveryCause
+      : undefined;
+    const cause = progress.cause ?? recoveryCause;
+    const instanceId = progress.instanceId ?? start?.id;
+    const instance = instanceId === undefined ? undefined : this.store.instance(instanceId);
     if (instance && instance.status !== "stopped")
       throw new VectisError(
         "reconciliation_required",
@@ -304,15 +587,14 @@ export class Service {
         await broker.releaseRunner(lease.id, AbortSignal.any([signal, AbortSignal.timeout(60000)]));
       signal.throwIfAborted();
       this.store.update(interrupted, {
-        status: progress.cause ? "failed" : "cancelled",
+        status: cause ? "failed" : "cancelled",
         message:
-          progress.cause?.message ??
-          "Interrupted runner cleaned up. Check GitHub for the job result.",
+          cause?.message ?? "Interrupted runner cleaned up. Check GitHub for the job result.",
         result: {
           ...progress,
           leaseId: lease.id,
           stage: "finished",
-          ...(progress.cause ? { code: progress.cause.code } : {}),
+          code: cause?.code ?? "runner_interrupted",
         },
       });
       return { operationId: interrupted.id, leaseId: lease.id };
@@ -333,9 +615,18 @@ export class Service {
     operation = this.store.update(operation, { status: "running", message: "Running." });
     try {
       let result: unknown;
-      const snapshot = this.store.snapshot();
+      const snapshot = this.state();
+      const poolOnly =
+        command.type === "environment.configure" &&
+        command.warmPool !== undefined &&
+        command.cpu === undefined &&
+        command.memoryMiB === undefined &&
+        command.storagePath === undefined &&
+        command.x64 === undefined &&
+        command.egress === undefined;
       if (
         (this.preparing || snapshot.preparationBusy) &&
+        !poolOnly &&
         [
           "environment.register",
           "environment.configure",
@@ -348,10 +639,36 @@ export class Service {
           "Finish or cancel the active image preparation before changing environments or starting VMs.",
         );
       switch (command.type) {
+        case "environment.provision": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          if (this.preparing || snapshot.preparationBusy)
+            throw new VectisError("preparation_busy", "An image preparation is already active.");
+          if (
+            hasUnconfirmedMacInstallation(this.store) ||
+            hasUnconfirmedWindowsInstallation(this.store) ||
+            this.store
+              .list("preparation")
+              .some((value) => Schema.decodeUnknownSync(Preparation)(value).phase === "booting")
+          )
+            throw new VectisError(
+              "reconciliation_required",
+              "A guest installer needs exit verification.",
+            );
+          const active = await startProvision(this.store, this.runtime, operation, command);
+          this.preparing = operation.id;
+          const done = active.done.finally(() => {
+            this.preparing = undefined;
+            this.tasks.delete(operation.id);
+            this.store.touch();
+          });
+          this.tasks.set(operation.id, { abort: active.abort, done });
+          return;
+        }
+
         case "environment.install-windows":
         case "environment.resume-windows": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
-          if (this.preparing)
+          if (this.preparing || this.store.list("provision").length)
             throw new VectisError("preparation_busy", "An image preparation is already active.");
           const active = await startWindowsInstallation(
             this.store,
@@ -364,6 +681,7 @@ export class Service {
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
+            this.store.touch();
           });
           this.tasks.set(operation.id, { abort: active.abort, done });
           return;
@@ -409,13 +727,14 @@ export class Service {
               "A Windows installer needs exit verification.",
             );
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
-          if (this.preparing)
+          if (this.preparing || this.store.list("provision").length)
             throw new VectisError("preparation_busy", "An image preparation is already active.");
           const active = await startMacInstallation(this.store, this.runtime, operation, command);
           this.preparing = operation.id;
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
+            this.store.touch();
           });
           this.tasks.set(operation.id, { abort: active.abort, done });
           return;
@@ -431,13 +750,14 @@ export class Service {
               "A guest installer needs exit verification.",
             );
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
-          if (this.preparing)
+          if (this.preparing || this.store.list("provision").length)
             throw new VectisError("preparation_busy", "An image preparation is already active.");
           const active = await startPreparation(this.store, this.runtime, operation, command);
           this.preparing = active.setupId;
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
+            this.store.touch();
           });
           this.tasks.set(operation.id, { abort: active.abort, done });
           return;
@@ -546,8 +866,66 @@ export class Service {
           return;
         }
         case "repository.disconnect": {
-          await this.runnerConnection().disconnectRepository(command.bindingId);
+          const broker = this.runnerConnection();
+          const binding = (await broker.repositories()).find(
+            (item) => item.id === command.bindingId,
+          );
+          if (binding) this.rememberCache(binding);
+          await broker.disconnectRepository(command.bindingId);
+          for (const directory of this.cacheDirectories(command.bindingId))
+            await this.cacheVolumes.disconnect(directory);
           result = { bindingId: command.bindingId, connected: false };
+          break;
+        }
+        case "repository.cache":
+        case "cache.clear": {
+          const broker = this.runnerConnection();
+          const binding = (await broker.repositories()).find(
+            (item) => item.id === command.bindingId,
+          );
+          if (!binding)
+            throw new VectisError("repository_missing", "This repository binding is unavailable.");
+          this.rememberCache(binding);
+          if (command.type === "cache.clear") {
+            const uses = this.store
+              .list("cacheUse")
+              .map((value) => Schema.decodeUnknownSync(CacheUse)(value));
+            const instances = this.store.snapshot().instances;
+            if (
+              uses.some(
+                (use) =>
+                  use.bindingId === binding.id &&
+                  instances.some(
+                    (instance) => instance.id === use.instanceId && instance.status !== "stopped",
+                  ),
+              )
+            )
+              throw new VectisError(
+                "cache_in_use",
+                "Stop or reconcile this binding's cache jobs before clearing its volume.",
+              );
+            for (const directory of this.cacheDirectories(binding.id))
+              await this.cacheVolumes.clear(directory);
+            result = { bindingId: binding.id, cleared: true };
+          } else {
+            if (!broker.setCacheVolume)
+              throw new VectisError(
+                "unsupported",
+                "The cloud connection does not support cache settings.",
+              );
+            const settings = {
+              enabled: command.enabled,
+              ...(command.sizeGiB === undefined ? {} : { sizeGiB: command.sizeGiB }),
+            };
+            await broker.setCacheVolume(binding.id, settings);
+            result = {
+              bindingId: binding.id,
+              cacheVolume: {
+                enabled: command.enabled,
+                sizeGiB: command.sizeGiB ?? binding.cacheVolume?.sizeGiB ?? defaultCacheSizeGiB,
+              },
+            };
+          }
           break;
         }
         case "repository.access": {
@@ -560,6 +938,17 @@ export class Service {
           };
           await this.runnerConnection().setAccess(command.bindingId, access);
           result = { bindingId: command.bindingId, access };
+          break;
+        }
+        case "repository.capacity-mode": {
+          const broker = this.runnerConnection();
+          if (!broker.setCapacityMode)
+            throw new VectisError(
+              "scale_set_unsupported",
+              "This cloud connection cannot change capacity modes.",
+            );
+          await broker.setCapacityMode(command.bindingId, command.mode);
+          result = { bindingId: command.bindingId, capacityMode: command.mode };
           break;
         }
         case "repository.automatic": {
@@ -623,7 +1012,12 @@ export class Service {
                 result,
               });
             })
-            .catch(() => {
+            .catch((error: unknown) => {
+              const githubFailure =
+                error instanceof VectisError &&
+                ["github_unavailable", "github_rate_limited"].includes(error.code)
+                  ? error
+                  : undefined;
               this.store.update(operation, {
                 status: abort.signal.aborted ? "cancelled" : "failed",
                 message: abort.signal.aborted
@@ -632,8 +1026,11 @@ export class Service {
                 result: {
                   bindingId: command.bindingId,
                   ...(command.type === "job.refresh" ? { jobId: command.jobId } : {}),
-                  code: abort.signal.aborted ? "refresh_cancelled" : "job_refresh_failed",
+                  code: abort.signal.aborted
+                    ? "refresh_cancelled"
+                    : (githubFailure?.code ?? "job_refresh_failed"),
                   nextStep:
+                    githubFailure?.nextStep ??
                     "Check repository access and retry the read; for large queues, refresh a known job ID directly.",
                 },
               });
@@ -647,145 +1044,216 @@ export class Service {
         case "runner.run": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
           const broker = this.runnerConnection();
-          const binding = (await broker.repositories()).find(
-            (item) => item.id === command.bindingId,
-          );
-          if (!binding)
-            throw new VectisError("repository_missing", "This repository binding is unavailable.");
-          this.store.updateActivity(operation.id, (base) => ({
-            ...base,
-            bindingId: binding.id,
-            environmentId: binding.environmentId,
-            repository: { id: binding.repositoryId, name: binding.repositoryName },
-          }));
-          const environment = snapshot.environments.find(
-            (item) => item.id === binding.environmentId,
-          );
-          if (!environment || environment.state !== "ready")
-            throw new VectisError("setup_required", "Prepare this repository's environment first.");
           const abort = new AbortController();
+          let lifecycleStarted = false;
           let startId: string | undefined;
-          const demandJobId = command.jobId;
-          if (demandJobId === undefined && restrictiveAccess(binding.access))
-            throw new VectisError(
-              "job_required",
-              "Start a specific job under this repository access policy.",
+          let cache: Awaited<ReturnType<CacheVolumes["acquire"]>> | undefined;
+          const revokeCacheWrite = () => cache?.authorizeWrite(false);
+          abort.signal.addEventListener("abort", revokeCacheWrite, { once: true });
+          const done = (async () => {
+            const binding = (await broker.repositories()).find(
+              (item) => item.id === command.bindingId,
             );
-          const done = runRunnerTask(
-            command.bindingId,
-            operation.id,
-            environment,
-            {
-              broker,
-              request: {
-                ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
-                ...(command.automatic ? { automatic: true } : {}),
-              },
-              ...(demandJobId === undefined
-                ? {}
-                : {
-                    needed: async (signal) => {
-                      if (
-                        command.automatic &&
-                        !(await broker.repositories()).some(
-                          (item) => item.id === command.bindingId && item.automatic,
+            if (!binding)
+              throw new VectisError(
+                "repository_missing",
+                "This repository binding is unavailable.",
+              );
+            abort.signal.throwIfAborted();
+            this.store.updateActivity(operation.id, (base) => ({
+              ...base,
+              bindingId: binding.id,
+              environmentId: binding.environmentId,
+              repository: { id: binding.repositoryId, name: binding.repositoryName },
+            }));
+            const environment = this.store
+              .snapshot()
+              .environments.find((item) => item.id === binding.environmentId);
+            if (!environment || environment.state !== "ready")
+              throw new VectisError(
+                "setup_required",
+                "Prepare this repository's environment first.",
+              );
+            let warmStartId: string | undefined;
+            if (command.scaleSet && restrictiveAccess(binding.access))
+              throw new VectisError(
+                "scale_set_policy_unsupported",
+                "Scale set preview requires any actor and automatic approval.",
+              );
+            if (command.scaleSet && (binding.capacityMode !== "scale_set" || !binding.automatic))
+              throw new VectisError(
+                "automatic_disabled",
+                "Scale set capacity is no longer enabled for this binding.",
+              );
+            const demandJobId = command.scaleSet ? undefined : command.jobId;
+            if (demandJobId === undefined && restrictiveAccess(binding.access))
+              throw new VectisError(
+                "job_required",
+                "Start a specific job under this repository access policy.",
+              );
+            if (
+              binding.cacheVolume?.enabled &&
+              cacheGuestPrivilege(this.store, environment) === false
+            )
+              throw cachePrivilegeError();
+            cache = binding.cacheVolume?.enabled
+              ? await this.cacheVolumes.acquire(environment, binding, binding.cacheVolume.sizeGiB)
+              : undefined;
+            if (cache) this.rememberCache(binding);
+            abort.signal.throwIfAborted();
+            lifecycleStarted = true;
+            return runRunnerTask(
+              command.bindingId,
+              operation.id,
+              environment,
+              {
+                broker,
+                ...(cache
+                  ? {
+                      cache: {
+                        sizeGiB: binding.cacheVolume?.sizeGiB ?? defaultCacheSizeGiB,
+                        authorizeWrite: cache.authorizeWrite,
+                        outcome: cache.outcome,
+                        checked: (allowed: boolean) =>
+                          recordCacheGuestPrivilege(this.store, environment, allowed),
+                      },
+                    }
+                  : {}),
+                acceptedAt: operation.createdAt,
+                request: {
+                  ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
+                  ...(command.automatic ? { automatic: true } : {}),
+                  ...(command.scaleSet ? { scaleSet: command.scaleSet } : {}),
+                },
+                ...(demandJobId === undefined
+                  ? {}
+                  : {
+                      needed: async (signal) => {
+                        if (
+                          command.automatic &&
+                          !(await broker.repositories()).some(
+                            (item) => item.id === command.bindingId && item.automatic,
+                          )
                         )
-                      )
-                        return false;
-                      const job = await broker.refreshJob(command.bindingId, demandJobId, signal);
-                      this.store.updateActivity(operation.id, (base) => ({
-                        ...base,
-                        subject: {
-                          ...base.subject,
-                          type: "runner",
-                          requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
-                        },
-                      }));
-                      // GitHub reports runner ID 0 for a queued job that no runner has taken.
-                      if (job.status !== "queued" || job.runnerId) return false;
-                      if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
-                        throw new VectisError(
-                          "runner_labels_mismatch",
-                          "The GitHub job requires different runner capabilities.",
+                          return false;
+                        const job = await broker.refreshJob(command.bindingId, demandJobId, signal);
+                        this.store.updateActivity(operation.id, (base) => ({
+                          ...base,
+                          subject: {
+                            ...base.subject,
+                            type: "runner",
+                            requestedJob: Schema.decodeUnknownSync(ActivityJob)(job),
+                          },
+                        }));
+                        // GitHub reports runner ID 0 for a queued job that no runner has taken.
+                        if (job.status !== "queued" || job.runnerId) return false;
+                        if (!matchesRunnerLabels(job.labels, environment.os, environment.id))
+                          throw new VectisError(
+                            "runner_labels_mismatch",
+                            "The GitHub job requires different runner capabilities.",
+                          );
+                        const current = (await broker.repositories()).find(
+                          (item) => item.id === command.bindingId,
                         );
-                      const current = (await broker.repositories()).find(
-                        (item) => item.id === command.bindingId,
-                      );
-                      if (!current)
-                        throw new VectisError(
-                          "repository_missing",
-                          "This repository binding is unavailable.",
-                        );
-                      const access = jobAccess(current.access, job);
-                      if (access && (access !== "approval_required" || command.automatic))
-                        throw new VectisError(
-                          access,
-                          "This job is refused by the repository access policy.",
-                        );
-                      return true;
-                    },
-                  }),
-              start: async () => {
-                const started = this.submitChild(operation.id, `${operation.id}:start`, {
-                  type: "environment.start",
-                  id: environment.id,
-                });
-                startId = started.id;
-                const cancelStart = () => {
-                  if (this.closing) this.tasks.get(started.id)?.abort.abort();
-                  else
-                    this.submitChild(operation.id, `${operation.id}:cancel-start`, {
-                      type: "operation.cancel",
-                      id: started.id,
+                        if (!current)
+                          throw new VectisError(
+                            "repository_missing",
+                            "This repository binding is unavailable.",
+                          );
+                        const access = jobAccess(current.access, job);
+                        if (access && (access !== "approval_required" || command.automatic))
+                          throw new VectisError(
+                            access,
+                            "This job is refused by the repository access policy.",
+                          );
+                        return true;
+                      },
+                    }),
+                start: async (onStarting) => {
+                  await this.warmPool.yieldForJob(environment);
+                  abort.signal.throwIfAborted();
+                  const started = this.submitChild(operation.id, `${operation.id}:start`, {
+                    type: "environment.start",
+                    id: environment.id,
+                  });
+                  startId = started.id;
+                  onStarting?.(started.id);
+                  if (cache) {
+                    const volume = cache;
+                    this.cacheDisks.set(started.id, {
+                      sourcePath: volume.disk.sourcePath,
+                      stopped: async (path) => {
+                        if (abort.signal.aborted || this.closing) volume.authorizeWrite(false);
+                        await volume.disk.stopped(path);
+                      },
                     });
-                };
-                abort.signal.addEventListener("abort", cancelStart, { once: true });
-                if (abort.signal.aborted) cancelStart();
-                try {
-                  await this.waitForOperation(started.id);
-                } finally {
-                  abort.signal.removeEventListener("abort", cancelStart);
-                }
-                const instance = this.store
-                  .snapshot()
-                  .instances.find((item) => item.id === started.id);
-                if (!instance || instance.status !== "running")
-                  throw new VectisError("runner_vm_missing", "The runner VM did not start.");
-                return instance;
+                    this.store.put("cacheUse", started.id, {
+                      bindingId: binding.id,
+                      instanceId: started.id,
+                    });
+                  }
+                  const cancelStart = () => {
+                    if (this.closing) this.tasks.get(started.id)?.abort.abort();
+                    else
+                      this.submitChild(operation.id, `${operation.id}:cancel-start`, {
+                        type: "operation.cancel",
+                        id: started.id,
+                      });
+                  };
+                  abort.signal.addEventListener("abort", cancelStart, { once: true });
+                  if (abort.signal.aborted) cancelStart();
+                  try {
+                    await this.waitForOperation(started.id);
+                  } finally {
+                    abort.signal.removeEventListener("abort", cancelStart);
+                  }
+                  const instance = this.store.instance(started.id);
+                  if (!instance || instance.status !== "running")
+                    throw new VectisError("runner_vm_missing", "The runner VM did not start.");
+                  return instance;
+                },
+                claimWarm: () => {
+                  const claimed = this.warmPool.claim(environment.id, operation);
+                  if (claimed) startId = warmStartId = claimed.instance.id;
+                  return claimed;
+                },
+                stop: async () => {
+                  if (!startId) return;
+                  const current = this.store.instance(startId);
+                  if (!current || current.status === "stopped") return;
+                  const stopKey =
+                    startId === warmStartId ? `${operation.id}:stop:warm` : `${operation.id}:stop`;
+                  const stopped = this.submitChild(operation.id, stopKey, {
+                    type: "instance.stop",
+                    id: startId,
+                  });
+                  await this.waitForOperation(stopped.id);
+                  const instance = this.store.instance(startId);
+                  if (instance && instance.status !== "stopped")
+                    throw new VectisError(
+                      "runner_cleanup_required",
+                      "Owned VM termination is unconfirmed.",
+                    );
+                },
+                progress: (result) => {
+                  operation = this.store.update(operation, {
+                    result,
+                    message: `Runner: ${result.stage}.`,
+                  });
+                },
               },
-              stop: async () => {
-                if (!startId) return;
-                const current = this.store.snapshot().instances.find((item) => item.id === startId);
-                if (!current || current.status === "stopped") return;
-                const stopped = this.submitChild(operation.id, `${operation.id}:stop`, {
-                  type: "instance.stop",
-                  id: startId,
-                });
-                await this.waitForOperation(stopped.id);
-                const instance = this.store
-                  .snapshot()
-                  .instances.find((item) => item.id === startId);
-                if (instance && instance.status !== "stopped")
-                  throw new VectisError(
-                    "runner_cleanup_required",
-                    "Owned VM termination is unconfirmed.",
-                  );
-              },
-              progress: (result) => {
-                operation = this.store.update(operation, {
-                  result,
-                  message: `Runner: ${result.stage}.`,
-                });
-              },
-            },
-            abort.signal,
-          )
+              abort.signal,
+            );
+          })()
             .then((completed) => {
               this.store.update(operation, {
                 status: completed.status,
                 message: completed.message,
                 result: {
                   ...completed.progress,
+                  ...("recoveryCause" in completed
+                    ? { recoveryCause: completed.recoveryCause }
+                    : {}),
                   ...("code" in completed
                     ? {
                         code: completed.code,
@@ -797,7 +1265,7 @@ export class Service {
                                   ? completed.nextStep
                                   : completed.status === "action_required"
                                     ? completed.code === "runner_cleanup_required"
-                                      ? "Confirm the owned VM is stopped. While connected, Vectis retries GitHub cleanup automatically for up to 30 minutes. Use vectis runner reconcile with this operation ID if cleanup remains unresolved."
+                                      ? "Confirm the owned VM is stopped. While connected, Vectis retries GitHub cleanup automatically with exponential backoff for up to 24 hours. Use vectis runner reconcile with this operation ID if cleanup remains unresolved."
                                       : "Inspect the owned instance, then run vectis runner reconcile with this operation ID."
                                     : "Inspect the environment prerequisites and GitHub run before requesting a fresh runner.",
                             }),
@@ -806,13 +1274,29 @@ export class Service {
                 },
               });
             })
-            .catch(() => {
-              this.store.update(operation, {
-                status: "action_required",
-                message: "Runner recovery requires inspection.",
-              });
+            .catch((error: unknown) => {
+              if (lifecycleStarted)
+                this.store.update(operation, {
+                  status: "action_required",
+                  message: "Runner recovery requires inspection.",
+                  result: {
+                    ...(typeof operation.result === "object" && operation.result !== null
+                      ? operation.result
+                      : {}),
+                    code: "runner_recovery_pending",
+                  },
+                });
+              else if (abort.signal.aborted)
+                this.store.update(operation, {
+                  status: "cancelled",
+                  message: "Runner request cancelled before startup.",
+                });
+              else this.failOperation(operation, error);
             })
             .finally(() => {
+              abort.signal.removeEventListener("abort", revokeCacheWrite);
+              cache?.release();
+              if (startId) this.cacheDisks.delete(startId);
               this.tasks.delete(operation.id);
             });
           this.tasks.set(operation.id, { abort, done });
@@ -859,13 +1343,30 @@ export class Service {
           break;
         }
         case "machine.configure":
+          if (command.maxRunners === undefined && command.memoryBudgetMiB === undefined)
+            throw new VectisError("invalid_resources", "Specify a runner limit or memory budget.");
+          if (
+            command.memoryBudgetMiB !== undefined &&
+            (!Number.isSafeInteger(command.memoryBudgetMiB) ||
+              command.memoryBudgetMiB < 2048 ||
+              command.memoryBudgetMiB * 1024 ** 2 > totalmem())
+          )
+            throw new VectisError(
+              "invalid_resources",
+              "The VM memory budget must be a whole number between 2048 MiB and total host memory.",
+              "Choose a memory budget between 2048 MiB and total host memory.",
+            );
           this.store.put("machine", "self", {
             ...snapshot.machine,
-            maxRunners: command.maxRunners,
+            ...(command.maxRunners !== undefined ? { maxRunners: command.maxRunners } : {}),
+            ...(command.memoryBudgetMiB !== undefined
+              ? { memoryBudgetMiB: command.memoryBudgetMiB }
+              : {}),
           });
           break;
         case "machine.pause":
           this.store.put("machine", "self", { ...snapshot.machine, paused: command.paused });
+          if (command.paused) await this.warmPool.drainEnvironment();
           break;
         case "environment.register":
           await this.runtime.validate(command.environment);
@@ -900,11 +1401,20 @@ export class Service {
             command.memoryMiB === undefined &&
             command.storagePath === undefined &&
             command.x64 === undefined &&
-            command.egress === undefined
+            command.egress === undefined &&
+            command.warmPool === undefined
           )
             throw new VectisError(
               "invalid_request",
-              "Provide CPU, memory, a storage path, x64 or egress.",
+              "Provide CPU, memory, a storage path, x64, egress or a warm pool size.",
+            );
+          if (
+            command.warmPool !== undefined &&
+            (!Number.isInteger(command.warmPool) || command.warmPool < 0 || command.warmPool > 4)
+          )
+            throw new VectisError(
+              "invalid_request",
+              "Warm pool size must be a whole number from 0 to 4.",
             );
           if (command.x64 === "rosetta" && current.os !== "linux")
             throw new VectisError(
@@ -932,13 +1442,22 @@ export class Service {
             ...(command.cpu !== undefined ? { cpu: command.cpu } : {}),
             ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
+            ...(command.warmPool !== undefined ? { warmPool: command.warmPool } : {}),
           };
           await this.runtime.validate(environment);
           this.store.put("environment", command.id, environment);
+          await this.warmPool.drainEnvironment(command.id);
           result = { environment, appliesTo: "future_instances" };
           break;
         }
         case "environment.remove":
+          if (
+            snapshot.environments.some((environment) => environment.image?.parentId === command.id)
+          )
+            throw new VectisError(
+              "environment_has_children",
+              "Remove derived environments before removing their parent environment. Windows images may depend on its backing disk.",
+            );
           if (
             snapshot.instances.some(
               (instance) => instance.environmentId === command.id && instance.status !== "stopped",
@@ -949,9 +1468,12 @@ export class Service {
               "The environment has running or interrupted instances.",
             );
           this.store.remove("environment", command.id);
+          this.store.remove("cacheGuestPrivilege", command.id);
           break;
         case "environment.start": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          const warmSignal = this.warmStarts.get(operation.id);
+          warmSignal?.throwIfAborted();
           if (
             this.store
               .list("preparation")
@@ -963,11 +1485,6 @@ export class Service {
             );
           if (snapshot.machine.paused)
             throw new VectisError("machine_paused", "The machine is paused.", "Run vectis resume.");
-          if (snapshot.instances.some((instance) => instance.status === "interrupted"))
-            throw new VectisError(
-              "reconciliation_required",
-              "An interrupted instance needs inspection before new work can start.",
-            );
           const defaults = Schema.decodeUnknownSync(Environment)(
             this.store.get("environment", command.id),
           );
@@ -977,6 +1494,8 @@ export class Service {
             ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
           };
+          if (warmSignal && !this.warmPool.canFill(environment))
+            throw new VectisError("warm_pool_yielded", "Warm pool startup yielded to real work.");
           this.runtime.validateResources(environment);
           const admissionError = instanceAdmissionError(snapshot, environment, {
             cpus: cpus().length,
@@ -993,9 +1512,13 @@ export class Service {
             status: "starting" as const,
             pid: 0,
             createdAt: operation.createdAt,
+            ...(warmSignal ? { role: "warming" as const } : {}),
           };
           this.store.put("instance", id, record);
           const abort = new AbortController();
+          const cancelWarm = () => abort.abort();
+          warmSignal?.addEventListener("abort", cancelWarm, { once: true });
+          if (warmSignal?.aborted) cancelWarm();
           const done = (async () => {
             try {
               const instance = await this.runtime.start(
@@ -1007,8 +1530,10 @@ export class Service {
                     status: cleaned ? "stopped" : "interrupted",
                     pid: 0,
                   });
+                  if (cleaned) this.store.remove("cacheUse", id);
                 },
                 abort.signal,
+                { cacheDisk: this.cacheDisks.get(id) },
               );
               this.store.put("instance", id, {
                 ...record,
@@ -1047,6 +1572,7 @@ export class Service {
               else this.failOperation(operation, error);
             }
           })().finally(() => {
+            warmSignal?.removeEventListener("abort", cancelWarm);
             this.tasks.delete(operation.id);
           });
           this.tasks.set(operation.id, { abort, done });
@@ -1059,7 +1585,7 @@ export class Service {
               "The instance startup task has not finished.",
               "Cancel the startup operation and wait for cleanup before reconciling.",
             );
-          const instance = snapshot.instances.find((item) => item.id === command.id);
+          const instance = this.store.instance(command.id);
           if (!instance) throw new VectisError("instance_missing", "Instance not found.");
           if (
             instance.status !== "interrupted" ||
@@ -1073,9 +1599,42 @@ export class Service {
           this.store.put("instance", command.id, { ...instance, status: "stopped", pid: 0 });
           break;
         }
-        case "instance.stop":
-          await this.runtime.stop(command.id);
-          break;
+        case "instance.stop": {
+          const provision =
+            this.tasks.has(command.id) &&
+            snapshot.operations.some(
+              (item) => item.id === command.id && item.command === "environment.provision",
+            );
+          const abort = new AbortController();
+          let stopping = this.instanceStops.get(command.id);
+          if (!stopping) {
+            const startup = this.tasks.get(command.id);
+            stopping = (async () => {
+              if (startup) {
+                startup.abort.abort();
+                await startup.done;
+                if (provision) return;
+              }
+              const instance = this.store.instance(command.id);
+              if (instance?.status !== "stopped") await this.runtime.stop(command.id);
+            })().finally(() => this.instanceStops.delete(command.id));
+            this.instanceStops.set(command.id, stopping);
+          }
+          const done = stopping
+            .then(() => {
+              this.store.update(operation, {
+                status: "succeeded",
+                message: "Completed.",
+                ...(provision
+                  ? { result: { operationId: command.id, cancellationRequested: true } }
+                  : {}),
+              });
+            })
+            .catch((error: unknown) => this.failOperation(operation, error))
+            .finally(() => this.tasks.delete(operation.id));
+          this.tasks.set(operation.id, { abort, done });
+          return;
+        }
         case "migration.preview":
           result = previewMigration(command.source, command.targets);
           break;
@@ -1115,9 +1674,7 @@ export class Service {
   private async waitForOperation(id: string) {
     const deadline = Date.now() + 600000;
     while (Date.now() < deadline) {
-      const operation = this.store.snapshot().operations.find((item) => item.id === id);
-      if (!operation)
-        throw new VectisError("operation_missing", "Runner control operation is missing.");
+      const operation = this.store.operation(id);
       if (operation.status === "succeeded") return;
       if (operation.status !== "accepted" && operation.status !== "running") {
         const result = operation.result;
@@ -1148,7 +1705,7 @@ export class Service {
     await this.cleanupSweep;
   }
   beginShutdown(ifIdle: boolean) {
-    const snapshot = this.store.snapshot();
+    const snapshot = this.state();
     if (
       ifIdle &&
       (snapshot.preparationBusy ||
@@ -1166,15 +1723,25 @@ export class Service {
       );
     this.closing = true;
   }
+  async suspendScaleSets() {
+    await this.scaleSetListener.suspend();
+  }
+  resumeScaleSets() {
+    this.scaleSetListener.resume();
+  }
   async close() {
     this.closing = true;
+    const poolClosed = this.warmPool.close().catch((error: unknown) => ({ error }));
     this.stopWatchingJobs();
+    await this.scaleSetListener.close();
     if (this.retentionTimer) clearInterval(this.retentionTimer);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.cleanupAbort.abort();
     for (const task of this.tasks.values()) task.abort.abort();
     await Promise.all([this.queue, this.cleanupSweep]);
     await Promise.all([...this.tasks.values()].map((task) => task.done));
+    const poolResult = await poolClosed;
     await this.runtime.close();
+    if (poolResult) throw poolResult.error;
   }
 }

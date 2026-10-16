@@ -10,6 +10,9 @@ import {
   GitHubAppClient,
   GitHubApiError,
   GitHubPermissionError,
+  GitHubUnavailableError,
+  GitHubRateLimitError,
+  GitHubUncertainError,
 } from "../packages/github/src/app-client.js";
 import { RunControlCommand, RunControlOutcome } from "../packages/protocol/src/runs.js";
 
@@ -281,6 +284,9 @@ export const control = action({
     } catch (error) {
       if (acceptedOutcome) outcome = acceptedOutcome;
       else if (responseReceived) outcome = unconfirmedRunCommand(command);
+      else if (error instanceof GitHubUncertainError) outcome = unconfirmedRunCommand(command);
+      else if (error instanceof GitHubUnavailableError || error instanceof GitHubRateLimitError)
+        outcome = rejected(error.code, error.message, error.nextStep);
       else if (error instanceof GitHubPermissionError)
         outcome = rejected(error.code, error.message, error.nextStep);
       else if (

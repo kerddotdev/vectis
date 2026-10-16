@@ -50,6 +50,8 @@ export async function prepareWindowsMedia(
   });
   await writeFile(join(media, "Autounattend.xml"), seed.answer, { mode: 0o600 });
   await writeFile(join(media, "prepare.ps1"), seed.script, { mode: 0o600 });
+  for (const file of seed.defenderScripts)
+    await writeFile(join(media, file.name), file.contents, { mode: 0o600 });
   const iso = join(directory, "setup.iso");
   await runProcess(
     "/usr/bin/hdiutil",

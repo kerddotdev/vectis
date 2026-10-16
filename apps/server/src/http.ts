@@ -18,7 +18,7 @@ import {
 } from "../../../packages/protocol/src/index.js";
 import { runtimeDiagnostics } from "../../../packages/runner/src/diagnostics.js";
 import { storageReport } from "../../../packages/runner/src/storage.js";
-import { Store } from "./store.js";
+import { Store, snapshotLimits, type StoreOptions } from "./store.js";
 import { Service } from "./service.js";
 import { VmRuntime, type RuntimeOptions } from "../../../packages/runner/src/runtime.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
@@ -53,12 +53,13 @@ async function body(request: IncomingMessage) {
   }
 }
 export async function startService(
-  options: RuntimeOptions & {
-    port?: number;
-    token?: string;
-    keychainHelper?: string;
-    onShutdown?: () => void;
-  },
+  options: RuntimeOptions &
+    StoreOptions & {
+      port?: number;
+      token?: string;
+      keychainHelper?: string;
+      onShutdown?: () => void;
+    },
 ) {
   privateHome(options.home);
   privateFile(join(options.home, "connection.json"));
@@ -90,7 +91,7 @@ export async function startService(
   const token = options.token ?? randomBytes(32).toString("hex");
   let store: Store;
   try {
-    store = new Store(join(options.home, "state.sqlite"));
+    store = new Store(join(options.home, "state.sqlite"), options);
   } catch (error) {
     await rm(lockPath, { force: true });
     throw error;
@@ -132,6 +133,7 @@ export async function startService(
   const reload = () => {
     const current = relayUpdate.then(async () => {
       if (closing || !connection) throw new Error("Service is not ready for cloud reload.");
+      await service.suspendScaleSets();
       await relay?.close();
       if (relay) {
         relay = undefined;
@@ -142,13 +144,21 @@ export async function startService(
         new VectisClient(connection),
         options.keychainHelper,
         (value) => {
-          if (!isDeepStrictEqual(cloud, value)) store.touch();
+          const changed = !isDeepStrictEqual(cloud, value);
           cloud = value;
+          if (changed) store.touch();
         },
-        () => store.touch(),
+        () => {
+          store.touch();
+          service.repositoriesChanged();
+        },
         (entries) => service.observeJobs(entries),
       );
-      if (relay) store.touch();
+      service.resumeScaleSets();
+      if (relay) {
+        store.touch();
+        service.repositoriesChanged();
+      }
     });
     relayUpdate = current.catch(() => {});
     return current;
@@ -275,6 +285,25 @@ export async function startService(
           });
         return reply(response, 200, { ...service.snapshot(), version: buildInfo().version, cloud });
       }
+      if (request.method === "GET" && request.url === "/v1/activities")
+        return reply(response, 200, store.activitySummaries(snapshotLimits.activities));
+      if (request.method === "GET" && request.url?.startsWith("/v1/operations?")) {
+        const key = new URL(request.url, "http://127.0.0.1").searchParams.get("key");
+        if (!key) throw new VectisError("invalid_request", "An operation key is required.");
+        return reply(response, 200, store.operationByKey(key));
+      }
+      if (request.method === "GET" && request.url?.startsWith("/v1/operations/"))
+        return reply(
+          response,
+          200,
+          store.operation(decodeURIComponent(request.url.slice("/v1/operations/".length))),
+        );
+      if (request.method === "GET" && request.url?.startsWith("/v1/activities/"))
+        return reply(
+          response,
+          200,
+          store.activity(decodeURIComponent(request.url.slice("/v1/activities/".length))),
+        );
       if (request.method === "GET" && request.url === "/v1/capabilities")
         return reply(response, 200, { protocolVersion: 1, capabilities });
       if (request.method === "POST" && request.url === "/v1/commands") {
@@ -299,11 +328,19 @@ export async function startService(
         error instanceof VectisError
           ? error
           : new VectisError("internal_error", "The service could not process the request.");
-      reply(response, issue.code === "idempotency_conflict" ? 409 : 400, {
-        code: issue.code,
-        message: redact(issue.message),
-        nextStep: redact(issue.nextStep),
-      });
+      reply(
+        response,
+        issue.code === "idempotency_conflict"
+          ? 409
+          : ["operation_missing", "activity_missing"].includes(issue.code)
+            ? 404
+            : 400,
+        {
+          code: issue.code,
+          message: redact(issue.message),
+          nextStep: redact(issue.nextStep),
+        },
+      );
     });
   });
   server.requestTimeout = 15000;
@@ -361,9 +398,9 @@ export async function startService(
   } catch (error) {
     storageAbort.abort();
     await storageInspection;
+    await service.close();
     await relay?.close();
     server.close();
-    await service.close();
     store.close();
     await rm(lockPath, { force: true });
     throw error;

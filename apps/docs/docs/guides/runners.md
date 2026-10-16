@@ -3,7 +3,22 @@ title: Runners and jobs
 description: Automatic and manual runners, reading job results, cancelling and recovering.
 ---
 
-Every job runs on its own runner in its own VM. Vectis boots a copy of the environment, registers a GitHub runner that accepts exactly one job, runs it, then deletes the VM and the registration.
+Every job runs on its own runner in its own VM. Vectis boots a copy of the environment or takes over an unused warm VM, registers a GitHub runner that accepts exactly one job, runs it, then deletes the VM and the registration.
+
+## Optional warm pool
+
+Keep up to four pre-booted, SSH-ready VMs per environment to skip cloning, booting and waiting for SSH when a job arrives. The pool is opt-in and defaults to zero on Linux, macOS and Windows:
+
+```sh
+vectis environment configure <environment-id> --warm-pool 1 --wait
+vectis environment configure <environment-id> --warm-pool 0 --wait
+```
+
+Warm VMs use real host RAM and disk space while idle. They follow the shared memory budget, normal-pressure gate and macOS two-VM limit. Vectis leaves a runner slot and another startup estimate free, and does not fill the pool while a runner is waiting for a VM or preparation is busy. The requested size is an upper bound, not a capacity guarantee. With a one-runner limit, no warm VM is kept.
+
+Idle warm VMs have no runner registration, JIT configuration or job credentials. Registration happens only after a runner atomically takes over the VM and checks SSH. Unhealthy VMs are stopped before falling back to a cold start; used job VMs never return to the pool. `status` and MCP snapshots distinguish idle pool instances with `role: "warm"` and background startup with `role: "warming"`, separately from the VM's lifecycle status. They are not running jobs. Reported runner capacity treats owned pool VMs as reclaimable while the budget still reports their RAM usage.
+
+Idle warm VMs are stopped and replaced after 30 minutes. A real job can reclaim warm VMs belonging to other environments when it needs memory or a macOS slot. Pausing, disabling the pool or shutting down the service drains idle VMs; changing environment defaults replaces them. After a crash, pool VMs require the same confirmed-exit reconciliation as other interrupted instances.
 
 ## Automatic runners
 
@@ -14,13 +29,46 @@ vectis repository enable-auto <binding-id>
 vectis repository disable-auto <binding-id>
 ```
 
-With automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts runners when it is connected and not paused, one per queued job, and a new job also starts one right away instead of waiting for the next heartbeat.
+In the default `demand` capacity mode, with automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts runners when it is connected and not paused, one per queued job, and a new job also starts one right away instead of waiting for the next heartbeat.
 
-A Mac runs up to five runners at once by default; change it in **Settings** or with `vectis machine configure --max-runners <N>` (1 to 16). The Mac also never starts more than its CPU and memory allow: all running and starting VMs together get at most every CPU core and 75 percent of the memory, and at most two macOS VMs run at a time. It counts with your largest ready environment, so with a 6 CPU environment on a 14 core Mac two jobs run at once, whatever the limit says. `vectis status` and the Settings view show how many fit right now; give the environment fewer CPUs or less memory with `vectis environment configure` to run more.
+A Mac runs up to five runners at once by default; change it in **Settings** or with `vectis machine configure --max-runners <N>` (1 to 16). CPU and memory settings on an environment are per-VM ceilings. CPU ceilings may add up to more than the host's cores; each VM must still fit the host's core count. Memory admission uses a shared budget, defaulting to 75 percent of host RAM, rather than adding up the ceilings. Set it with `vectis machine configure --memory-budget-mib <N>` (2048 MiB to total host RAM).
 
-Before booting a VM, and again before registering the runner, Vectis checks with GitHub that the job is still queued. GitHub may hand the runner a different job with the same labels. If the original job is still queued after a runner succeeded, or a minute after it failed, Vectis starts another, at most three times per job. It never retries an interrupted or cancelled runner on its own, with one exception: a job that waits for an environment approval or a concurrency group gets a runner once GitHub queues it.
+Each non-stopped VM commits the larger of its measured process RSS and a startup floor: 2048 MiB for Linux, 4096 MiB for macOS or Windows, capped by that VM's memory ceiling. Measurements are cached for five seconds. An unavailable footprint measurement uses the configured ceiling; a fresh VM without a PID reserves its startup estimate. Accepted runners reserve the estimate before boot, conservatively using the largest ready estimate until their environment is known. Starting another VM must fit that estimate into the remaining budget, and host memory pressure must be normal. Warning or critical pressure returns `memory_pressure`; a full budget returns `memory_budget_exceeded`. Unknown pressure is treated as normal and reported with `pressureKnown: false`.
+
+Capacity is calculated separately for each ready environment. `vectis status --json` includes `runnerCapacity.environments` and `runnerCapacity.budget` with the effective budget, committed memory, host RAM and pressure. The overall available count is the maximum environment count, not their sum. macOS retains its shared two-VM limit. Interrupted VMs hold memory until verified stopped. An action-required runner whose VM is verified stopped releases its local slot while cleanup remains unresolved. Existing VMs continue running when pressure rises or the budget is lowered; the budget gates new starts rather than enforcing a hard runtime memory cap.
+
+Generous ceilings let a build grow when resources are available: for example Linux with 8 vCPUs / 12288 MiB, Windows with 8 / 16384 MiB, or macOS with 6 / 12288 MiB, when the host supports them. Unused guest memory is allocated lazily, so a ceiling is not an immediate reservation. Touched memory can remain allocated until the disposable VM exits. These are recommendations, not changes to preparation defaults.
+
+In demand mode, before booting a VM, and again before registering the runner, Vectis checks with GitHub that the job is still queued. GitHub may hand the runner a different job with the same labels. If the original job is still queued after a runner succeeded, Vectis can request another runner without consuming the failure budget. Automatic admission stops after three failures or ten total attempts per job. Failures include failed operations, requests that expire before claim, and action-required operations. Failed and expired requests wait 60 seconds before retrying; action-required operations wait ten minutes. A deleted previous operation can retry after ten minutes without inventing a failure. A person's cancellation stays final unless GitHub queues the job again after an approval or concurrency wait.
 
 Automatic runners are off until you turn them on, per connection. These CLI commands wait for the setting to be applied without needing `--wait`, and return a nonzero exit code if it fails or needs attention.
+
+## Scale set capacity (preview)
+
+Each repository connection chooses a capacity mode independently. `demand` uses per-job admission and is the default. `scale_set` uses GitHub's runner scale set queue, with one host-owned session per binding. Enable the preview with:
+
+```sh
+vectis repository capacity-mode <binding-id> scale-set
+vectis repository enable-auto <binding-id>
+vectis status --json
+```
+
+The host long-polls with a queue-scoped token. The cloud keeps the GitHub App key and opens, refreshes and closes sessions. The token never goes to a guest or appears in status. GitHub's `totalAssignedJobs` is the capacity level, not a count to add for each notification. The host subtracts this binding's accepted and running scale set requests and limits new requests to the environment's free local capacity. Request keys and message progress are persisted before acknowledgement so queue redelivery cannot repeat an accepted request.
+
+Scale set runners request JIT configuration for their session generation without a job ID. GitHub assigns the job after registration. They skip demand-mode per-job queued checks and drain after five idle minutes, after confirming they are not busy. Scale set reservations use the same per-environment slots as demand runners, including the shared memory budget and host pressure. Runners without cache volumes can take an idle warm pool VM; cache-enabled runners cold-start with their private cache disk attached. Scale set grants always have `cacheWrite: false` because the workflow run is unknown at prepare time; changes to their private cache forks are discarded. The same VM resource limits and guest isolation apply to Linux, macOS and Windows. Linux and macOS NAT do not enforce egress filtering; Windows defaults to enforced internet-only egress.
+
+Preview scale sets support only unrestricted actors with automatic approval. Actor allowlists and required manual capacity approval need demand mode; they report `scale_set_policy_unsupported` rather than weakening policy. GitHub's maintainer approval rules for external pull requests still apply. A conflicting session reports `scale_set_session_conflict`; Vectis does not take over another listener's session. Unsupported responses and authorization failures also leave the listener `action_required` with a code.
+
+`status.scaleSets` reports `connecting`, `listening`, `action_required` or `stopped` per binding, plus the last assigned level and reserved runners when known. MCP `vectis_status` includes the same listener states. A queue 401 triggers one serialized cloud token refresh and a retry; transient failures use abortable backoff and honor `Retry-After`.
+
+Pause, disable automatic runners, disconnect the repository or switch back to demand to stop polling and attempt to close the session. Existing jobs finish normally. A failed session close is bounded and best effort; GitHub may retain it until expiry. After resolving a listener error, disable and re-enable automatic runners to retry.
+
+```sh
+vectis repository disable-auto <binding-id>
+vectis repository capacity-mode <binding-id> demand
+```
+
+These are setting commands and wait for confirmation without `--wait`. The equivalent MCP command is `vectis_command` with `{key, command: {type: "repository.capacity-mode", bindingId, mode: "scale_set"}}`; the protocol uses `scale_set`, while the CLI uses `scale-set`. Remote commands replay through the same local service path.
 
 ## Manual runners
 
@@ -31,11 +79,40 @@ vectis runner run <binding-id> --key <any-unique-key> --json
 vectis runner run <binding-id> --job-id <github-job-id> --json   # only if that job is still queued
 ```
 
-A manual runner without a job ID waits up to six hours for a job.
+A manual runner without a job ID waits for work and drains after 5 idle minutes. The listener has a six-hour maximum lifetime, including job execution.
 
 An automatic runner request that the Mac does not pick up expires so another Mac connected to the same repository can take the job: after 2 minutes with result code `machine_offline` if the Mac went offline, or after 10 minutes with `claim_timeout` if it stayed online. The job is requested again on the next heartbeat.
 
-A runner requested for a specific job is drained after 10 minutes of inactivity if that job no longer needs queued capacity. Vectis stops the VM and releases the runner lease, reporting the operation as `cancelled` with result code `runner_idle`; busy runners and runners whose jobs still need queued capacity keep listening.
+Every runner is drained after 5 minutes of inactivity if its requested job no longer needs queued capacity. Manual runners without a requested job drain after the same idle window. Vectis confirms the runner is not busy, stops the VM and releases the lease, reporting `cancelled` with result code `runner_idle`. Busy runners and runners whose jobs still need queued capacity keep listening.
+
+A locally listening runner that GitHub reports offline or missing for 2 consecutive minutes is stopped with retryable failure code `runner_offline`. Continuous status read failures for 15 minutes trigger the same recovery. Cleanup must be confirmed before the operation ends; unconfirmed cleanup stays `action_required`.
+
+## Read phase timings
+
+Inspect a runner with `vectis operation get <operation-id> --json`, or use `vectis activity get <activity-id> --json` to include its child operations. The runner operation's `result.phases` retains phase timestamps as `stage` changes. CLI output is always JSON; `--json` makes it compact. MCP `vectis_operation` and `vectis_activity` return these details, locally and through remote inspection, including retained operations outside the status window. MCP `vectis_status` returns a compact summary without operation results or phase timestamps; use the detail tools to read timings.
+
+Each phase has a `name`, an ISO UTC `startedAt`, and an optional `endedAt`. Subtract the timestamps to get its duration: `00:00:00.000Z` to `00:00:12.300Z` is 12.3 seconds. A closed phase measures an attempt, including a failed or cancelled one; use the operation status to determine its outcome. A missing end means the phase is still running or was interrupted before its end was recorded. Older operations may have no phases.
+
+| Phase                      | Measured interval                                                                                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queued_locally`           | Local operation acceptance to lifecycle task start, including local admission checks. This excludes waiting in GitHub or the cloud.                            |
+| `job_check`                | One check that the requested job still needs capacity, before startup, before registration, or while idle.                                                     |
+| `vm_start`                 | The `environment.start` child, including validation, cloning and spawning, until it confirms the VM is running.                                                |
+| `warm_takeover`            | Claim an idle pool VM; followed by a `guest_ready` SSH health check.                                                                                           |
+| `vm_start_and_guest_ready` | Rosetta startup, including guest address discovery, pinned SSH readiness, clock and architecture checks, and Rosetta verification inside `environment.start`.  |
+| `guest_ready`              | Guest readiness and the pinned SSH connection. After `vm_start_and_guest_ready`, this is a readiness recheck; the initial wait is already included in startup. |
+| `runner_install`           | Downloading, verifying and extracting the runner.                                                                                                              |
+| `runner_preinstalled`      | The environment manifest matches the pinned runner version, so installation is skipped.                                                                        |
+| `registration`             | Preparing the GitHub JIT registration and validating its grant.                                                                                                |
+| `waiting_for_job`          | Registration end to the guest's job-started hook timestamp, or listener exit if no job is observed.                                                            |
+| `job`                      | The guest's job-started hook timestamp until the guest listener exits.                                                                                         |
+| `cleanup`                  | Stopping the VM and releasing the runner, including registration reconciliation attempted by this task. Later recovery retries are not included.               |
+
+Runners record `runner_preinstalled` instead of `runner_install` when the environment manifest matches the pinned runner version. After policy verification, the guest job-started hook atomically writes epoch milliseconds to `vectis-actions-runner/_vectis/job-started`. The existing policy gate poll reads it every 10 seconds and once after listener exit, without adding guest connections. A late marker corrects an earlier busy observation, including for short jobs that finish between polls. Guest readiness verifies clock skew is within 60 seconds; the hook timestamp is clamped between registration end and observation time, capped at listener exit when already known.
+
+If the marker is missing, invalid or unreadable, job timing falls back to GitHub's busy-status poll, normally every 30 seconds. That fallback uses the host's observation time and can miss short jobs. Bash uses GNU `date` milliseconds or Perl `Time::HiRes` on macOS; a timestamp failure leaves the policy decision unchanged and uses the busy fallback. Windows uses PowerShell 5.1-compatible .NET timestamp and file APIs. The measured start is the hook boundary, and the end is listener exit, including runner teardown. Clock skew still affects guest timestamps; never infer job success or an exact GitHub queue duration from these timings.
+
+History is bounded to 16 entries. When idle checks repeat, the oldest completed `job_check` entries are removed to preserve startup and cleanup. Idle checks overlap `waiting_for_job` or `job`; do not sum overlapping phases as total elapsed time.
 
 ## Read job results
 
@@ -44,7 +121,7 @@ A runner operation that succeeded means the VM ran and was cleaned up. It does n
 - **App:** open a connection in **Repositories** to see its recent jobs.
 - **CLI:** `vectis job list <binding-id> --json` returns the latest 100 jobs with their GitHub status and conclusion.
 
-Job states arrive through GitHub webhooks. If one seems missing or stale:
+Job states arrive through GitHub webhooks. Vectis checks for failed deliveries every two minutes and requests one automatic redelivery per webhook, usually recovering missed updates within a few minutes without a connected Mac. If one still seems missing or stale:
 
 ```sh
 vectis job scan <binding-id> --wait             # find queued and running jobs Vectis missed
@@ -114,7 +191,7 @@ An unreachable guest is reported as such, with SSH's reason (timeout, no route, 
 
 ## Recover after a crash
 
-If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Vectis never guesses: it cleans up only after it has evidence that the VM process exited.
+If the Mac or the service stopped abruptly, an operation or VM can end up `action_required`. Interrupted runner operations report `runner_recovery_pending`. On startup and during periodic recovery, Vectis checks the owned VM's exit evidence. Once the instance is stopped or absent, it reconciles the cloud lease and releases the registration automatically. A VM that may still be running, or an unconfirmed cloud release, keeps the operation unresolved.
 
 If deleting an owned VM's files fails after its process exits, Vectis retains an exit receipt so reconciliation can retry the file cleanup.
 
@@ -125,8 +202,10 @@ vectis runner reconcile <operation-id> --wait
 
 The app offers the same actions as **Reconcile** in **Overview**. Until an interrupted VM is reconciled, the Mac starts no new VMs and offers no runner slots. Do not start new runners to work around an unresolved one.
 
-For `runner_cleanup_required`, the service retries runner reconciliation about every minute while connected to the cloud, for up to 30 minutes from the operation's last update. A stopped runner can still be busy on GitHub, usually for up to 15 minutes until GitHub releases its job. `runner_busy` leaves cleanup unresolved until a later retry succeeds. Once the retry window expires, the operation remains `action_required` and you can reconcile it manually.
+For interrupted runners, `runner_registration_uncertain` and `runner_cleanup_required`, recovery retries while connected to the cloud, with delays of 1, 2, 4, 8, 16 and then 30 minutes, capped at 30 minutes. The retry schedule survives service restarts. After 24 hours, the operation remains `action_required` with a message and a next step for manual reconciliation. A stopped runner can still be busy on GitHub, usually for up to 15 minutes until GitHub releases its job; `runner_busy` leaves cleanup unresolved until a later retry succeeds.
 
-A refused assignment retains its policy reason during cleanup. After manual or automatic reconciliation succeeds, the runner operation ends as `failed` with `runner_assignment_rejected` and the original refusal message. Other interrupted runners end as `cancelled`; this does not establish the GitHub job result.
+A refused assignment retains its policy reason during cleanup. After manual or automatic reconciliation succeeds, the runner operation ends as `failed` with `runner_assignment_rejected` and the original refusal message. Offline runners retain `failed` with `runner_offline` after delayed cleanup. Other interrupted runners end as `cancelled` with `runner_interrupted`; this does not establish the GitHub job result. Requests interrupted before startup or registration began end as `failed` with `runner_interrupted`.
 
 Runner reconciliation also works when registration stopped before creating a cloud lease. After confirming VM cleanup, Vectis records the request as released in the cloud so a delayed registration cannot create a duplicate runner. If the cloud cannot confirm this, the operation stays unresolved.
+
+Registration failures confirmed to have no remaining cloud registration end as retryable `failed` with `runner_registration_failed`. A lost response is reconciled before retrying; unavailable reconciliation stays `action_required`. Approval-required results retain their existing manual next steps.

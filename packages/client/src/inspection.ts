@@ -8,6 +8,7 @@ export async function answerInspection(
   queryJson: string,
   local: VectisClient,
   signal: AbortSignal,
+  maxResponseBytes = 256 * 1024,
 ) {
   try {
     signal.throwIfAborted();
@@ -38,13 +39,19 @@ export async function answerInspection(
         }
         case "operation":
           return local.operation(query.id, signal);
+        case "operation.key":
+          return local.operationByKey(query.key, signal);
+        case "activities":
+          return local.activities(signal);
+        case "activity":
+          return local.activity(query.id, signal);
         case "logs":
           return local.logs(query.lines);
       }
     })();
     signal.throwIfAborted();
     const encoded = JSON.stringify({ ok: true, result });
-    if (new TextEncoder().encode(encoded).byteLength > 262144)
+    if (new TextEncoder().encode(encoded).byteLength > maxResponseBytes)
       throw new VectisError(
         "query_result_too_large",
         "The inspection exceeds the remote response limit.",

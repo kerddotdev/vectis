@@ -12,7 +12,10 @@ import {
   preparationDirectory,
   validatePreparation,
 } from "../../../packages/runner/src/linux-preparation.js";
-import { preparationStopped } from "../../../packages/runner/src/preparation-process.js";
+import {
+  PreparationProcessError,
+  preparationStopped,
+} from "../../../packages/runner/src/preparation-process.js";
 import type { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import type { Store } from "./store.js";
 
@@ -138,6 +141,7 @@ export async function startPreparation(
           phase: preparation.phase,
           directory: preparationDirectory(preparation),
           code: issue.code,
+          ...(error instanceof PreparationProcessError ? { diagnostics: error.diagnostics } : {}),
           nextStep: `Inspect prerequisites, then resume with environment resume ${preparation.id}. Partial downloads are retained.`,
         },
       });

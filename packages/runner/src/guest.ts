@@ -86,7 +86,7 @@ export function guestArguments(connection: GuestConnection) {
 export async function executeGuest(
   connection: GuestConnection,
   script: string,
-  options: { signal: AbortSignal; shell?: "bash" | "powershell" },
+  options: { signal: AbortSignal; shell?: "bash" | "powershell" | "cmd" },
 ) {
   if (Buffer.byteLength(script) > 65536)
     throw new VectisError("guest_script_too_large", "Guest scripts cannot exceed 64 KiB.");
@@ -94,8 +94,10 @@ export async function executeGuest(
   const args = guestArguments(connection);
   const command =
     options.shell === "powershell"
-      ? `powershell.exe -NoLogo -NonInteractive -NoProfile -Command "$ErrorActionPreference = 'Stop'; try { & ([scriptblock]::Create([Console]::In.ReadToEnd())) } catch { [Console]::Error.WriteLine('Guest script failed.'); exit 1 }"`
-      : "bash -s";
+      ? `powershell.exe -NoLogo -NonInteractive -NoProfile -Command "$ErrorActionPreference = 'Stop'; try { & ([scriptblock]::Create([Console]::In.ReadToEnd())) } catch { $failure = ($_ | Out-String -Width 4096); [Console]::Error.WriteLine($failure.Substring(0, [Math]::Min($failure.Length, 16384))); exit 1 }"`
+      : options.shell === "cmd"
+        ? "cmd.exe /d /q"
+        : "bash -s";
   const child = spawn("/usr/bin/ssh", [...args, command], { stdio: ["pipe", "pipe", "pipe"] });
   let stdout = "";
   let stderr = "";

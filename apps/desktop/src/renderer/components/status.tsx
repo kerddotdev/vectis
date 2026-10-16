@@ -8,7 +8,9 @@ import {
   ClockIcon,
   TriangleAlertIcon,
 } from "lucide-react";
+import type { Instance } from "../../../../../packages/protocol/src/index.js";
 import { runnerStagePresentation, type RunnerStageKey } from "@/lib/runner-stage";
+import { instanceDisplay } from "@/lib/vm-capacity";
 import { cn } from "@/lib/utils";
 
 export const tones = {
@@ -61,21 +63,14 @@ export function OperationStatus({ status }: { status: keyof typeof operationStat
   return <StatusBadge tone={tone} label={label} />;
 }
 
-const instanceStates = {
-  starting: ["queued", "Starting"],
-  running: ["running", "Running"],
-  stopped: ["idle", "Stopped"],
-  interrupted: ["attention", "Interrupted"],
-} as const satisfies Record<string, readonly [Tone, string]>;
-
 export function InstanceStatus({
-  status,
+  instance,
   inline = false,
 }: {
-  status: keyof typeof instanceStates;
+  instance: Pick<Instance, "role" | "status">;
   inline?: boolean;
 }) {
-  const [tone, label] = instanceStates[status];
+  const { tone, label } = instanceDisplay(instance);
   return inline ? (
     <StatusText tone={tone} label={label} />
   ) : (

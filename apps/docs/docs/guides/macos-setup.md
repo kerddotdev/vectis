@@ -63,7 +63,7 @@ A macOS guest is whatever you install in its setup console. Vectis restores Appl
 
 One thing is not optional. Without a developer toolchain the guest has no working `git`, so `actions/checkout` fails on its first step and almost no workflow gets further. Verification refuses such a guest and tells you what to install. While the setup console is open, either run `xcode-select --install` for Apple's Command Line Tools, which bring `git`, `clang`, `make` and the macOS SDK, or install the full Xcode and open it once to accept its license. Jobs that build with Xcode, sign, or need a specific Xcode version need the full install, not the Command Line Tools.
 
-Everything else follows the same rule as the other guests: `actions/setup-*` actions download toolchains at job time, and anything your jobs always need, such as Homebrew formulas or a specific Ruby, belongs in the guest before you register the environment, or in a workflow step.
+Everything else follows the same rule as the other guests: `actions/setup-*` actions download toolchains at job time, and anything your jobs always need, such as Homebrew formulas or a specific Ruby, can be installed once into a [derived environment](/docs/guides/environments) with `environment.provision`, or installed in a workflow step.
 
 ## Interruption and recovery
 
@@ -85,3 +85,15 @@ vectis environment discard-macos <setup-id> --environment <environment-id> --jso
 ```
 
 Desktop offers the same confirmation beside the setup operation. This deletes the current attempt's owned image directory, including its guest disk and setup logs. It preserves downloaded or supplied source IPSWs, registered environments, and older interrupted attempt directories. Active or registered setups and directories without matching ownership metadata cannot be discarded.
+
+## Provision an existing guest
+
+Use [environment provisioning](/docs/guides/environments) to create a new `base.bundle` from a ready macOS environment. The runner is installed without sudo under `$HOME/.vectis-runner/<version>`, and optional setup scripts run as the SSH user with Bash. Provisioning does not install Xcode or change the parent bundle.
+
+Provisioning uses this bounded shutdown sequence instead of the virtual power button, which can open a confirmation dialog in a logged-in macOS session:
+
+1. Over SSH as the guest user, run `osascript -e 'tell application "loginwindow" to «event aevtshut»'`, then wait up to 60 seconds for the VM to stop. Apple's SDK identifies `shut` as `kAEShutDown`; `rsdn` is `kAEShowShutdownDialog` and would request confirmation. The command does not invoke sudo. [Apple documents the loginwindow shutdown event](https://developer.apple.com/library/archive/qa/qa1134/_index.html), but whether macOS 26 accepts it from the SSH session without Automation/TCC consent has not been verified. Guest applications can also cancel shutdown.
+2. If the VM is still running and `sudo -n true` succeeds, run `sudo -n /sbin/shutdown -h now` and wait up to another 60 seconds. SSH enrollment does not grant passwordless sudo, and provisioning never prompts for a password.
+3. If the guest remains running, complete two separate `sync` commands over SSH, wait 5 seconds, then force-stop the owned provisioning VM through the Apple helper. Each SSH command and helper stop has a 30-second limit. A failed or timed-out sync prevents image registration; failed or cancelled provisioning removes its partial output after confirmed VM cleanup. Unconfirmed cleanup requires inspection.
+
+The final operation result reports `shutdown` as `loginwindow`, `sudo`, or `forced_stop_after_sync`. The last value explicitly means the image was frozen after a forced stop following two successful syncs, not after an observed clean guest shutdown. This fallback applies only to the derived provisioning image, never ordinary runner VMs or user data. Inspect it with `vectis operation get <operation-id> --json`.
