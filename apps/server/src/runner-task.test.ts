@@ -39,7 +39,7 @@ const environment = {
 function fixture(os: Environment["os"] = "linux") {
   const events: string[] = [];
   const broker = {
-    reconcileRunner: vi.fn(async () => {
+    reconcileRunner: vi.fn<RunnerBroker["reconcileRunner"]>(async () => {
       throw new Error("unused");
     }),
     prepareRunner: vi.fn(async () => ({
@@ -281,7 +281,13 @@ test("successful and cancelled runners gather no diagnostics", async () => {
   expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
 });
 
-async function listeningFixture(withJob = true) {
+async function listeningFixture(
+  withJob = true,
+  timings: Pick<
+    Parameters<typeof runRunnerTask>[3],
+    "now" | "pollIntervalMs" | "idleTimeoutMs" | "offlineTimeoutMs" | "statusFailureTimeoutMs"
+  > = {},
+) {
   vi.useFakeTimers();
   const { controls, broker, events } = fixture();
   const abort = new AbortController();
@@ -310,7 +316,7 @@ async function listeningFixture(withJob = true) {
     "binding",
     "key",
     environment,
-    { ...controls, ...(withJob ? { needed } : {}) },
+    { ...controls, ...timings, ...(withJob ? { needed } : {}) },
     abort.signal,
   );
   listeningTasks.push({ abort, done });
@@ -321,17 +327,13 @@ async function listeningFixture(withJob = true) {
   return { controls, broker, events, abort, needed, done, complete };
 }
 
-test.each([
-  { busy: false, status: "online" as const },
-  { busy: false, status: "offline" as const },
-  { missing: true as const },
-])(
-  "an idle runner with status %j drains only after ten minutes and releases capacity",
+test.each([{ busy: false, status: "online" as const }])(
+  "an idle runner with status %j drains only after five minutes and releases capacity",
   async (status) => {
     const { broker, events, needed, done } = await listeningFixture();
     broker.runnerStatus.mockResolvedValue(status);
     needed.mockResolvedValue(false);
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
     expect(events).toEqual([]);
     expect(needed).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(1);
@@ -350,7 +352,7 @@ test.each([
 test("a busy runner keeps its VM even after the requested job no longer needs capacity", async () => {
   const { broker, events, needed, done, complete } = await listeningFixture();
   needed.mockResolvedValue(false);
-  await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+  await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
   broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
   await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
   expect(events).toEqual([]);
@@ -363,11 +365,11 @@ test("a busy runner keeps its VM even after the requested job no longer needs ca
 test("the idle window restarts after the runner was busy", async () => {
   const { broker, events, needed, done } = await listeningFixture();
   needed.mockResolvedValue(false);
-  await vi.advanceTimersByTimeAsync(9 * 60 * 1000);
+  await vi.advanceTimersByTimeAsync(4 * 60 * 1000);
   broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
   await vi.advanceTimersByTimeAsync(30000);
   broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
-  await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
+  await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
   expect(events).toEqual([]);
   await vi.advanceTimersByTimeAsync(1);
   expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
@@ -383,20 +385,18 @@ test("an idle runner whose requested job still needs queued capacity keeps liste
 });
 
 test.each(["status", "job"] as const)(
-  "%s lookup errors keep listening and require a fresh idle window",
+  "%s lookup errors do not discard already observed idle time",
   async (lookup) => {
     const { broker, events, needed, done } = await listeningFixture();
     if (lookup === "status") {
       broker.runnerStatus.mockRejectedValue(new Error("GitHub unavailable"));
       needed.mockResolvedValue(false);
     } else needed.mockRejectedValue(new Error("Job unknown"));
-    await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(6 * 60 * 1000);
     expect(events).toEqual([]);
     broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
     needed.mockResolvedValue(false);
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000 - 1);
-    expect(events).toEqual([]);
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(30000);
     expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
   },
 );
@@ -420,7 +420,7 @@ test.each(["stop", "release"] as const)(
     needed.mockResolvedValue(false);
     if (step === "stop") controls.stop.mockRejectedValue(new Error("VM exit unknown"));
     else broker.releaseRunner.mockRejectedValue(new Error("Registration unknown"));
-    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
     expect(await done).toMatchObject({
       status: "action_required",
       code: "runner_cleanup_required",
@@ -456,11 +456,67 @@ test("the six-hour listening timeout still cleans up without reporting idle drai
   expect(vi.getTimerCount()).toBe(0);
 });
 
-test("a manual runner without a requested job keeps listening beyond the idle window", async () => {
-  const { broker, events, done, complete } = await listeningFixture(false);
-  await vi.advanceTimersByTimeAsync(20 * 60 * 1000);
+test("a manual runner without a requested job drains after five idle minutes", async () => {
+  const { broker, events, done } = await listeningFixture(false);
+  await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
   expect(events).toEqual([]);
-  expect(broker.runnerStatus).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
+  expect(broker.runnerStatus).toHaveBeenCalled();
+  expect(events).toEqual(["stop", "release"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each([{ busy: false, status: "offline" as const }, { missing: true as const }])(
+  "a runner reported as %j for two minutes stops even when its job is still needed",
+  async (status) => {
+    const { broker, events, done } = await listeningFixture();
+    broker.runnerStatus.mockResolvedValue(status);
+    await vi.advanceTimersByTimeAsync(30000 + 2 * 60000 - 1);
+    expect(events).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await done).toMatchObject({ status: "failed", code: "runner_offline" });
+    expect(events).toEqual(["stop", "release"]);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("offline observations must be consecutive and busy status prevents stopping", async () => {
+  const { broker, events, done, complete } = await listeningFixture();
+  broker.runnerStatus.mockResolvedValue({ busy: false, status: "offline" });
+  await vi.advanceTimersByTimeAsync(2 * 60000);
+  broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
+  await vi.advanceTimersByTimeAsync(30000);
+  broker.runnerStatus.mockResolvedValue({ busy: false, status: "offline" });
+  await vi.advanceTimersByTimeAsync(2 * 60000);
+  expect(events).toEqual([]);
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "offline" });
+  await vi.advanceTimersByTimeAsync(5 * 60000);
+  expect(events).toEqual([]);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
+test("fifteen minutes of continuous status failures treats the runner as offline", async () => {
+  const { broker, events, done } = await listeningFixture();
+  broker.runnerStatus.mockRejectedValue(new Error("GitHub unavailable"));
+  await vi.advanceTimersByTimeAsync(30000 + 15 * 60000 - 1);
+  expect(events).toEqual([]);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await done).toMatchObject({ status: "failed", code: "runner_offline" });
+  expect(events).toEqual(["stop", "release"]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("successful status reads restart the continuous status failure window", async () => {
+  const { broker, events, done, complete } = await listeningFixture();
+  broker.runnerStatus.mockRejectedValue(new Error("GitHub unavailable"));
+  await vi.advanceTimersByTimeAsync(14 * 60000);
+  broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
+  await vi.advanceTimersByTimeAsync(30000);
+  broker.runnerStatus.mockRejectedValue(new Error("GitHub unavailable"));
+  await vi.advanceTimersByTimeAsync(14 * 60000);
+  expect(events).toEqual([]);
   complete();
   expect(await done).toMatchObject({ status: "succeeded" });
 });
@@ -703,3 +759,104 @@ test.each(["stop", "release"] as const)(
     if (step === "stop") expect(broker.releaseRunner).not.toHaveBeenCalled();
   },
 );
+
+test("a prepare failure before a lease claim is fenced and becomes retryable", async () => {
+  const { controls, broker } = fixture();
+  broker.prepareRunner.mockRejectedValue(new Error("Token request failed"));
+  broker.reconcileRunner.mockResolvedValue({
+    id: "fence",
+    bindingId: "binding",
+    environmentId: "test",
+    phase: "released",
+  });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({ status: "failed", code: "runner_registration_failed" });
+  expect(controls.stop).toHaveBeenCalledOnce();
+  expect(broker.reconcileRunner).toHaveBeenCalledWith(
+    { bindingId: "binding", environmentId: "test", key: "key" },
+    expect.any(AbortSignal),
+  );
+  expect(broker.releaseRunner).not.toHaveBeenCalled();
+});
+
+test("a lost prepare response with a claimed lease waits for release confirmation", async () => {
+  const { controls, broker } = fixture();
+  broker.prepareRunner.mockRejectedValue(new Error("Response lost"));
+  broker.reconcileRunner.mockResolvedValue({
+    id: "lease",
+    bindingId: "binding",
+    environmentId: "test",
+    phase: "ready",
+  });
+  broker.releaseRunner.mockRejectedValue(new Error("Release unconfirmed"));
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({
+    status: "action_required",
+    code: "runner_registration_uncertain",
+    progress: { leaseId: "lease" },
+  });
+});
+
+test("a locally rejected prepare request is retryable without requiring cloud reconciliation", async () => {
+  const { controls, broker } = fixture();
+  broker.prepareRunner.mockRejectedValue(new VectisError("cloud_unavailable", "Disconnected"));
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({ status: "failed", code: "runner_registration_failed" });
+  expect(broker.reconcileRunner).not.toHaveBeenCalled();
+  expect(controls.stop).toHaveBeenCalledOnce();
+});
+
+test.each(["idle", "offline", "errors"] as const)(
+  "watchdog %s timings are injectable",
+  async (state) => {
+    const { broker, done } = await listeningFixture(false, {
+      pollIntervalMs: 10,
+      idleTimeoutMs: 40,
+      offlineTimeoutMs: 20,
+      statusFailureTimeoutMs: 30,
+      now: () => Date.now(),
+    });
+    if (state === "offline") broker.runnerStatus.mockResolvedValue({ missing: true });
+    if (state === "errors") broker.runnerStatus.mockRejectedValue(new Error("Unavailable"));
+    await vi.advanceTimersByTimeAsync(state === "offline" ? 30 : 40);
+    expect(await done).toMatchObject({
+      status: state === "idle" ? "cancelled" : "failed",
+      code: state === "idle" ? "runner_idle" : "runner_offline",
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("offline failure survives unconfirmed VM cleanup", async () => {
+  const { controls, broker, done } = await listeningFixture(false, {
+    pollIntervalMs: 10,
+    offlineTimeoutMs: 20,
+  });
+  controls.stop.mockRejectedValue(new Error("Exit unconfirmed"));
+  broker.runnerStatus.mockResolvedValue({ missing: true });
+  await vi.advanceTimersByTimeAsync(30);
+  expect(await done).toMatchObject({
+    status: "action_required",
+    code: "runner_cleanup_required",
+    recoveryCause: { code: "runner_offline" },
+  });
+  expect(broker.releaseRunner).not.toHaveBeenCalled();
+});

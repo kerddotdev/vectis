@@ -84,7 +84,7 @@ async function fixture() {
     pid: 0,
     createdAt: "now",
   });
-  return { store, service, broker, interrupted };
+  return { store, service, broker, interrupted, runtime: service.runtime };
 }
 test("reconciles a lost registration response without preparing another runner", async () => {
   const { store, service, broker, interrupted } = await fixture();
@@ -188,6 +188,129 @@ test("cloud access failure leaves a stopped runner unresolved", async () => {
     expect(broker.releaseRunner).not.toHaveBeenCalled();
   } finally {
     await service.close();
+    store.close();
+  }
+});
+
+test.each(["stopped", "absent", "interrupted"] as const)(
+  "restart automatically reconciles a %s runner VM before releasing capacity",
+  async (state) => {
+    const { store, service, broker, interrupted, runtime } = await fixture();
+    await service.close();
+    store.update(interrupted, { status: "running" });
+    if (state === "absent") store.remove("instance", "instance");
+    else
+      store.put("instance", "instance", {
+        id: "instance",
+        environmentId: "test",
+        status: state,
+        pid: state === "stopped" ? 0 : 42,
+        createdAt: new Date().toISOString(),
+      });
+    const reconcile = vi.spyOn(runtime, "reconcile").mockResolvedValue(true);
+    const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+      connected: () => true,
+    });
+    try {
+      expect(store.get("operation", interrupted.id)).toMatchObject({
+        status: "action_required",
+        result: { code: "runner_recovery_pending" },
+      });
+      await restarted.initialize();
+      await restarted.drain();
+      expect(store.get("operation", interrupted.id)).toMatchObject({
+        status: "cancelled",
+        result: { code: "runner_interrupted", stage: "finished" },
+      });
+      expect(broker.reconcileRunner).toHaveBeenCalledOnce();
+      expect(broker.releaseRunner).toHaveBeenCalledOnce();
+      expect(broker.prepareRunner).not.toHaveBeenCalled();
+      expect(restarted.snapshot().runnerCapacity?.active).toBe(0);
+      if (state === "interrupted") expect(reconcile).toHaveBeenCalledWith("instance", undefined);
+    } finally {
+      await restarted.close();
+      store.close();
+    }
+  },
+);
+
+test("restart never settles a runner whose VM might still be running", async () => {
+  const { store, service, broker, interrupted, runtime } = await fixture();
+  await service.close();
+  store.update(interrupted, { status: "running" });
+  store.put("instance", "instance", {
+    id: "instance",
+    environmentId: "test",
+    status: "running",
+    pid: 42,
+    createdAt: new Date().toISOString(),
+  });
+  vi.spyOn(runtime, "reconcile").mockResolvedValue(false);
+  const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+    connected: () => true,
+  });
+  try {
+    await restarted.initialize();
+    await restarted.drain();
+    expect(store.get("instance", "instance")).toMatchObject({ status: "interrupted" });
+    expect(store.get("operation", interrupted.id)).toMatchObject({
+      status: "action_required",
+      result: { code: "runner_recovery_pending" },
+    });
+    expect(broker.reconcileRunner).not.toHaveBeenCalled();
+    expect(broker.releaseRunner).not.toHaveBeenCalled();
+    expect(restarted.snapshot().runnerCapacity?.active).toBe(1);
+  } finally {
+    await restarted.close();
+    store.close();
+  }
+});
+
+test("restart leaves stopped runners pending when cloud release is unconfirmed", async () => {
+  const { store, service, broker, interrupted, runtime } = await fixture();
+  await service.close();
+  store.update(interrupted, { status: "running" });
+  broker.releaseRunner.mockRejectedValue(new Error("GitHub unavailable"));
+  const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+    connected: () => true,
+  });
+  try {
+    await restarted.initialize();
+    await restarted.drain();
+    expect(store.get("operation", interrupted.id)).toMatchObject({
+      status: "action_required",
+      result: { code: "runner_recovery_pending", recovery: { attempts: 1 } },
+    });
+    expect(restarted.snapshot().runnerCapacity?.active).toBe(1);
+  } finally {
+    await restarted.close();
+    store.close();
+  }
+});
+
+test("restart closes a request interrupted before startup without registering a runner", async () => {
+  const { store, service, broker, runtime } = await fixture();
+  await service.close();
+  const request = store.accept(
+    "not-started",
+    "fingerprint",
+    "runner.run",
+    activityFor("not-started", { type: "runner.run", bindingId: "binding" }),
+    "not-started",
+  ).operation;
+  const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+    connected: () => true,
+  });
+  try {
+    await restarted.initialize();
+    await restarted.drain();
+    expect(store.get("operation", request.id)).toMatchObject({
+      status: "failed",
+      result: { code: "runner_interrupted" },
+    });
+    expect(broker.prepareRunner).not.toHaveBeenCalled();
+  } finally {
+    await restarted.close();
     store.close();
   }
 });

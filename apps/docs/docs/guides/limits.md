@@ -11,6 +11,10 @@ These values describe the current release. Settings you can change are marked as
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Time a runner waits for and runs a job               | 6 hours                                                                                              |
 | Time allowed for installing the runner in the guest  | 10 minutes                                                                                           |
+| Idle runner drain when capacity is no longer needed  | 5 minutes, including manual runners without a requested job                                          |
+| GitHub reports a listening runner offline or missing | 2 consecutive minutes                                                                                |
+| Continuous runner status read failures               | 15 minutes before offline recovery                                                                   |
+| Automatic interrupted-runner cleanup                 | 24 hours, retry delays doubling from 1 minute to 30 minutes                                          |
 | Concurrent VMs                                       | 5 by default, 1 to 16 with `vectis machine configure --max-runners` or **Concurrent VMs** in the app |
 | CPU used by all starting and running VMs together    | At most the host's CPU cores                                                                         |
 | Memory used by all starting and running VMs together | At most 75% of the host's memory                                                                     |

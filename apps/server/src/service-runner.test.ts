@@ -159,7 +159,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
           status: "queued",
           conclusion: null,
         }));
-        await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+        await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
         vi.useRealTimers();
       } else service.submit("cancel", { type: cancelType, id: run.id });
       if (phase === "starting") {
@@ -329,6 +329,7 @@ async function cleanupFixture(intervalMs = 60000) {
     scanJobs: unused,
     refreshJob: unused,
   };
+  vi.spyOn(runtime, "reconcile").mockResolvedValue(false);
   const cloud = { connected: true };
   const service = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
     intervalMs,
@@ -366,6 +367,7 @@ async function cleanupFixture(intervalMs = 60000) {
   return {
     store,
     service,
+    runtime,
     broker,
     cloud,
     operation,
@@ -400,7 +402,10 @@ describe("automatic runner cleanup", () => {
     const { broker, read, tick, store, operation } = fixture;
     broker.releaseRunner.mockRejectedValueOnce(new VectisError("runner_busy", "Runner is busy."));
     await tick();
-    expect(read()).toEqual(operation);
+    expect(read()).toMatchObject({
+      status: "action_required",
+      result: { code: "runner_cleanup_required" },
+    });
     await tick();
     expect(read()).toMatchObject({
       status: "cancelled",
@@ -413,17 +418,72 @@ describe("automatic runner cleanup", () => {
     expect(broker.releaseRunner).toHaveBeenCalledTimes(2);
   });
 
+  test("cleanup retries back off from one minute to thirty minutes", async () => {
+    const { broker, tick, read } = fixture;
+    broker.releaseRunner.mockRejectedValue(new Error("GitHub unavailable"));
+    for (const [attempt, minutes] of [1, 1, 2, 4, 8, 16, 30, 30].entries()) {
+      await tick(minutes * 60000 - 1);
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(attempt);
+      await tick(1);
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(attempt + 1);
+      expect(read()).toMatchObject({
+        status: "action_required",
+        result: {
+          recovery: {
+            attempts: attempt + 1,
+            nextAttemptAt: Date.now() + Math.min(60000 * 2 ** attempt, 30 * 60000),
+          },
+        },
+      });
+    }
+  });
+
+  test("cleanup preserves retry scheduling across service restarts", async () => {
+    const { broker, tick, service, store, runtime } = fixture;
+    broker.releaseRunner.mockRejectedValue(new Error("GitHub unavailable"));
+    await tick(2 * 60000);
+    await service.close();
+    const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+      connected: () => true,
+    });
+    try {
+      await restarted.initialize();
+      await restarted.drain();
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(2 * 60000 - 1);
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(1);
+      await restarted.drain();
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(3);
+    } finally {
+      await restarted.close();
+    }
+  });
+
   test.each([new VectisError("runner_busy", "Runner is busy."), new Error("GitHub unavailable")])(
-    "failed cleanup stops retrying after 30 minutes without claiming success: %s",
+    "failed cleanup backs off and stops retrying after 24 hours without claiming success: %s",
     async (error) => {
       const { broker, tick, read, operation } = fixture;
       broker.releaseRunner.mockRejectedValue(error);
       await tick(29 * 60000);
-      expect(broker.releaseRunner).toHaveBeenCalledTimes(29);
-      expect(read()).toEqual(operation);
-      await tick(10 * 60000);
-      expect(broker.releaseRunner).toHaveBeenCalledTimes(29);
-      expect(read()).toEqual(operation);
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(5);
+      expect(read()).toMatchObject({
+        status: "action_required",
+        result: { code: "runner_cleanup_required" },
+      });
+      await tick(24 * 60 * 60000);
+      const attempts = broker.releaseRunner.mock.calls.length;
+      expect(read()).toMatchObject({
+        status: "action_required",
+        message: expect.stringContaining("expired after 24 hours"),
+        result: { nextStep: expect.stringContaining("runner reconcile") },
+      });
+      await tick(60 * 60000);
+      expect(broker.releaseRunner).toHaveBeenCalledTimes(attempts);
+      expect(read()).toMatchObject({
+        status: "action_required",
+        result: { code: "runner_cleanup_required" },
+      });
       broker.releaseRunner.mockResolvedValue();
       fixture.service.submit("manual", { type: "runner.reconcile", id: operation.id });
       await fixture.service.drain();
@@ -455,6 +515,40 @@ describe("automatic runner cleanup", () => {
     },
   );
 
+  test("offline recovery ends as retryable failure after delayed cleanup", async () => {
+    fixture.store.update(fixture.operation, {
+      result: {
+        ...fixture.progress,
+        code: "runner_cleanup_required",
+        recoveryCause: { code: "runner_offline", message: "Runner went offline." },
+      },
+    });
+    await fixture.tick();
+    expect(fixture.read()).toMatchObject({
+      status: "failed",
+      message: "Runner went offline.",
+      result: { code: "runner_offline" },
+    });
+  });
+
+  test("legacy interrupted runner results without a code also recover automatically", async () => {
+    fixture.store.update(fixture.operation, { result: fixture.progress });
+    await fixture.tick();
+    expect(fixture.read()).toMatchObject({
+      status: "cancelled",
+      result: { code: "runner_interrupted" },
+    });
+  });
+
+  test("approval requirements remain actionable until manually reconciled", async () => {
+    fixture.store.update(fixture.operation, {
+      result: { ...fixture.progress, code: "public_runner_approval_required" },
+    });
+    await fixture.tick();
+    expect(fixture.read()?.status).toBe("action_required");
+    expect(fixture.broker.reconcileRunner).not.toHaveBeenCalled();
+  });
+
   test("disconnected cleanup waits for the cloud connection", async () => {
     fixture.cloud.connected = false;
     await fixture.tick();
@@ -470,17 +564,20 @@ describe("automatic runner cleanup", () => {
       fixture.store.put("instance", fixture.instance.id, { ...fixture.instance, status, pid: 42 });
       await fixture.tick();
       expect(fixture.broker.reconcileRunner).not.toHaveBeenCalled();
-      expect(fixture.read()).toEqual(fixture.operation);
+      expect(fixture.read()).toMatchObject({
+        status: "action_required",
+        result: { code: "runner_cleanup_required" },
+      });
     },
   );
 
-  test("other actionable runner results are left for manual reconciliation", async () => {
+  test("registration uncertainty is automatically reconciled after VM cleanup", async () => {
     fixture.store.update(fixture.operation, {
       result: { ...fixture.progress, code: "runner_registration_uncertain" },
     });
     await fixture.tick();
-    expect(fixture.broker.reconcileRunner).not.toHaveBeenCalled();
-    expect(fixture.read()?.status).toBe("action_required");
+    expect(fixture.broker.reconcileRunner).toHaveBeenCalledOnce();
+    expect(fixture.read()?.status).toBe("cancelled");
   });
 
   test("a mismatched lease is never released or reported cleaned up", async () => {
@@ -492,7 +589,10 @@ describe("automatic runner cleanup", () => {
     });
     await fixture.tick();
     expect(fixture.broker.releaseRunner).not.toHaveBeenCalled();
-    expect(fixture.read()).toEqual(fixture.operation);
+    expect(fixture.read()).toMatchObject({
+      status: "action_required",
+      result: { code: "runner_cleanup_required" },
+    });
   });
 
   test("close clears the timer and aborts an in-flight cleanup without completing it", async () => {
@@ -516,7 +616,10 @@ describe("automatic runner cleanup", () => {
     expect(fixture.broker.reconcileRunner).toHaveBeenCalledOnce();
     expect(() => fixture.service.beginShutdown(true)).toThrow("The service still has active work");
     await fixture.service.close();
-    expect(fixture.read()).toEqual(fixture.operation);
+    expect(fixture.read()).toMatchObject({
+      status: "action_required",
+      result: { code: "runner_cleanup_required" },
+    });
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(60000);
     expect(fixture.broker.releaseRunner).toHaveBeenCalledOnce();
@@ -539,5 +642,119 @@ test("the cleanup interval is injectable and repeated initialization owns one ti
     await fixture.close();
     expect(vi.getTimerCount()).toBe(0);
     vi.useRealTimers();
+  }
+});
+
+test("a slow instance stop does not block other submissions and duplicate stops share cleanup", async () => {
+  const fixture = await cleanupFixture();
+  let finish = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const stop = vi.spyOn(fixture.runtime, "stop").mockImplementation(async () => {
+    await waiting;
+  });
+  fixture.store.put("instance", "slow", {
+    id: "slow",
+    environmentId: "test",
+    status: "running",
+    pid: 42,
+    createdAt: new Date().toISOString(),
+  });
+  try {
+    const first = fixture.service.submit("stop", { type: "instance.stop", id: "slow" });
+    expect(fixture.service.submit("stop", { type: "instance.stop", id: "slow" }).id).toBe(first.id);
+    const second = fixture.service.submit("another-stop", { type: "instance.stop", id: "slow" });
+    const pause = fixture.service.submit("pause", { type: "machine.pause", paused: true });
+    await fixture.service.drain();
+    expect(fixture.store.get("operation", pause.id)).toMatchObject({ status: "succeeded" });
+    expect(fixture.store.get("operation", first.id)).toMatchObject({ status: "running" });
+    expect(stop).toHaveBeenCalledOnce();
+    finish();
+    await vi.waitFor(() =>
+      expect(fixture.store.get("operation", second.id)).toMatchObject({ status: "succeeded" }),
+    );
+    expect(fixture.store.get("operation", first.id)).toMatchObject({ status: "succeeded" });
+  } finally {
+    finish();
+    await fixture.close();
+    vi.restoreAllMocks();
+  }
+});
+
+test("a stop waits for its own startup cleanup while other commands advance", async () => {
+  const fixture = await cleanupFixture();
+  let finish = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const events: string[] = [];
+  vi.spyOn(fixture.runtime, "start").mockImplementation(
+    async (_id, _environment, _exited, signal) => {
+      signal?.addEventListener("abort", () => events.push("start-aborted"), { once: true });
+      await waiting;
+      events.push("start-settled");
+      throw new Error("Cancelled startup");
+    },
+  );
+  vi.spyOn(fixture.runtime, "hasWorkDirectory").mockResolvedValue(true);
+  vi.spyOn(fixture.runtime, "stop").mockImplementation(async () => {
+    events.push("stop");
+  });
+  fixture.store.put("environment", "test", {
+    id: "test",
+    name: "Test",
+    os: "linux",
+    state: "ready",
+    basePath: "/test/base",
+    cpu: 1,
+    memoryMiB: 512,
+  });
+  try {
+    const start = fixture.service.submit("start", { type: "environment.start", id: "test" });
+    const stop = fixture.service.submit("stop-start", { type: "instance.stop", id: start.id });
+    const pause = fixture.service.submit("pause", { type: "machine.pause", paused: true });
+    await fixture.service.drain();
+    expect(fixture.store.get("operation", pause.id)).toMatchObject({ status: "succeeded" });
+    expect(events).toEqual(["start-aborted"]);
+    finish();
+    await vi.waitFor(() =>
+      expect(fixture.store.get("operation", stop.id)).toMatchObject({ status: "succeeded" }),
+    );
+    expect(events).toEqual(["start-aborted", "start-settled", "stop"]);
+  } finally {
+    finish();
+    await fixture.close();
+    vi.restoreAllMocks();
+  }
+});
+
+test("a runner repository lookup does not hold the command queue", async () => {
+  const fixture = await cleanupFixture();
+  let finish = () => {};
+  const waiting = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  vi.spyOn(fixture.broker, "repositories").mockImplementation(async () => {
+    await waiting;
+    throw new VectisError("repository_access_unavailable", "Unavailable");
+  });
+  try {
+    const runner = fixture.service.submit("lookup", { type: "runner.run", bindingId: "binding" });
+    const pause = fixture.service.submit("pause", { type: "machine.pause", paused: true });
+    await fixture.service.drain();
+    expect(fixture.store.get("operation", runner.id)).toMatchObject({ status: "running" });
+    expect(fixture.store.get("operation", pause.id)).toMatchObject({ status: "succeeded" });
+    finish();
+    await vi.waitFor(() =>
+      expect(fixture.store.get("operation", runner.id)).toMatchObject({
+        status: "failed",
+        result: { code: "repository_access_unavailable" },
+      }),
+    );
+  } finally {
+    finish();
+    await fixture.close();
+    vi.restoreAllMocks();
   }
 });

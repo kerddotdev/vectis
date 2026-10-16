@@ -18,7 +18,7 @@ import {
   assignmentRejectedScript,
 } from "../../../packages/runner/src/runner-access.js";
 
-const idleTimeoutMs = 10 * 60 * 1000;
+const idleTimeoutMs = 5 * 60 * 1000;
 const pollIntervalMs = 30000;
 
 interface Controls {
@@ -28,6 +28,8 @@ interface Controls {
   now?: () => number;
   pollIntervalMs?: number;
   idleTimeoutMs?: number;
+  offlineTimeoutMs?: number;
+  statusFailureTimeoutMs?: number;
   start(): Promise<Instance>;
   stop(): Promise<void>;
   progress(value: RunnerProgress): void;
@@ -93,6 +95,16 @@ export async function runRunnerTask(
       .catch((error: unknown) => {
         if (
           error instanceof VectisError &&
+          ["cloud_unavailable", "cloud_unconfigured"].includes(error.code)
+        ) {
+          registrationUncertain = false;
+          throw new VectisError(
+            "runner_registration_failed",
+            "Runner registration could not start because the cloud connection is unavailable.",
+          );
+        }
+        if (
+          error instanceof VectisError &&
           [
             "actor_not_allowed",
             "actor_unknown",
@@ -145,6 +157,8 @@ export async function runRunnerTask(
         listening.abort();
         await watcher;
       });
+    if (!signal.aborted && listening.signal.reason instanceof VectisError)
+      throw listening.signal.reason;
     if (execution.exitCode !== 0) {
       listener = `exit ${execution.exitCode}\n${execution.stdout}\n${execution.stderr}`;
       throw new VectisError(
@@ -188,6 +202,9 @@ export async function runRunnerTask(
             ? "Vectis refused the assigned job. VM cleanup is unconfirmed and GitHub runner cleanup is waiting."
             : "VM cleanup is unconfirmed. The runner registration was retained.",
           code: "runner_cleanup_required",
+          ...(failure instanceof VectisError && failure.code === "runner_offline"
+            ? { recoveryCause: { code: failure.code, message: failure.message } }
+            : {}),
         };
       }
     }
@@ -202,6 +219,9 @@ export async function runRunnerTask(
             ? "Vectis refused the assigned job. The VM is stopped and cleanup is waiting for GitHub to release the runner."
             : "The VM is stopped, but GitHub runner cleanup is waiting for reconciliation.",
           code: "runner_cleanup_required",
+          ...(failure instanceof VectisError && failure.code === "runner_offline"
+            ? { recoveryCause: { code: failure.code, message: failure.message } }
+            : {}),
         };
       }
     }
@@ -218,12 +238,28 @@ export async function runRunnerTask(
         code: failure.code,
         nextStep: `${failure.nextStep} Then run vectis runner reconcile with this operation ID to close the stopped runner attempt.`,
       };
-    return {
-      status: "action_required" as const,
-      progress,
-      message: "The VM is stopped. Reconcile the registration request before retrying.",
-      code: "runner_registration_uncertain",
-    };
+    try {
+      const lease = await controls.broker.reconcileRunner(
+        { bindingId, environmentId: environment.id, key },
+        AbortSignal.timeout(10000),
+      );
+      if (lease.bindingId !== bindingId || lease.environmentId !== environment.id)
+        throw new Error("Runner lease identity mismatch.");
+      update({ leaseId: lease.id });
+      if (lease.phase !== "released")
+        await controls.broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
+      failure = new VectisError(
+        "runner_registration_failed",
+        "Runner registration failed; cleanup is confirmed and the request can be retried.",
+      );
+    } catch {
+      return {
+        status: "action_required" as const,
+        progress,
+        message: "The VM is stopped. Reconcile the registration request before retrying.",
+        code: "runner_registration_uncertain",
+      };
+    }
   }
   update({ stage: "finished" });
   if (failure instanceof VectisError && failure.code === "runner_idle")
@@ -232,7 +268,10 @@ export async function runRunnerTask(
     return { status: "cancelled" as const, progress, message: failure.message };
   if (
     signal.aborted &&
-    !(failure instanceof VectisError && failure.code === "runner_assignment_rejected")
+    !(
+      failure instanceof VectisError &&
+      ["runner_assignment_rejected", "runner_offline"].includes(failure.code)
+    )
   )
     return { status: "cancelled" as const, progress, message: "Runner cancelled and cleaned up." };
   if (
@@ -331,10 +370,34 @@ async function watchIdleRunner(
   listening: AbortController,
   signal: AbortSignal,
 ) {
-  if (!controls.needed) return;
   const now = controls.now ?? Date.now;
   const timeoutMs = controls.idleTimeoutMs ?? idleTimeoutMs;
+  const offlineTimeout = controls.offlineTimeoutMs ?? 2 * 60 * 1000;
+  const failureTimeout = controls.statusFailureTimeoutMs ?? 15 * 60 * 1000;
   let idleSince = now();
+  let offlineSince: number | undefined;
+  let failureSince: number | undefined;
+  const offline = () =>
+    listening.abort(
+      new VectisError(
+        "runner_offline",
+        "The runner is offline or its GitHub status has been unavailable too long; the VM is being released.",
+      ),
+    );
+  const readStatus = async () => {
+    try {
+      const status = await controls.broker.runnerStatus(leaseId, signal);
+      failureSince = undefined;
+      return status;
+    } catch {
+      if (!signal.aborted) {
+        failureSince ??= now();
+        offlineSince = undefined;
+        if (now() - failureSince >= failureTimeout) offline();
+      }
+      return undefined;
+    }
+  };
   while (!signal.aborted) {
     await new Promise<void>((resolve) => {
       const done = () => {
@@ -347,30 +410,44 @@ async function watchIdleRunner(
       if (signal.aborted) done();
     });
     if (signal.aborted) return;
-    try {
-      const status = await controls.broker.runnerStatus(leaseId, signal);
-      if (signal.aborted) return;
-      if ("busy" in status && status.busy) {
-        idleSince = now();
-        continue;
-      }
-      if (now() - idleSince < timeoutMs || (await controls.needed(signal))) continue;
-      if (signal.aborted) return;
-      // Refreshing the job may take long enough for GitHub to assign this runner work.
-      const confirmed = await controls.broker.runnerStatus(leaseId, signal);
-      if (signal.aborted) return;
-      if ("busy" in confirmed && confirmed.busy) {
-        idleSince = now();
-        continue;
-      }
-      listening.abort(
-        new VectisError(
-          "runner_idle",
-          "The runner was idle for 10 minutes and its job no longer needs capacity; the VM was released.",
-        ),
-      );
-    } catch {
+    const status = await readStatus();
+    if (signal.aborted) return;
+    if (!status) continue;
+    if ("busy" in status && status.busy) {
       idleSince = now();
+      offlineSince = undefined;
+      continue;
     }
+    if ("missing" in status || status.status === "offline") {
+      offlineSince ??= now();
+      if (now() - offlineSince >= offlineTimeout) offline();
+      continue;
+    }
+    offlineSince = undefined;
+    if (now() - idleSince < timeoutMs) continue;
+    try {
+      if (controls.needed && (await controls.needed(signal))) continue;
+    } catch {
+      continue;
+    }
+    if (signal.aborted) return;
+    // Refreshing the job may take long enough for GitHub to assign this runner work.
+    const confirmed = await readStatus();
+    if (signal.aborted) return;
+    if (!confirmed) continue;
+    if ("busy" in confirmed && confirmed.busy) {
+      idleSince = now();
+      continue;
+    }
+    if ("missing" in confirmed || confirmed.status === "offline") {
+      offlineSince ??= now();
+      continue;
+    }
+    listening.abort(
+      new VectisError(
+        "runner_idle",
+        "The runner was idle for 5 minutes and no longer needs capacity; the VM is being released.",
+      ),
+    );
   }
 }

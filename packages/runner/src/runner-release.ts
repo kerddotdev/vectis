@@ -78,6 +78,7 @@ ${policy}'@ | Set-Content -LiteralPath (Join-Path $gate 'policy') -Encoding utf8
 ${powershellJobStartedHook()}'@ | Set-Content -LiteralPath (Join-Path $gate 'job-started.ps1') -Encoding utf8
 $rejected = Join-Path $gate 'assignment-rejected'
 Remove-Item -LiteralPath $rejected -ErrorAction SilentlyContinue
+$env:ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE = '1'
 $env:ACTIONS_RUNNER_HOOK_JOB_STARTED = Join-Path $gate 'job-started.ps1'
 Set-Location (Join-Path $env:USERPROFILE 'vectis-actions-runner')
 & .\\bin\\Runner.Listener.exe run --jitconfig '${jitConfig}'
@@ -96,11 +97,12 @@ cat > "$gate/job-started.sh" <<'VECTIS_HOOK'
 ${bashJobStartedHook()}VECTIS_HOOK
 chmod 700 "$gate/job-started.sh"
 rm -f "$gate/assignment-rejected"
+export ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE=1
 export ACTIONS_RUNNER_HOOK_JOB_STARTED="$gate/job-started.sh"
 umask "$job_umask"
 cd "$HOME/vectis-actions-runner"
 runner_exit=0
-./run.sh --jitconfig '${jitConfig}' || runner_exit=$?
+./bin/Runner.Listener run --jitconfig '${jitConfig}' || runner_exit=$?
 if test -f "$gate/assignment-rejected"; then printf '${assignmentRejectedMarker}\\n'; cat "$gate/assignment-rejected"; exit 1; fi
 exit "$runner_exit"
 `;

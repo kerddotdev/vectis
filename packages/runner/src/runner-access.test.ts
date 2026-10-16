@@ -132,10 +132,10 @@ test("policy rendering validates integers, actor bounds and approval scope befor
 test("the start wrapper installs the marker directory and a refused hook never returns", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-access-wrapper-"));
   try {
-    await mkdir(join(home, "vectis-actions-runner"));
+    await mkdir(join(home, "vectis-actions-runner/bin"), { recursive: true });
     await writeFile(join(home, "event.json"), "{}");
     await writeFile(
-      join(home, "vectis-actions-runner/run.sh"),
+      join(home, "vectis-actions-runner/bin/Runner.Listener"),
       '#!/bin/bash\nbash "$ACTIONS_RUNNER_HOOK_JOB_STARTED"\nprintf step-ran\nexit 0\n',
       { mode: 0o700 },
     );

@@ -250,3 +250,38 @@ test("result text is redacted recursively without changing identity or typed dia
     store.close();
   }
 });
+
+test("restart marks runner recovery pending without losing its durable lease identity", async () => {
+  const { store } = await fixture();
+  try {
+    const { operation } = store.accept("runner", "fingerprint", "runner.run");
+    const progress = {
+      bindingId: "binding",
+      environmentId: "test",
+      leaseKey: operation.id,
+      instanceId: "instance",
+      stage: "registering",
+    };
+    store.update(operation, { status: "running", result: progress });
+    store.put("instance", "instance", {
+      id: "instance",
+      environmentId: "test",
+      status: "running",
+      pid: 42,
+      createdAt: new Date().toISOString(),
+    });
+    store.recover();
+    expect(store.get("operation", operation.id)).toMatchObject({
+      status: "action_required",
+      result: { ...progress, code: "runner_recovery_pending" },
+    });
+    expect(store.get("instance", "instance")).toMatchObject({ status: "interrupted" });
+    expect(store.accept("runner", "fingerprint", "runner.run").fresh).toBe(false);
+    store.recover();
+    expect(store.get("operation", operation.id)).toMatchObject({
+      result: { code: "runner_recovery_pending" },
+    });
+  } finally {
+    store.close();
+  }
+});
