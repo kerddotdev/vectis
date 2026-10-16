@@ -9,6 +9,12 @@ import type { Environment } from "../../protocol/src/index.js";
 import { VectisError } from "../../protocol/src/index.js";
 
 export const runnerVersion = "2.337.0";
+export function preinstalledRunnerDirectory(os: Environment["os"]) {
+  if (os === "windows") return `C:\\vectis\\runner\\${runnerVersion}`;
+  if (os === "macos") return `$HOME/.vectis-runner/${runnerVersion}`;
+  return `/opt/vectis/runner/${runnerVersion}`;
+}
+
 const distributions = {
   linux: {
     archive: "actions-runner-linux-arm64-2.337.0.tar.gz",
@@ -61,13 +67,19 @@ rm runner.tar.gz
 `;
 }
 
-export function runnerStartScript(os: Environment["os"], jitConfig: string, access: RunnerAccess) {
+export function runnerStartScript(
+  os: Environment["os"],
+  jitConfig: string,
+  access: RunnerAccess,
+  preinstalled = false,
+) {
   if (!/^[A-Za-z0-9+/=]{1,60000}$/.test(jitConfig))
     throw new VectisError(
       "invalid_runner_configuration",
       "The JIT runner configuration is invalid.",
     );
   const policy = renderRunnerPolicy(access);
+  const target = preinstalled ? preinstalledRunnerDirectory(os) : undefined;
   if (os === "windows")
     return `$ErrorActionPreference = 'Stop'
 $gate = Join-Path $env:USERPROFILE 'vectis-actions-runner/_vectis'
@@ -79,7 +91,7 @@ ${powershellJobStartedHook()}'@ | Set-Content -LiteralPath (Join-Path $gate 'job
 $rejected = Join-Path $gate 'assignment-rejected'
 Remove-Item -LiteralPath $rejected -ErrorAction SilentlyContinue
 $env:ACTIONS_RUNNER_HOOK_JOB_STARTED = Join-Path $gate 'job-started.ps1'
-Set-Location (Join-Path $env:USERPROFILE 'vectis-actions-runner')
+Set-Location ${target ? `'${target}'` : "(Join-Path $env:USERPROFILE 'vectis-actions-runner')"}
 & .\\bin\\Runner.Listener.exe run --jitconfig '${jitConfig}'
 $runnerExit = $LASTEXITCODE
 if (Test-Path -LiteralPath $rejected) { Write-Output '${assignmentRejectedMarker}'; Get-Content -LiteralPath $rejected; exit 1 }
@@ -98,7 +110,7 @@ chmod 700 "$gate/job-started.sh"
 rm -f "$gate/assignment-rejected"
 export ACTIONS_RUNNER_HOOK_JOB_STARTED="$gate/job-started.sh"
 umask "$job_umask"
-cd "$HOME/vectis-actions-runner"
+cd "${target ?? "$HOME/vectis-actions-runner"}"
 runner_exit=0
 ./run.sh --jitconfig '${jitConfig}' || runner_exit=$?
 if test -f "$gate/assignment-rejected"; then printf '${assignmentRejectedMarker}\\n'; cat "$gate/assignment-rejected"; exit 1; fi

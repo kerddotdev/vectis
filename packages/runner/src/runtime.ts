@@ -2,7 +2,17 @@ import { validateEnvironmentEgress } from "./environment-network.js";
 import { windowsVmArguments } from "./windows-arguments.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
-import { access, copyFile, cp, mkdir, rm, stat, writeFile, readFile } from "node:fs/promises";
+import {
+  access,
+  copyFile,
+  cp,
+  mkdir,
+  rm,
+  stat,
+  writeFile,
+  readFile,
+  symlink,
+} from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { Schema } from "effect";
 import { cpus, totalmem } from "node:os";
@@ -114,6 +124,7 @@ export class VmRuntime {
     environment: Environment,
     onExit: (cleaned: boolean) => void,
     signal?: AbortSignal,
+    options: { diskInPlace?: boolean } = {},
   ): Promise<OwnedInstance> {
     signal?.throwIfAborted();
     await this.validate(environment);
@@ -180,23 +191,31 @@ export class VmRuntime {
             "Configure the prepared Windows image, firmwarePath, firmwareVarsPath and VECTIS_SWTPM.",
           );
         await access(this.options.swtpm, constants.X_OK);
-        await copyFile(
-          resolve(environment.firmwareVarsPath),
-          join(directory, "uefi-vars.fd"),
-          constants.COPYFILE_FICLONE,
-        );
-        if (environment.tpmStatePath)
-          await cp(resolve(environment.tpmStatePath), join(directory, "tpm"), {
-            recursive: true,
-            mode: constants.COPYFILE_FICLONE,
-          });
-        else await mkdir(join(directory, "tpm"), { mode: 0o700 });
-        const disk = join(directory, "disk.qcow2");
-        await runProcess(
-          this.options.qemuImg,
-          ["create", "-f", "qcow2", "-F", "qcow2", "-b", resolve(environment.basePath), disk],
-          signal,
-        );
+        if (options.diskInPlace) {
+          await symlink(resolve(environment.basePath), join(directory, "disk.qcow2"));
+          await symlink(resolve(environment.firmwareVarsPath), join(directory, "uefi-vars.fd"));
+          if (!environment.tpmStatePath)
+            throw new VectisError("setup_required", "In-place Windows boot requires TPM state.");
+          await symlink(resolve(environment.tpmStatePath), join(directory, "tpm"));
+        } else {
+          await copyFile(
+            resolve(environment.firmwareVarsPath),
+            join(directory, "uefi-vars.fd"),
+            constants.COPYFILE_FICLONE,
+          );
+          if (environment.tpmStatePath)
+            await cp(resolve(environment.tpmStatePath), join(directory, "tpm"), {
+              recursive: true,
+              mode: constants.COPYFILE_FICLONE,
+            });
+          else await mkdir(join(directory, "tpm"), { mode: 0o700 });
+          const disk = join(directory, "disk.qcow2");
+          await runProcess(
+            this.options.qemuImg,
+            ["create", "-f", "qcow2", "-F", "qcow2", "-b", resolve(environment.basePath), disk],
+            signal,
+          );
+        }
         args = windowsVmArguments({
           firmwarePath: environment.firmwarePath,
           ...(environment.egress !== undefined ? { egress: environment.egress } : {}),
@@ -204,8 +223,11 @@ export class VmRuntime {
           memoryMiB: environment.memoryMiB,
         });
       } else {
-        const destination = join(directory, environment.os === "macos" ? "bundle" : "disk.img");
-        await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination], signal);
+        const destination = options.diskInPlace
+          ? resolve(environment.basePath)
+          : join(directory, environment.os === "macos" ? "bundle" : "disk.img");
+        if (!options.diskInPlace)
+          await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination], signal);
         let seedPath = environment.seedPath;
         if (environment.os === "linux" && environment.sshHostKeyMode === "instance") {
           const identity = await instanceIdentity(directory, id, signal);

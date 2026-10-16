@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { Schema } from "effect";
 import { expect, test } from "vitest";
 import { linuxSeed } from "./linux-seed.js";
+import { runnerPreinstallScript } from "./provision-scripts.js";
 
 const CloudConfig = Schema.Struct({
   write_files: Schema.Array(
@@ -27,6 +28,14 @@ function content(path: string) {
     ? Buffer.from(entry.content, "base64").toString("utf8")
     : entry.content;
 }
+test("fresh Linux images retain the same verified runner used by derived environments", () => {
+  const script = content("/opt/vectis/prepare.sh");
+  expect(script).toContain(runnerPreinstallScript("linux"));
+  expect(script).not.toContain("/opt/vectis-bootstrap");
+  expect(linuxSeed({ id: "test", publicKey: "ssh-ed25519 AAAA synthetic" }).userdata).toContain(
+    "ALL=(ALL) NOPASSWD:ALL",
+  );
+});
 
 test("Rosetta boot setup checks the share tag and completes before SSH and Docker", () => {
   const unit = content("/opt/vectis/vectis-rosetta.service");

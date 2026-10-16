@@ -1,4 +1,4 @@
-import { runnerDistribution } from "./runner-release.js";
+import { runnerPreinstallScript } from "./provision-scripts.js";
 import { VectisError } from "../../protocol/src/index.js";
 
 export const ubuntuImage = {
@@ -41,7 +41,6 @@ export function linuxSeed(input: { id: string; publicKey: string }) {
       "invalid_setup_identity",
       "Expected a generated setup identity and Ed25519 public keys.",
     );
-  const runner = runnerDistribution("linux");
   const marker = `VECTIS_PREPARED_${input.id}`;
   const network =
     'network: {version: 2, ethernets: {vectis: {match: {name: "e*"}, dhcp4: true, dhcp-identifier: mac}}}\n';
@@ -56,14 +55,7 @@ apt-get install -y --no-install-recommends ${runnerPackages}
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
-mkdir -p /opt/vectis-bootstrap
-cd /opt/vectis-bootstrap
-curl --fail --location --retry 3 --connect-timeout 15 --max-time 300 -o runner.tgz '${runner.url}'
-printf '${runner.sha256}  runner.tgz\\n' | sha256sum -c -
-tar xzf runner.tgz
-./bin/installdependencies.sh
-cd /
-rm -rf /opt/vectis-bootstrap
+${runnerPreinstallScript("linux")}
 netplan generate
 test "$(docker info --format '{{.OSType}}')" = linux
 mkdir -p /etc/vectis
@@ -99,6 +91,7 @@ printf '${marker}\\n' > /dev/hvc0
             name: "vectis",
             lock_passwd: true,
             shell: "/bin/bash",
+            sudo: "ALL=(ALL) NOPASSWD:ALL",
             ssh_authorized_keys: [input.publicKey.trim()],
           },
         ],

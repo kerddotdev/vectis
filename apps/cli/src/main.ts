@@ -68,6 +68,9 @@ async function main() {
       name: { type: "string" },
       "disk-gib": { type: "string" },
       "image-directory": { type: "string" },
+      from: { type: "string" },
+      "setup-script": { type: "string" },
+      "no-runner": { type: "boolean" },
       "restore-path": { type: "string" },
       "open-terminal": { type: "boolean" },
       "iso-path": { type: "string" },
@@ -177,6 +180,8 @@ Workflow migration
   migration publish <preview-id>  Create or recover its pull request; never merges
 
 Environments
+  environment provision <id>   Derive a new image with --from <id> --image-directory <new-path>
+                               [--name <name>] [--setup-script <file>] [--no-runner]
   environment prepare-linux <id>  Prepare Ubuntu 24.04 with --image-directory and --storage-path
   environment resume <setup-id>   Continue an interrupted Ubuntu preparation
   environment install-macos <id>  Install macOS 26 with --image-directory and --storage-path, optional --restore-path
@@ -754,6 +759,18 @@ Documentation: https://vectis.kerd.dev/docs
     request = decodeCommand({ type: "environment.finish-macos-setup", id });
   else if (command === "environment" && subcommand === "resume-macos" && id)
     request = decodeCommand({ type: "environment.resume-macos", id });
+  else if (command === "environment" && subcommand === "provision" && id)
+    request = decodeCommand({
+      type: "environment.provision",
+      id,
+      from: values.from,
+      imageDirectory: values["image-directory"],
+      ...(values.name !== undefined ? { name: values.name } : {}),
+      ...(values["setup-script"] !== undefined
+        ? { setupScript: await readFile(values["setup-script"], "utf8") }
+        : {}),
+      ...(values["no-runner"] ? { runner: false } : {}),
+    });
   else if (command === "environment" && subcommand === "prepare-linux" && id)
     request = decodeCommand({
       type: "environment.prepare-linux",

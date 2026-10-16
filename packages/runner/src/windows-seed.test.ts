@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { windowsGit, windowsSeed } from "./windows-seed.js";
+import { runnerPreinstallScript } from "./provision-scripts.js";
 
 const configuration = {
   id: "isolated-setup",
@@ -12,6 +13,12 @@ const configuration = {
   imageName: "Windows 11 Pro",
   acceptLicense: true,
 };
+test("fresh Windows images preinstall the same verified runner without PowerShell Core", () => {
+  const { script } = windowsSeed(configuration);
+  expect(script).toContain(runnerPreinstallScript("windows"));
+  expect(script).toContain("$stage = 'runner-preinstall'");
+  expect(script).not.toContain("pwsh");
+});
 
 test("Windows answer media requires explicit license acceptance and safe script identifiers", () => {
   expect(() => windowsSeed({ ...configuration, acceptLicense: false })).toThrow(/license terms/);

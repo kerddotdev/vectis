@@ -66,6 +66,7 @@ export default defineConfig({
           { label: "Prepare Ubuntu", root: "guides/linux-setup" },
           { label: "Install macOS", root: "guides/macos-setup" },
           { label: "Install Windows (experimental)", root: "guides/windows-setup" },
+          { label: "Derive an environment", root: "guides/environments" },
           { label: "Storage and resources", root: "guides/storage" },
         ],
       },

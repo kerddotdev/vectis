@@ -577,3 +577,60 @@ test.each([
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each([false, true])(
+  "environment provision reads setup data and parses --no-runner=%s",
+  async (noRunner) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cli-provision-"));
+    const server = await startService({ home });
+    const submit = vi.spyOn(server.service, "submit");
+    const argv = process.argv;
+    const exitCode = process.exitCode;
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      const scriptPath = join(home, "setup.sh");
+      await writeFile(scriptPath, "printf 'guest setup text'\n");
+      vi.resetModules();
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "environment",
+        "provision",
+        "derived",
+        "--from",
+        "parent",
+        "--image-directory",
+        join(home, "image"),
+        "--name",
+        "Derived tools",
+        "--setup-script",
+        scriptPath,
+        ...(noRunner ? ["--no-runner"] : []),
+        "--key",
+        "provision",
+        "--json",
+      ];
+      await import("./main.js");
+      await vi.waitFor(() =>
+        expect(submit).toHaveBeenCalledWith("provision", {
+          type: "environment.provision",
+          id: "derived",
+          from: "parent",
+          imageDirectory: join(home, "image"),
+          name: "Derived tools",
+          setupScript: "printf 'guest setup text'\n",
+          ...(noRunner ? { runner: false } : {}),
+        }),
+      );
+    } finally {
+      process.argv = argv;
+      process.exitCode = exitCode;
+      await server.close();
+      output.mockRestore();
+      submit.mockRestore();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

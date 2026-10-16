@@ -11,6 +11,7 @@ import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-dia
 import {
   runnerInstallScript,
   runnerStartScript,
+  runnerVersion,
 } from "../../../packages/runner/src/runner-release.js";
 
 import {
@@ -71,16 +72,19 @@ export async function runRunnerTask(
     signal.throwIfAborted();
     connection = await readyGuest(environment, instance, signal);
     const shell = environment.os === "windows" ? "powershell" : "bash";
-    const installed = await executeGuest(connection, runnerInstallScript(environment.os), {
-      shell,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(600000)]),
-    });
-    if (installed.exitCode !== 0)
-      throw new VectisError(
-        "runner_install_failed",
-        "The verified runner installation failed.",
-        "Inspect the base image prerequisites before starting a fresh runner.",
-      );
+    const preinstalled = environment.image?.runnerVersion === runnerVersion;
+    if (!preinstalled) {
+      const installed = await executeGuest(connection, runnerInstallScript(environment.os), {
+        shell,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(600000)]),
+      });
+      if (installed.exitCode !== 0)
+        throw new VectisError(
+          "runner_install_failed",
+          "The verified runner installation failed.",
+          "Inspect the base image prerequisites before starting a fresh runner.",
+        );
+    }
     if (controls.needed && !(await controls.needed(signal)))
       throw new VectisError(
         "job_not_queued",
@@ -132,7 +136,7 @@ export async function runRunnerTask(
     const execution = await executeRunnerListener(
       connection,
       environment.os,
-      runnerStartScript(environment.os, grant.encodedConfig, grant.access),
+      runnerStartScript(environment.os, grant.encodedConfig, grant.access, preinstalled),
       listeningSignal,
     )
       .catch((error: unknown) => {
@@ -168,6 +172,7 @@ export async function runRunnerTask(
         os: environment.os,
         listener,
         secrets: [secret],
+        preinstalled: environment.image?.runnerVersion === runnerVersion,
       }).catch(() => undefined),
     });
   {

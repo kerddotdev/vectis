@@ -25,6 +25,30 @@ const record = {
   createdAt: 1000,
   updatedAt: 1000,
 };
+test("remote provisioning carries host paths and inline setup data through the shared command", async () => {
+  const { request, client } = fixture();
+  const command = {
+    type: "environment.provision",
+    id: "derived",
+    from: "parent",
+    imageDirectory: "/selected-host/images/derived",
+    setupScript: "printf 'guest setup'",
+    runner: false,
+  } as const;
+  request
+    .mockResolvedValueOnce({ operationId: "remote1" })
+    .mockResolvedValueOnce({ ...record, commandJson: JSON.stringify(command) });
+  expect(await client.submit(command, "derive")).toMatchObject({
+    status: "accepted",
+    command: "environment.provision",
+  });
+  expect(request.mock.calls[0]?.[0]).toEqual({
+    type: "operation.submit",
+    machineId: "machine1",
+    key: "derive",
+    command,
+  });
+});
 test("activity cancellation is replayed on the machine with the local activity identity", async () => {
   const { request, client } = fixture();
   const command = { type: "activity.cancel", id: "local-activity" } as const;

@@ -1,5 +1,6 @@
 export const preparationCommands = [
   "environment.prepare-linux",
+  "environment.provision",
   "environment.resume",
   "environment.install-macos",
   "environment.resume-macos",
@@ -19,6 +20,7 @@ export const cancellableCommands = [
   "environment.install-windows",
   "environment.resume-windows",
   "environment.prepare-linux",
+  "environment.provision",
   "environment.resume",
   "runner.run",
   "run.rerun-failed",

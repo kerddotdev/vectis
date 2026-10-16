@@ -15,6 +15,7 @@ const Diagnostic = Schema.Struct({
     "git-checksum",
     "git-installation",
     "git-verification",
+    "runner-preinstall",
     "toolchain",
     "completion",
   ]),

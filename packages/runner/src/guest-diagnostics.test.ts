@@ -1,6 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { collectRunnerDiagnostics } from "./guest-diagnostics.js";
 import { executeGuest, GuestUnavailableError } from "./guest.js";
+import { preinstalledRunnerDirectory } from "./runner-release.js";
 
 vi.mock("./guest.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./guest.js")>()),
@@ -15,6 +16,31 @@ const connection = {
   knownHostsFile: "/test/hosts",
   hostKeyAlias: "test",
 };
+test.each(["linux", "macos", "windows"] as const)(
+  "%s diagnostics read logs from the runner's baked installation",
+  async (os) => {
+    vi.mocked(executeGuest).mockResolvedValue({
+      exitCode: 0,
+      stdout: "runner diagnostic",
+      stderr: "",
+      truncated: false,
+    });
+    expect(
+      await collectRunnerDiagnostics({
+        connection,
+        os,
+        listener: "",
+        secrets: [],
+        preinstalled: true,
+      }),
+    ).toContain("runner diagnostic");
+    expect(executeGuest).toHaveBeenCalledWith(
+      connection,
+      expect.stringContaining(preinstalledRunnerDirectory(os)),
+      expect.objectContaining({ shell: os === "windows" ? "powershell" : "bash" }),
+    );
+  },
+);
 
 test("diagnostics are scrubbed of secrets and bounded", async () => {
   vi.mocked(executeGuest).mockResolvedValue({

@@ -20,43 +20,46 @@ const connection = {
   hostKeyAlias: "windows-test",
 };
 
-test("bootstrap failures retain bounded private details and expose only a known stage", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "vectis-bootstrap-diagnostic-"));
-  const diagnostic = {
-    stage: "git-verification",
-    message: "private error ".repeat(1000),
-    line: 99,
-  };
-  const signal = AbortSignal.timeout(1000);
-  vi.mocked(executeGuest).mockResolvedValue({
-    exitCode: 0,
-    stdout: JSON.stringify(diagnostic),
-    stderr: "",
-    truncated: false,
-  });
-  try {
-    const error = await windowsBootstrapFailure(connection, directory, signal);
-    expect(error).toMatchObject({ code: "guest_preparation_failed" });
-    expect(error.message).toContain("during git-verification");
-    expect(error.message).not.toContain("private error");
-    const path = join(directory, "bootstrap-diagnostic.json");
-    expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
-      ...diagnostic,
-      message: diagnostic.message.slice(0, 4096),
+test.each(["git-verification", "runner-preinstall"])(
+  "bootstrap failures retain bounded private details and expose known stage %s",
+  async (stage) => {
+    const directory = await mkdtemp(join(tmpdir(), "vectis-bootstrap-diagnostic-"));
+    const diagnostic = {
+      stage,
+      message: "private error ".repeat(1000),
+      line: 99,
+    };
+    const signal = AbortSignal.timeout(1000);
+    vi.mocked(executeGuest).mockResolvedValue({
+      exitCode: 0,
+      stdout: JSON.stringify(diagnostic),
+      stderr: "",
+      truncated: false,
     });
-    expect((await stat(path)).mode & 0o777).toBe(0o600);
-    expect(executeGuest).toHaveBeenCalledWith(
-      connection,
-      expect.stringContaining("diagnostic.json"),
-      {
-        signal,
-        shell: "powershell",
-      },
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
+    try {
+      const error = await windowsBootstrapFailure(connection, directory, signal);
+      expect(error).toMatchObject({ code: "guest_preparation_failed" });
+      expect(error.message).toContain(`during ${stage}`);
+      expect(error.message).not.toContain("private error");
+      const path = join(directory, "bootstrap-diagnostic.json");
+      expect(JSON.parse(await readFile(path, "utf8"))).toEqual({
+        ...diagnostic,
+        message: diagnostic.message.slice(0, 4096),
+      });
+      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      expect(executeGuest).toHaveBeenCalledWith(
+        connection,
+        expect.stringContaining("diagnostic.json"),
+        {
+          signal,
+          shell: "powershell",
+        },
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("missing, malformed or truncated diagnostics preserve the original failure", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vectis-bootstrap-fallback-"));

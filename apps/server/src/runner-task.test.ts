@@ -5,6 +5,10 @@ import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
 import { VectisError, type Environment } from "../../../packages/protocol/src/index.js";
+import {
+  preinstalledRunnerDirectory,
+  runnerVersion,
+} from "../../../packages/runner/src/runner-release.js";
 
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
 vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
@@ -89,6 +93,62 @@ function fixture(os: Environment["os"] = "linux") {
   });
   return { controls, broker, events };
 }
+test.each(["linux", "macos", "windows"] as const)(
+  "%s starts the baked runner without an install when the manifest matches",
+  async (os) => {
+    const { controls } = fixture(os);
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      {
+        ...environment,
+        os,
+        image: { revision: "revision", runnerVersion, provisionedAt: "2026-10-16T00:00:00Z" },
+      },
+      controls,
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("succeeded");
+    const scripts = vi.mocked(executeGuest).mock.calls.map((call) => call[1]);
+    expect(scripts.some((script) => script.includes(preinstalledRunnerDirectory(os)))).toBe(true);
+    expect(scripts.join("\n")).not.toMatch(/Invoke-WebRequest|curl --fail/);
+    expect(scripts.join("\n")).toContain("--jitconfig");
+    expect(controls.stop).toHaveBeenCalledOnce();
+  },
+);
+test.each([undefined, "old-version"])(
+  "a %s runner manifest uses the existing verified install path with a 600 s timeout",
+  async (version) => {
+    const { controls } = fixture();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      {
+        ...environment,
+        ...(version
+          ? {
+              image: {
+                revision: "revision",
+                runnerVersion: version,
+                provisionedAt: "2026-10-16T00:00:00Z",
+              },
+            }
+          : {}),
+      },
+      controls,
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(executeGuest).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.stringContaining("curl --fail"),
+      expect.objectContaining({ shell: "bash" }),
+    );
+    expect(timeout).toHaveBeenCalledWith(600000);
+  },
+);
 test("a failed pinned guest identity never allocates JIT credentials or sends runner scripts", async () => {
   const { controls, broker } = fixture();
   vi.mocked(readyGuest).mockRejectedValue(

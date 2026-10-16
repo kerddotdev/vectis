@@ -1,3 +1,4 @@
+import { runnerVersion } from "./runner-release.js";
 import type { RuntimeOptions } from "./runtime.js";
 import { Schema } from "effect";
 import { constants } from "node:fs";
@@ -108,7 +109,23 @@ export async function prepareLinux(
       );
     for (const name of ["disk.img", "guest-key"])
       await access(join(directory, name), constants.R_OK);
-    return preparedEnvironment(input, directory);
+    const manifest = Schema.decodeUnknownSync(
+      Schema.Struct({
+        runnerVersion: Schema.optional(Schema.String),
+        preparedAt: Schema.optional(Schema.String),
+      }),
+    )(image);
+    return preparedEnvironment(
+      input,
+      directory,
+      manifest.runnerVersion && manifest.preparedAt
+        ? {
+            revision: ubuntuImage.revision,
+            runnerVersion: manifest.runnerVersion,
+            provisionedAt: manifest.preparedAt,
+          }
+        : undefined,
+    );
   }
   if (preparation.phase === "booting" && !(await preparationStopped(directory, preparation.id)))
     throw new VectisError(
@@ -192,12 +209,14 @@ export async function prepareLinux(
     progress("interrupted");
     throw error;
   }
+  const provisionedAt = new Date().toISOString();
   await writeFile(
     join(directory, "image.json"),
     JSON.stringify({
       revision: ubuntuImage.revision,
       sourceSha256: ubuntuImage.sha256,
-      preparedAt: new Date().toISOString(),
+      preparedAt: provisionedAt,
+      runnerVersion,
       toolchainManifest: "/etc/vectis/toolchain-versions.txt",
       sshHostKeyMode: "instance",
     }),
@@ -207,9 +226,17 @@ export async function prepareLinux(
     await rm(path, { force: true });
   await rm(seedDirectory, { recursive: true, force: true });
   progress("prepared");
-  return preparedEnvironment(input, directory);
+  return preparedEnvironment(input, directory, {
+    revision: ubuntuImage.revision,
+    runnerVersion,
+    provisionedAt,
+  });
 }
-function preparedEnvironment(input: LinuxPreparation, directory: string): Environment {
+function preparedEnvironment(
+  input: LinuxPreparation,
+  directory: string,
+  image?: Environment["image"],
+): Environment {
   return {
     id: input.id,
     name: input.name,
@@ -219,6 +246,7 @@ function preparedEnvironment(input: LinuxPreparation, directory: string): Enviro
     cpu: input.cpu,
     memoryMiB: input.memoryMiB,
     state: "ready",
+    ...(image ? { image } : {}),
     sshUser: "vectis",
     sshKeyPath: join(directory, "guest-key"),
     sshHostKeyMode: "instance",

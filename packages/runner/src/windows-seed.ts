@@ -1,3 +1,4 @@
+import { runnerPreinstallScript } from "./provision-scripts.js";
 import { VectisError } from "../../protocol/src/index.js";
 
 function xml(value: string) {
@@ -122,6 +123,8 @@ Subsystem sftp sftp-server.exe
   $stage = 'git-verification'
   $gitVersion = & (Join-Path $gitCommand 'git.exe') --version 2>&1
   if ($LASTEXITCODE -ne 0) { throw "Git is not usable: $($gitVersion -join ' ')" }
+  $stage = 'runner-preinstall'
+${runnerPreinstallScript("windows")}
   $stage = 'toolchain'
   $system = Get-ComputerInfo -Property WindowsProductName,WindowsVersion,OsBuildNumber
   [pscustomobject]@{

@@ -1,4 +1,5 @@
 export const commandLabels: Record<string, string> = {
+  "environment.provision": "Provision derived environment",
   "environment.prepare-linux": "Prepare Linux image",
   "environment.resume": "Resume Linux preparation",
   "environment.install-macos": "Install macOS",

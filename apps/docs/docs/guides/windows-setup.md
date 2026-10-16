@@ -89,3 +89,7 @@ An interrupted operation reports `action_required` with the setup ID and private
 Resume uses the same setup identity and disk, not a second fresh installation. It regenerates setup media from the current service recipe and retries a failed bootstrap once if SSH is reachable. A new bootstrap attempt clears old completion and failure markers before running. A changed environment configuration requires a separate setup.
 
 If SSH cannot start or the firewall blocks it, automatic bootstrap retry cannot reach the guest. The setup may need human console recovery; repeatedly resuming does not fix unreachable SSH. Preserve the setup disk and inspect its screenshot and local diagnostics before deciding how to recover. Do not treat a stopped or unreachable guest as a completed environment, or disable pinned host-key checking to reach it.
+
+## Derive a prepared image
+
+Fresh Windows preparations preinstall the verified pinned Actions runner at `C:\vectis\runner\<version>` and record its version in `Environment.image`, so jobs start it in place. Existing ready environments can gain the runner or repository tools with [environment provisioning](/docs/guides/environments). Setup scripts run as the guest SSH user under Windows PowerShell 5.1 (`powershell.exe`). A derived disk is a QCOW2 overlay: keep its parent backing image in place and remove registered descendants before their parent.
