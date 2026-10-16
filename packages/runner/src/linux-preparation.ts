@@ -202,6 +202,7 @@ export async function prepareLinux(
         cpu: input.cpu,
         memoryMiB: input.memoryMiB,
         marker: seed.marker,
+        failureMarker: seed.failureMarker,
       },
       signal,
     );

@@ -23,7 +23,9 @@ Linux provisioning checks `sudo -n true` before uploading setup scripts or downl
 
 ## Runner and image manifest
 
-New Linux and Windows preparations retain the pinned runner too. Linux and macOS use `$HOME/.vectis-runner/<version>`, and Windows uses `C:\vectis\runner\<version>`. Linux preparation runs preinstallation as `vectis` so the files belong to the same guest user that starts jobs. Downloads retry and verify SHA-256 before extraction. The guest account owns the runner directory so the disposable VM can configure and run it in place.
+New Linux and Windows preparations retain the pinned runner too. Linux and macOS use `$HOME/.vectis-runner/<version>`, and Windows uses `C:\vectis\runner\<version>`. Linux preparation downloads and extracts the runner in a `vectis` login environment, then runs the dependency installer as root. Downloads retry and verify SHA-256 before extraction. The guest account owns the runner directory so the disposable VM can configure and run it in place.
+
+Linux preparation reports script failures through a serial-console marker with the failing step and exit status. The host stops the guest and reports `action_required` with `guest_preparation_failed` instead of waiting for the overall one-hour limit. Failures and timeouts retain up to 4 KiB of redacted serial output in the operation result's `diagnostics`, available through `operation get --json`; timeouts use `preparation_timeout`. The private `preparation.log` retains a larger bounded log. Resume with `environment resume <setup-id>` after fixing the reported cause.
 
 The optional `Environment.image` manifest records `parentId`, a `revision`, `runnerVersion` when installed, and `provisionedAt`. When `runnerVersion` matches Vectis's pinned version, jobs start that runner directly without copying or downloading it. Existing environments without that manifest, and manifests for other runner versions, retain the verified download path and its 600-second install timeout. A manifest is an installation record, not evidence of a successful GitHub job.
 

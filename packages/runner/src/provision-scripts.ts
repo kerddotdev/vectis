@@ -6,7 +6,10 @@ import {
   preinstalledRunnerDirectory,
 } from "./runner-release.js";
 
-export function runnerPreinstallScript(os: Environment["os"]) {
+export function runnerPreinstallScript(
+  os: Environment["os"],
+  options: { dependencies?: boolean } = {},
+) {
   const { url, sha256 } = runnerDistribution(os);
   const directory = preinstalledRunnerDirectory(os);
   if (os === "windows")
@@ -50,7 +53,7 @@ if ! test -f "$target/.vectis-installed" || ! test -x "$target/bin/Runner.Listen
   echo 'vectis-provision: remove-archive'
   rm "$target/runner.tar.gz"
   ${
-    os === "linux"
+    os === "linux" && options.dependencies !== false
       ? `runner_dependencies_present() {
     local library linked libraries ldconfig_command
     command -v ldd >/dev/null || { echo 'Runner dependency check requires ldd.' >&2; return 1; }
