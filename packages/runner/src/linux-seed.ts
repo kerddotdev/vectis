@@ -50,49 +50,98 @@ export function linuxSeed(input: { id: string; publicKey: string }) {
 set -euo pipefail
 step=initialize
 completed=false
+log=/var/log/vectis-prepare.log
+exec 3> /dev/hvc0
 finish() {
   status=$?
   trap - EXIT
+  exec 1>&3 2>&3
+  # Close the pipe and drain tee before replaying errors or shutting down.
+  if test -n "\${log_pid:-}"; then wait "$log_pid" || true; fi
+  if test -n "\${pipe_dir:-}"; then
+    rm -f "$pipe_dir/output"
+    rmdir "$pipe_dir"
+  fi
   if test "$status" -ne 0 || test "$completed" != true; then
-    printf '${failureMarker} step=%s exit=%s\\n' "$step" "$status" > /dev/hvc0
+    if test -f "$log"; then
+      tr '\\r' '\\n' < "$log" | awk -v current="vectis-prepare: step=$step" '
+        /^vectis-prepare: step=/ { active = ($0 == current); next }
+        active && NF && $0 !~ /^[[:space:]]*([0-9]+%|Progress:|Packages store )/ { print }
+      ' | tail -n 40 || true
+    fi
+    printf '${failureMarker} step=%s exit=%s\\n' "$step" "$status"
   fi
   poweroff || {
     status=$?
-    printf '${failureMarker} step=poweroff exit=%s\\n' "$status" > /dev/hvc0
+    printf '${failureMarker} step=poweroff exit=%s\\n' "$status"
   }
   exit "$status"
 }
 trap finish EXIT
-exec > /dev/hvc0 2>&1
+: > "$log"
+pipe_dir=$(mktemp -d)
+mkfifo "$pipe_dir/output"
+tee -a "$log" < "$pipe_dir/output" >&3 &
+log_pid=$!
+exec > "$pipe_dir/output" 2>&1
+begin_step() {
+  step=$1
+  printf 'vectis-prepare: step=%s\\n' "$step"
+}
+wait_for_apt() {
+  local deadline=$((SECONDS + 300))
+  while fuser /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock /var/cache/apt/archives/lock >/dev/null 2>&1; do
+    if test "$SECONDS" -ge "$deadline"; then
+      printf 'E: Timed out waiting for apt/dpkg locks after 300 seconds.\\n' >&2
+      return 100
+    fi
+    sleep 5
+  done
+}
+apt_get() {
+  local attempt status
+  for attempt in 1 2 3; do
+    wait_for_apt || return $?
+    if apt-get -q -o Dpkg::Progress-Fancy=0 -o APT::Color=0 -o Dpkg::Use-Pty=0 -o DPkg::Lock::Timeout=300 -o APT::Update::Error-Mode=any "$@" </dev/null; then
+      return 0
+    else
+      status=$?
+    fi
+    if test "$attempt" -eq 3; then return "$status"; fi
+    printf 'Retrying apt-get %s after exit %s (attempt %s/3).\\n' "$1" "$status" "$attempt" >&2
+    sleep 5
+  done
+}
+begin_step initialize
 test "$(uname -m)" = aarch64
 export DEBIAN_FRONTEND=noninteractive
-step=packages
-apt-get update
-apt-get install -y curl git openssh-server docker.io
-apt-get install -y --no-install-recommends ${runnerPackages}
+begin_step packages
+apt_get update
+apt_get install -y curl git openssh-server docker.io
+apt_get install -y --no-install-recommends ${runnerPackages}
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
-step=runner-download
+begin_step runner-download
 runuser -l vectis -c 'bash -s' <<'VECTIS_RUNNER'
 ${runnerPreinstallScript("linux", { dependencies: false })}VECTIS_RUNNER
-step=runner-dependencies
+begin_step runner-dependencies
 guest_home=$(getent passwd vectis | cut -d: -f6)
 test -n "$guest_home"
 runner_target="${preinstalledRunnerDirectory("linux").replace("$HOME", "$guest_home")}"
 "$runner_target/bin/installdependencies.sh"
 chown -R vectis:vectis "$runner_target"
-step=network
+begin_step network
 netplan generate
 test "$(docker info --format '{{.OSType}}')" = linux
-step=image-metadata
+begin_step image-metadata
 mkdir -p /etc/vectis
 dpkg-query -W -f='\${Package}\\t\${Version}\\n' > /etc/vectis/toolchain-versions.txt
 printf '${ubuntuImage.revision}\\n' > /etc/vectis/image-revision
 # The downloaded archives go, the package lists stay: a job that runs apt-get install should not
 # have to run apt-get update first.
-apt-get clean
-step=boot-services
+apt_get clean
+begin_step boot-services
 install -m 0644 /opt/vectis/vectis-rosetta.service /etc/systemd/system/vectis-rosetta.service
 systemctl enable vectis-rosetta.service
 install -m 0644 /opt/vectis/vectis-instance-identity.service /etc/systemd/system/vectis-instance-identity.service
@@ -100,7 +149,7 @@ for unit in ssh.service ssh.socket; do
   mkdir -p "/etc/systemd/system/$unit.d"
   install -m 0644 /opt/vectis/vectis-identity.conf "/etc/systemd/system/$unit.d/vectis-identity.conf"
 done
-step=identity-reset
+begin_step identity-reset
 rm -f /etc/ssh/ssh_host_* /var/lib/cloud/instance/user-data.txt /var/lib/cloud/instance/user-data.txt.i
 touch /etc/cloud/cloud-init.disabled
 printf 'uninitialized\\n' > /etc/machine-id
