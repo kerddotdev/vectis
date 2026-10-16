@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { Service } from "./service.js";
-import { Store, snapshotLimits } from "./store.js";
+import { Store } from "./store.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
 import { activityFor } from "./activities.js";
@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { afterEach } from "vitest";
 
 const homes: string[] = [];
+const snapshotLimits = { operations: 3, activities: 3, stoppedInstances: 2 };
 afterEach(async () => {
   for (const home of homes) await rm(home, { recursive: true, force: true });
   homes.length = 0;
@@ -18,7 +19,7 @@ afterEach(async () => {
 async function fixture() {
   const home = await mkdtemp(join(tmpdir(), "vectis-runner-recovery-"));
   homes.push(home);
-  const store = new Store(":memory:");
+  const store = new Store(":memory:", { snapshotLimits });
   const broker = {
     connectRepository: vi.fn(async () => "binding"),
     disconnectRepository: async () => {},

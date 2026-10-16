@@ -12,16 +12,17 @@ import { Snapshot, VectisError } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
 import { activityFor } from "./activities.js";
 import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
+import type { StoreOptions } from "./store.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const close of cleanup.reverse()) await close();
   cleanup.length = 0;
 });
-async function fixture() {
+async function fixture(options: StoreOptions = {}) {
   const home = await mkdtemp(join(tmpdir(), "vectis-test-"));
   cleanup.push(() => rm(home, { recursive: true, force: true }));
-  const server = await startService({ home });
+  const server = await startService({ home, ...options });
   cleanup.push(server.close);
   return { home, server, client: new VectisClient(server.connection) };
 }
@@ -62,7 +63,9 @@ test("snapshot, activity and operation reads preserve runner phase timestamps", 
 });
 
 test("individual operations, keys and activities remain readable outside the status window", async () => {
-  const { client, server } = await fixture();
+  const { client, server } = await fixture({
+    snapshotLimits: { operations: 3, activities: 3, stoppedInstances: 2 },
+  });
   const command = { type: "runner.run", bindingId: "binding" } as const;
   const id = "old-operation";
   const key = "request:/with spaces?&=value";
@@ -86,11 +89,23 @@ test("individual operations, keys and activities remain readable outside the sta
     updatedAt: "2020-01-01T00:00:00Z",
     result,
   });
-  for (let index = 0; index < 110; index++) {
-    const recent = server.store.accept(`recent-${index}`, "recent", "machine.pause").operation;
+  for (let index = 0; index < 3; index++) {
+    const recentId = `recent-${index}`;
+    const recentCommand = { type: "job.scan", bindingId: "binding" } as const;
+    const recent = server.store.accept(
+      recentId,
+      recentId,
+      recentCommand.type,
+      activityFor(recentId, recentCommand),
+      recentId,
+    ).operation;
     server.store.update(recent, { status: "succeeded" });
   }
-  expect((await client.status()).operations.some((item) => item.id === id)).toBe(false);
+  const status = await client.status();
+  expect(status.operations).toHaveLength(3);
+  expect(status.activities).toHaveLength(3);
+  expect(status.operations.some((item) => item.id === id)).toBe(false);
+  expect(status.activities?.some((item) => item.id === id)).toBe(false);
   const snapshot = vi.spyOn(server.service, "snapshot").mockImplementation(() => {
     throw new Error("Targeted reads must not use status");
   });

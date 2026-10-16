@@ -77,9 +77,10 @@ test("job log inspections use the authenticated HTTP contract and fit the encode
   const server = await startService({ home });
   try {
     const local = new VectisClient(server.connection);
+    const maxResponseBytes = 1024;
     const log = {
-      text: "\u0000".repeat(32768),
-      next: 32768,
+      text: "\u0000".repeat(128),
+      next: 128,
       status: "in_progress" as const,
       complete: false,
       truncated: true,
@@ -90,20 +91,26 @@ test("job log inspections use the authenticated HTTP contract and fit the encode
       JSON.stringify({ name: "job.logs", bindingId: "binding", jobId: 4, after: 0 }),
       local,
       signal,
+      maxResponseBytes,
     );
-    expect(Buffer.byteLength(encoded)).toBeLessThan(262144);
+    expect(Buffer.byteLength(encoded)).toBeLessThan(maxResponseBytes);
     expect(JSON.parse(encoded)).toEqual({ ok: true, result: log });
     expect(read).toHaveBeenCalledWith(
       { bindingId: "binding", jobId: 4, after: 0 },
       expect.any(AbortSignal),
     );
-    read.mockResolvedValue({ ...log, text: "\u00e9".repeat(140000) });
+    const oversized = { ...log, text: "\u00e9".repeat(600) };
+    const oversizedJson = JSON.stringify({ ok: true, result: oversized });
+    expect(oversizedJson.length).toBeLessThan(maxResponseBytes);
+    expect(Buffer.byteLength(oversizedJson)).toBeGreaterThan(maxResponseBytes);
+    read.mockResolvedValue(oversized);
     expect(
       JSON.parse(
         await answerInspection(
           '{"name":"job.logs","bindingId":"binding","jobId":4}',
           local,
           signal,
+          maxResponseBytes,
         ),
       ),
     ).toMatchObject({ ok: false, code: "query_result_too_large" });
@@ -126,6 +133,7 @@ test("operation and activity inspections bypass a status snapshot larger than th
   const server = await startService({ home });
   try {
     const local = new VectisClient(server.connection);
+    const maxResponseBytes = 2 * 1024;
     const command = { type: "job.scan", bindingId: "binding" } as const;
     const operation = server.store.accept(
       "target",
@@ -134,12 +142,18 @@ test("operation and activity inspections bypass a status snapshot larger than th
       activityFor("target", command),
       "target",
     ).operation;
-    for (let index = 0; index < 110; index++) {
+    for (let index = 0; index < 3; index++) {
       const other = server.store.accept(`other-${index}`, "other", "machine.pause").operation;
-      server.store.update(other, { status: "succeeded", result: { text: "x".repeat(4096) } });
+      server.store.update(other, { status: "succeeded", result: { text: "x".repeat(512) } });
     }
     const signal = new AbortController().signal;
-    expect(JSON.parse(await answerInspection('{"name":"status"}', local, signal))).toMatchObject({
+    const snapshot = await local.status(signal);
+    expect(Buffer.byteLength(JSON.stringify({ ok: true, result: snapshot }))).toBeGreaterThan(
+      maxResponseBytes,
+    );
+    expect(
+      JSON.parse(await answerInspection('{"name":"status"}', local, signal, maxResponseBytes)),
+    ).toMatchObject({
       ok: false,
       code: "query_result_too_large",
     });
@@ -148,18 +162,30 @@ test("operation and activity inspections bypass a status snapshot larger than th
       { name: "operation", id: operation.id },
       { name: "operation.key", key: "target" },
     ]) {
-      const encoded = await answerInspection(JSON.stringify(query), local, signal);
-      expect(Buffer.byteLength(encoded)).toBeLessThan(262144);
+      const encoded = await answerInspection(
+        JSON.stringify(query),
+        local,
+        signal,
+        maxResponseBytes,
+      );
+      expect(Buffer.byteLength(encoded)).toBeLessThan(maxResponseBytes);
       expect(JSON.parse(encoded)).toEqual({ ok: true, result: operation });
     }
     expect(
-      JSON.parse(await answerInspection('{"name":"activity","id":"target"}', local, signal)),
+      JSON.parse(
+        await answerInspection(
+          '{"name":"activity","id":"target"}',
+          local,
+          signal,
+          maxResponseBytes,
+        ),
+      ),
     ).toMatchObject({
       ok: true,
       result: { activity: { id: "target" }, operations: [operation] },
     });
     expect(
-      JSON.parse(await answerInspection('{"name":"activities"}', local, signal)),
+      JSON.parse(await answerInspection('{"name":"activities"}', local, signal, maxResponseBytes)),
     ).toMatchObject({
       ok: true,
       result: [{ id: "target" }],

@@ -48,7 +48,9 @@ const job: Job = {
 test("job observation still follows a retained runner outside both status windows", async () => {
   vi.useFakeTimers();
   const home = await mkdtemp(join(tmpdir(), "vectis-old-job-observation-"));
-  const store = new Store(join(home, "state.sqlite"));
+  const store = new Store(join(home, "state.sqlite"), {
+    snapshotLimits: { operations: 3, activities: 3, stoppedInstances: 2 },
+  });
   const watch = vi.fn();
   const service = new Service(
     store,
@@ -64,7 +66,7 @@ test("job observation still follows a retained runner outside both status window
       ...runner,
       updatedAt: new Date(Date.now() - 60000).toISOString(),
     });
-    for (let index = 0; index < 110; index++) {
+    for (let index = 0; index < 3; index++) {
       const id = `newer-${index}`;
       const command = { type: "job.scan", bindingId: "binding" } as const;
       const operation = store.accept(id, id, command.type, activityFor(id, command), id).operation;
