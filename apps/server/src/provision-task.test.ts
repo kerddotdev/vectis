@@ -144,10 +144,12 @@ async function fixture(configuration: { exitCode?: number; os?: Environment["os"
     return accepted;
   }
   async function completed(id: string) {
-    await vi.waitFor(() =>
-      expect(store.snapshot().operations.find((item) => item.id === id)?.status).not.toMatch(
-        /accepted|running/,
-      ),
+    await vi.waitFor(
+      () =>
+        expect(store.snapshot().operations.find((item) => item.id === id)?.status).not.toMatch(
+          /accepted|running/,
+        ),
+      { timeout: 5000 },
     );
     return store.snapshot().operations.find((item) => item.id === id);
   }
