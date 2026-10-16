@@ -15,6 +15,7 @@ import {
   setupUploadScripts,
 } from "../../../packages/runner/src/provision-scripts.js";
 import { runnerVersion } from "../../../packages/runner/src/runner-release.js";
+import { windowsDefenderCommands } from "../../../packages/runner/src/windows-defender.js";
 import type { VmRuntime, OwnedInstance } from "../../../packages/runner/src/runtime.js";
 import { hasReservedEnvironment } from "./preparation-state.js";
 import { instanceAdmissionError } from "./runner-capacity.js";
@@ -280,10 +281,20 @@ export async function startProvision(
     progress("waiting_for_guest");
     const connection = await readyGuest(environment, running, signal);
     const shell = environment.os === "windows" ? "powershell" : "bash";
-    const runGuest = async (script: string, guestSignal = signal) => {
+    const runGuest = async (
+      script: string,
+      options: {
+        signal?: AbortSignal;
+        shell?: "powershell" | "bash" | "cmd";
+        allowFailure?: boolean;
+      } = {},
+    ) => {
       try {
-        const result = await executeGuest(connection, script, { shell, signal: guestSignal });
-        if (result.exitCode !== 0)
+        const result = await executeGuest(connection, script, {
+          shell: options.shell ?? shell,
+          signal: options.signal ?? signal,
+        });
+        if (result.exitCode !== 0 && !options.allowFailure)
           guestFailure = {
             exitCode: result.exitCode,
             diagnostics: guestCommandDiagnostics(result),
@@ -307,6 +318,16 @@ export async function startProvision(
         );
     }
     progress("provisioning");
+    if (environment.os === "windows") {
+      for (const command of windowsDefenderCommands()) {
+        const result = await runGuest(command.script, command);
+        if (result.exitCode !== 0 && !command.allowFailure)
+          throw new VectisError(
+            "provision_script_failed",
+            "Windows Defender guest configuration failed. No environment was registered.",
+          );
+      }
+    }
     const scripts = [
       ...(command.setupScript !== undefined
         ? setupUploadScripts(environment.os, command.setupScript)
@@ -335,10 +356,9 @@ export async function startProvision(
     progress("shutting_down");
     if (!(await runtime.requestShutdown(instance.id))) {
       try {
-        const shutdown = await runGuest(
-          provisionShutdownScript(environment.os),
-          AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-        );
+        const shutdown = await runGuest(provisionShutdownScript(environment.os), {
+          signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+        });
         if (shutdown.exitCode !== 0)
           throw new VectisError(
             "guest_shutdown_failed",

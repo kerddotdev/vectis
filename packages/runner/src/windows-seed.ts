@@ -1,5 +1,6 @@
 import { runnerPreinstallScript } from "./provision-scripts.js";
 import { windowsToolchainScript } from "./windows-toolchain.js";
+import { windowsDefenderCommands } from "./windows-defender.js";
 import { VectisError } from "../../protocol/src/index.js";
 
 function xml(value: string) {
@@ -53,6 +54,22 @@ ${component("Microsoft-Windows-International-Core", language)}
 ${component("Microsoft-Windows-Shell-Setup", `<OOBE><HideEULAPage>true</HideEULAPage><HideOnlineAccountScreens>true</HideOnlineAccountScreens><HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE><ProtectYourPC>3</ProtectYourPC></OOBE><UserAccounts><LocalAccounts><LocalAccount wcm:action="add">${password}<Name>vectis</Name><DisplayName>Vectis CI</DisplayName><Group>Administrators</Group></LocalAccount></LocalAccounts></UserAccounts><AutoLogon>${password}<Enabled>true</Enabled><LogonCount>1</LogonCount><Username>vectis</Username></AutoLogon><FirstLogonCommands><SynchronousCommand wcm:action="add"><Order>1</Order><Description>Prepare the Vectis guest</Description><CommandLine>${windowsBootstrapCommand}</CommandLine></SynchronousCommand></FirstLogonCommands>`)}
 </settings></unattend>
 `;
+  const defenderCommands = windowsDefenderCommands();
+  const defenderScripts = defenderCommands.map((command, index) => ({
+    ...command,
+    name: `defender-${index}.cmd`,
+    contents: `@echo off\r\n${command.script}\r\n`,
+  }));
+  const defenderSetup = defenderScripts
+    .map((file, index) => {
+      const invoke = `& cmd.exe /d /c ('"' + (Join-Path $PSScriptRoot '${file.name}') + '"')`;
+      return `${invoke}\nif ($LASTEXITCODE -ne 0) { ${
+        file.allowFailure
+          ? `Write-Warning 'vectis-provision: optional Defender command ${index} failed'`
+          : `throw 'Defender command ${index} failed. Inspect the preceding guest error.'`
+      } }`;
+    })
+    .join("\n");
   const script = String.raw`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $root = 'C:\ProgramData\Vectis'
@@ -99,6 +116,8 @@ Subsystem sftp sftp-server.exe
   Start-Service sshd
   Set-ExecutionPolicy -Scope Process RemoteSigned -Force
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+  $stage = 'windows-defender'
+${defenderSetup}
   $stage = 'windows-toolchain'
 ${windowsToolchainScript()}
   $stage = 'runner-preinstall'
@@ -109,6 +128,8 @@ ${runnerPreinstallScript("windows")}
   'SETUP_ID' | Set-Content (Join-Path $root 'prepared') -Encoding ascii
 } catch {
   $failure = $_
+  $errorRecord = ($failure | Out-String -Width 4096)
+  [Console]::Error.WriteLine($errorRecord.Substring(0, [Math]::Min($errorRecord.Length, 16384)))
   $message = $failure.Exception.Message
   try {
     [pscustomobject]@{
@@ -121,5 +142,5 @@ ${runnerPreinstallScript("windows")}
   exit 1
 }
 `;
-  return { answer, script: script.replace("SETUP_ID", input.id) };
+  return { answer, script: script.replace("SETUP_ID", input.id), defenderScripts };
 }

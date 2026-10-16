@@ -75,9 +75,9 @@ Fresh installation and `environment provision` install the same pinned, SHA-256-
 - [zstd 1.5.7](https://github.com/facebook/zstd/releases/tag/v1.5.7) at `C:\Program Files\zstd`, on the machine PATH. This release has no Windows ARM64 build, so Vectis uses the official x64 executable through Windows 11 ARM64's x64 emulation and verifies that it runs.
 - [PowerShell 7.6.6 ARM64](https://github.com/PowerShell/PowerShell/releases/tag/v7.6.6), installed by MSI at `C:\Program Files\PowerShell\7`, with `pwsh` on the machine PATH. Automatic Microsoft Update integration and PowerShell remoting are not enabled. Windows PowerShell 5.1 remains the provisioning shell.
 
-The [Actions cache toolkit prefers GNU tar at the standard Git installation path](https://github.com/actions/toolkit/blob/main/packages/cache/src/internal/tar.ts), and uses zstd when available. Windows' built-in bsdtar remains available, but is not the cache toolkit's preferred executable after provisioning. These tools address missing shell support and the gzip cache fallback; they do not establish a particular cache speedup.
+The [Actions cache toolkit prefers GNU tar at the standard Git installation path](https://github.com/actions/toolkit/blob/main/packages/cache/src/internal/tar.ts), and uses zstd when available. Windows' built-in bsdtar remains available, but is not the cache toolkit's preferred executable after provisioning. In a lead-reported measurement on the same Windows 11 ARM64 guest with a 679 MB pnpm store, GNU tar with zstd compressed the store in 6.5-6.8 seconds, compared with 11.7-14.0 seconds for bsdtar with gzip. These are local archive compression timings, not end-to-end Actions cache save or restore timings.
 
-Existing MinGit files stay in `C:\Program Files\MinGit` for callers using absolute paths. Only its exact machine PATH entries (`cmd` and `bin`, ignoring case and trailing slashes) are removed. The full Git's `bin` and `cmd` entries take priority, and other machine PATH entries are preserved. MinGit is no longer installed in fresh images.
+Existing MinGit files stay in `C:\Program Files\MinGit` for callers using absolute paths. Only its exact machine PATH entries (`cmd` and `bin`, ignoring case and trailing slashes) are removed. The full Git's `bin`, `cmd` and `usr\bin` entries take priority, and other machine PATH entries are preserved. MinGit is no longer installed in fresh images. PATH checks accept multiple matches and verify only the first resolved Git, Bash, tar, zstd and pwsh executable. Both full Git `bin\git.exe` and `cmd\git.exe` are accepted; tar must resolve to the installed GNU tar.
 
 Downloads use basic parsing to avoid the [Windows PowerShell 5.1 web-content confirmation prompt](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.utility/invoke-webrequest?view=powershell-5.1), with bounded retries and SHA-256 verification before installation or extraction. Repeating provisioning checks the pinned versions and required binaries before deciding whether to install them again. Temporary downloads are removed even on failure.
 
@@ -85,30 +85,44 @@ Languages, build tools, SDKs and package managers still come from workflow steps
 
 ## Disposable guest performance settings
 
-Vectis deliberately disables Microsoft Defender realtime, behavior, downloaded-file and script scanning inside the disposable Windows guest, along with cloud reporting and automatic sample submission. Realtime scanning is a suspected contributor to slow dependency installation and cache saves. The VM boundary isolates the host from untrusted job code; guest antivirus is not that boundary. Keep host protection enabled. These settings belong in disposable CI guests, not on the host or a general-purpose Windows machine.
+Vectis configures a Microsoft Defender policy exclusion for the entire `C:\` drive inside the disposable Windows guest. It takes effect at the next boot, including with Tamper Protection enabled; it has no effect during the preparation boot that writes the policy. Realtime protection may remain enabled after reboot while excluding `C:\` from scanning.
 
-Provisioning writes Defender policy keys and checks `Get-MpComputerStatus` and `Get-MpPreference` after applying preferences. `DisableAntiSpyware` is written for compatibility but is ignored by modern Defender builds and does not prove protection is off. [Tamper Protection can block or silently ignore these changes](https://learn.microsoft.com/en-us/defender-endpoint/tamper-protection-overview). If protection remains enabled or the requested preferences do not take effect, Vectis tries `Add-MpPreference -ExclusionPath 'C:\'`, verifies the exclusion is present and reports `defender-mode=exclusion`. This mode does not mean realtime protection is disabled. If the exclusion is blocked too, provisioning fails.
+The VM boundary isolates the host from untrusted job code. Each job gets a fresh disposable VM, so reducing guest antivirus scanning is an acceptable performance tradeoff for this CI environment. Host protection stays enabled. Do not apply these settings to the host or a general-purpose Windows machine.
 
-Windows Update is disabled through `NoAutoUpdate` policy and `wuauserv`; Windows Search indexing (`WSearch`) and SysMain are disabled and stopped. Vectis also attempts to disable and stop Update Orchestrator (`UsoSvc`) and Update Medic (`WaaSMedicSvc`). Windows can protect those two services: blocked changes produce a warning and their actual state is recorded rather than reported as disabled. HVCI / Memory Integrity's `Enabled` value is set to `0` when present; running HVCI is recorded as requiring a reboot, and must be off on the next boot.
+AMSI can nondeterministically reject Defender-changing PowerShell cmdlets with `ScriptContainedMaliciousContent`. Even a single `Add-MpPreference -ExclusionPath 'C:\'` command that succeeded once was blocked later in the same guest. Separating cmdlets into individual processes is not reliable. Vectis therefore never uses `Add-MpPreference` or `Set-MpPreference` for configuration.
 
-Every step emits a `vectis-provision: <step>` marker. Versions, Windows build, Defender mode and preferences, service states, Update policy and HVCI state are merged into `C:\ProgramData\Vectis\toolchain.json`, preserving unrelated manifest fields.
+Fresh installation and provisioning write only registry policies through individual `reg.exe` commands in `cmd.exe`, before the toolchain script. The fresh-install seed stores each command in a separate `.cmd` file. Both exclusion writes are required:
+
+```cmd
+reg.exe add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions" /v Exclusions_Paths /t REG_DWORD /d 1 /f
+reg.exe add "HKLM\SOFTWARE\Policies\Microsoft\Windows Defender\Exclusions\Paths" /v "C:\\" /t REG_SZ /d 0 /f
+```
+
+The realtime, behavior, IOAV, script and on-access protection policy keys, cloud reporting and sample submission policies remain best-effort writes. [Tamper Protection can block or silently ignore attempts to disable protection](https://learn.microsoft.com/en-us/defender-endpoint/tamper-protection-overview). Modern Defender ignores `DisableAntiSpyware`. Successful policy writes do not prove realtime protection is off.
+
+The mandatory toolchain manifest records `Defender.Mode: policy-exclusion`, `Defender.PolicyExclusionPath: ["C:\\"]` and `Defender.AppliesAt: next-boot`. These fields describe configuration intent, not an observed effective exclusion. Preparation does not depend on `Get-MpPreference` or `Get-MpComputerStatus`: before reboot, a missing effective exclusion is expected. Read-only checks remain useful after boot.
+
+Windows Update is disabled through `NoAutoUpdate` policy and `wuauserv`; Windows Search indexing (`WSearch`) and SysMain are disabled and stopped. Vectis also attempts to disable and stop Update Orchestrator (`UsoSvc`) and Update Medic (`WaaSMedicSvc`). Windows can protect those two services: blocked changes produce a warning and their actual state is recorded rather than reported as disabled. HVCI / Memory Integrity's `Enabled` value is set to `0` when present; running HVCI is recorded as requiring a reboot, and needs a real guest check after reboot.
+
+The toolchain steps emit `vectis-provision: <step>` markers. Versions, Windows build, next-boot Defender policy configuration, service states, Update policy and HVCI state are merged into `C:\ProgramData\Vectis\toolchain.json`, preserving unrelated manifest fields.
 
 ### Verify the next boot
 
-Defender preferences can reset across reboots. Provisioning registers `Vectis-VerifySecurity`, an idempotently replaced SYSTEM startup task using Windows PowerShell 5.1. It reapplies Defender settings, verifies the resulting mode, checks mandatory service states and running HVCI, updates the manifest, and writes `security-boot.json` plus a bounded-per-boot transcript at `C:\ProgramData\Vectis\security-boot.log`. The old boot receipt is cleared during provisioning. A task failure writes `Status: failed` and returns an error; Task Scheduler retries up to three times.
+Provisioning ends with a hypervisor shutdown, with a guest shutdown fallback, and confirms the VM has exited before registering the derived image. Fresh installation does not reboot inside the bootstrap script: `windows-installation` observes its prepared marker, verifies the runner, issues `shutdown.exe /s /t 3`, waits for the VM to exit, and only then writes `image.json` and finalizes the environment. Both paths therefore save a stopped image after writing the policy. Every job boots a new instance from that image, applying the exclusion at that boot. Tools and custom setup scripts running before this shutdown do not yet benefit from a newly written exclusion.
+
+Vectis removes the obsolete `Vectis-VerifySecurity` startup task and its script and receipts when provisioning existing images. It does not reapply Defender settings or verify them automatically at runner start. The manifest records preparation-time configuration, not proof of the current boot's state.
 
 After the lead boots a newly provisioned image or clone, check in the guest:
 
 ```powershell
 Get-MpComputerStatus | Select-Object RealTimeProtectionEnabled, IsTamperProtected
+(Get-MpPreference).ExclusionPath
 Get-Content C:\ProgramData\Vectis\toolchain.json -Raw
-Get-Content C:\ProgramData\Vectis\security-boot.json -Raw
-Get-CimInstance Win32_OperatingSystem | Select-Object LastBootUpTime
-Get-ScheduledTaskInfo -TaskName Vectis-VerifySecurity
-Get-Content C:\ProgramData\Vectis\security-boot.log
+Get-Service wuauserv, UsoSvc, WaaSMedicSvc, WSearch, SysMain
+Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard | Select-Object SecurityServicesRunning
 ```
 
-Wait for `vectis-provision: defender-boot-verified` and `Status: verified` with `BootTime` matching this boot. In `disabled` mode, `RealTimeProtectionEnabled` must be `False`; in `exclusion` mode it can remain `True` and the `C:\` exclusion must be present. The task verifies the latter's configured exclusion, not a measured absence of scanning. A receipt copied from the parent image is not evidence for the clone's current boot. Provisioning alone does not prove reboot persistence, HVCI shutdown or improved job timings. Verify them before accepting the image, and compare real dependency installation and cache save/restore timings separately.
+After boot, `ExclusionPath` should contain `C:\`; realtime protection may remain `True` with Tamper Protection enabled. The lead confirmed this policy exclusion after reboot in the same Windows 11 ARM64 guest: with a 679 MB pnpm store, `pnpm install` took 24.5 seconds with the exclusion versus 91-100 seconds without it. This is measured guest evidence for that setup, not a timing guarantee for every job. Check running HVCI and service states separately, and measure dependency installation and cache save/restore timings for the workload being evaluated.
 
 ## Interruption and recovery
 
@@ -119,7 +133,7 @@ vectis environment resume-windows <setup-id> --json
 
 Closing the desktop does not cancel the service operation. Cancellation preserves the owned disk for diagnosis and resume. The previous VM must have a matching exit receipt before another attempt is admitted. An uncertain process state blocks new VM starts.
 
-An interrupted operation reports `action_required` with the setup ID and private directory. Its `setup.ppm` screenshot and `preparation.log` can help diagnose guest setup failures. The preparation log contains host runtime output, not the guest PowerShell error. The bootstrap records its failing stage, error message and script line in `C:\ProgramData\Vectis\diagnostic.json`. When SSH remains reachable, Vectis saves a bounded copy as `bootstrap-diagnostic.json` in the private setup directory before stopping the VM. Only the known stage appears in the operation message; the detailed error stays local. Older setup media may have only the generic failure marker. Keep screenshots, diagnostics and setup credentials local.
+An interrupted operation reports `action_required` with the setup ID and private directory. Its `setup.ppm` screenshot and `preparation.log` can help diagnose guest setup failures. The preparation log contains host runtime output; guest command failures also emit a bounded full PowerShell error record to stderr. The bootstrap records its failing stage, error message and script line in `C:\ProgramData\Vectis\diagnostic.json`. When SSH remains reachable, Vectis saves a bounded copy as `bootstrap-diagnostic.json` in the private setup directory before stopping the VM. Only the known stage appears in the operation message; the detailed error stays local. Older setup media may have only the generic failure marker. Keep screenshots, diagnostics and setup credentials local.
 
 Resume uses the same setup identity and disk, not a second fresh installation. It regenerates setup media from the current service recipe and retries a failed bootstrap once if SSH is reachable. A new bootstrap attempt clears old completion and failure markers before running. A changed environment configuration requires a separate setup.
 

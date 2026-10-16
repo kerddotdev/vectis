@@ -1,9 +1,11 @@
 import { spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "vitest";
 import { provisionScript } from "./provision-scripts.js";
 import { windowsSeed } from "./windows-seed.js";
 import {
-  windowsDefenderBootScript,
   windowsGit,
   windowsPowerShell,
   windowsToolchainScript,
@@ -44,6 +46,7 @@ test("Windows tooling pins official ARM64 installers and the emulated x64 zstd r
   expect(script).toContain("ADD_PATH=1 USE_MU=0 ENABLE_MU=0");
   expect(script).toContain("$process.ExitCode -notin @(0, 3010)");
   expect(script).toContain("$toolPaths + $remainingPath");
+  expect(script).toContain("$zstdRoot, $pwshRoot, (Join-Path $gitRoot 'usr\\bin')");
   expect(script).toContain("$toolPaths + $minGitPaths");
   expect(script).toContain("$binaries.Count -ne 1");
 });
@@ -52,11 +55,6 @@ test("Windows provisioning verifies effective security settings and records prot
   const script = windowsToolchainScript();
   for (const step of [
     "toolchain-admin-check",
-    "defender-tamper-check",
-    "defender-policy",
-    "defender-preferences",
-    "defender-verify",
-    "defender-exclusion-fallback",
     "windows-update-policy",
     "hvci",
     "git-install",
@@ -67,18 +65,9 @@ test("Windows provisioning verifies effective security settings and records prot
     "pwsh-verify",
     "toolchain-path",
     "toolchain-manifest",
-    "defender-startup-task",
-    "defender-boot-verification-pending",
   ])
     expect(script).toContain(`vectis-provision: ${step}`);
-  expect(script).toContain(
-    "Set-MpPreference -DisableRealtimeMonitoring $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -DisableScriptScanning $true -MAPSReporting 0 -SubmitSamplesConsent 2",
-  );
-  expect(script).toContain("$defenderStatus.RealTimeProtectionEnabled -ne $false");
-  expect(script).toContain("$defenderStatus.IsTamperProtected");
-  expect(script).toContain("Add-MpPreference -ExclusionPath 'C:\\'");
-  expect(script).toContain("@($defenderPreferences.ExclusionPath) -notcontains 'C:\\'");
-  expect(script).toContain("throw 'Defender remains enabled");
+  expect(script).not.toMatch(/(?:Add|Set|Get)-Mp/);
   expect(script).toContain("@('wuauserv', 'UsoSvc', 'WaaSMedicSvc', 'WSearch', 'SysMain')");
   expect(script).toContain("Set-Service -Name $serviceName -StartupType Disabled");
   expect(script).toContain("Stop-Service -Name $serviceName -Force");
@@ -92,37 +81,134 @@ test("Windows provisioning verifies effective security settings and records prot
   );
 });
 
-test("the persistent SYSTEM startup check uses the same Defender policy and records the current boot", () => {
+test("provisioning removes the obsolete security startup task and receipts", () => {
   const script = windowsToolchainScript();
-  const boot = windowsDefenderBootScript();
-  const encoded = script.match(/FromBase64String\('([A-Za-z0-9+/=]+)'\)/)?.[1];
-  expect(Buffer.from(encoded ?? "", "base64").toString("utf8")).toBe(boot);
-  expect(script).toContain("New-ScheduledTaskTrigger -AtStartup");
-  expect(script).toContain("-User SYSTEM -RunLevel Highest -Force");
-  expect(boot).toContain("LastBootUpTime.ToUniversalTime().ToString('o')");
-  expect(boot).toContain("Status = 'verified'; BootTime = $bootTime");
-  expect(boot).toContain("Status = 'failed'; BootTime = $bootTime");
-  expect(boot).toContain("vectis-provision: defender-boot-verified");
-  expect(boot).toContain("throw 'HVCI is still enabled after boot.'");
-  expect(boot).toContain("did not stay disabled after boot");
-  const policyStart = script.indexOf("vectis-provision: defender-tamper-check");
-  const policyEnd = script.indexOf("vectis-provision: windows-update-policy");
-  expect(boot).toContain(
-    script
-      .slice(
-        script.lastIndexOf("Write-Output", policyStart),
-        script.lastIndexOf("Write-Output", policyEnd),
-      )
-      .trim(),
+  expect(script).toContain(
+    "Unregister-ScheduledTask -TaskName 'Vectis-VerifySecurity' -Confirm:$false",
   );
+  expect(script).toContain("@('verify-security.ps1', 'security-boot.json', 'security-boot.log')");
+  expect(script).toContain("$manifest.PSObject.Properties.Remove('BootVerification')");
+  expect(script).not.toMatch(/Register-ScheduledTask|New-ScheduledTask|FromBase64String/);
 });
 
 const hasPowerShell =
   spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "exit 0"]).status ===
   0;
+
+test.skipIf(!hasPowerShell)(
+  "manifest replaces stale Defender observations with next-boot policy intent",
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "vectis-toolchain-manifest-"));
+    const manifestPath = join(directory, "toolchain.json");
+    try {
+      await writeFile(
+        manifestPath,
+        JSON.stringify({
+          Custom: "preserved",
+          Defender: { Mode: "disabled", ExclusionPath: [], RealTimeProtectionEnabled: false },
+          BootVerification: "stale",
+        }),
+      );
+      const script = windowsToolchainScript();
+      const manifest = script.slice(
+        script.indexOf("$manifestPath ="),
+        script.indexOf("Write-Output 'vectis-provision: remove-security-startup-task'"),
+      );
+      const result = spawnSync(
+        "pwsh",
+        [
+          "-NoLogo",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "& ([scriptblock]::Create([Console]::In.ReadToEnd()))",
+        ],
+        {
+          input: String.raw`$ErrorActionPreference = 'Stop'
+$toolchainRoot = $env:VECTIS_TEST_ROOT
+function Get-ComputerInfo { [pscustomobject]@{ WindowsProductName = 'Windows 11'; WindowsVersion = 'test'; OsBuildNumber = 'test' } }
+function Get-ItemProperty { [pscustomobject]@{ NoAutoUpdate = 1 } }
+function Get-MpPreference { throw 'Defender preferences unavailable' }
+function Get-MpComputerStatus { throw 'Defender status unavailable' }
+${manifest}`,
+          env: { ...process.env, VECTIS_TEST_ROOT: directory },
+          encoding: "utf8",
+          timeout: 10000,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      const saved = JSON.parse((await readFile(manifestPath, "utf8")).replace(/^\uFEFF/, ""));
+      expect(saved.Custom).toBe("preserved");
+      expect(saved.Defender).toEqual({
+        Mode: "policy-exclusion",
+        PolicyExclusionPath: ["C:\\"],
+        AppliesAt: "next-boot",
+      });
+      expect(saved).not.toHaveProperty("BootVerification");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.skipIf(!hasPowerShell).each([
+  { firstGit: "bin", wrongTool: "" },
+  { firstGit: "cmd", wrongTool: "" },
+  ...["git.exe", "bash.exe", "tar.exe", "zstd.exe", "pwsh.exe"].map((wrongTool) => ({
+    firstGit: "bin",
+    wrongTool,
+  })),
+])(
+  "PATH accepts duplicate matches and validates the first tool: $firstGit / $wrongTool",
+  ({ firstGit, wrongTool }) => {
+    const script = windowsToolchainScript();
+    const check = script.slice(
+      script.indexOf("$expectedTools = @{"),
+      script.indexOf("Write-Output 'vectis-provision: toolchain-manifest'"),
+    );
+    const result = spawnSync(
+      "pwsh",
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "& ([scriptblock]::Create([Console]::In.ReadToEnd()))",
+      ],
+      {
+        input: String.raw`$ErrorActionPreference = 'Stop'
+function Join-Path($Path, $ChildPath) { "$Path\$ChildPath" }
+$gitRoot = 'C:\Program Files\Git'
+$gitExe = Join-Path $gitRoot 'cmd\git.exe'
+$bashExe = Join-Path $gitRoot 'bin\bash.exe'
+$tarExe = Join-Path $gitRoot 'usr\bin\tar.exe'
+$zstdExe = 'C:\Program Files\zstd\zstd.exe'
+$pwshExe = 'C:\Program Files\PowerShell\7\pwsh.exe'
+function Get-Command($Name, $CommandType, [switch]$All) {
+  if (!$All -or $CommandType -ne 'Application') { throw 'Expected all application matches' }
+  $paths = @{
+    'git.exe' = @((Join-Path $gitRoot '${firstGit}\git.exe'), $gitExe)
+    'bash.exe' = @($bashExe)
+    'tar.exe' = @($tarExe)
+    'zstd.exe' = @($zstdExe)
+    'pwsh.exe' = @($pwshExe)
+  }
+  if ($Name -eq '${wrongTool}') { [pscustomobject]@{ Source = "C:\unexpected\$Name" } }
+  foreach ($path in $paths[$Name]) { [pscustomobject]@{ Source = $path } }
+  [pscustomobject]@{ Source = "C:\later\$Name" }
+}
+${check}`,
+        encoding: "utf8",
+        timeout: 10000,
+      },
+    );
+    expect(result.status, result.stderr).toBe(wrongTool ? 1 : 0);
+    if (wrongTool) expect(result.stderr).toContain(`Unexpected tool on PATH: ${wrongTool}`);
+  },
+);
+
 const scripts = [
   windowsToolchainScript(),
-  windowsDefenderBootScript(),
   windowsSeed({
     id: "parse-test",
     password: "Generated-local-test-password-42!",

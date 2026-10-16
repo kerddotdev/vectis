@@ -16,113 +16,6 @@ export const windowsPowerShell = {
   sha256: "387d0af8e92ba97f73616c91fa8f29a284e8f82ee6c40fe12dade971bb05bac4",
 };
 
-// The startup task runs this same check because Defender preferences can reset after a reboot.
-const defenderScript = String.raw`
-Write-Output 'vectis-provision: defender-tamper-check'
-$defenderStatus = Get-MpComputerStatus
-Write-Output "vectis-provision: defender-tamper-protected=$($defenderStatus.IsTamperProtected)"
-Write-Output 'vectis-provision: defender-policy'
-try {
-  $defenderPolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
-  New-Item -Path $defenderPolicy -Force | Out-Null
-  Set-ItemProperty -Path $defenderPolicy -Name DisableAntiSpyware -Value 1 -Type DWord
-  $realtimePolicy = Join-Path $defenderPolicy 'Real-Time Protection'
-  New-Item -Path $realtimePolicy -Force | Out-Null
-  foreach ($name in @('DisableRealtimeMonitoring', 'DisableBehaviorMonitoring', 'DisableIOAVProtection', 'DisableScriptScanning', 'DisableOnAccessProtection')) {
-    Set-ItemProperty -Path $realtimePolicy -Name $name -Value 1 -Type DWord
-  }
-  $spynetPolicy = Join-Path $defenderPolicy 'Spynet'
-  New-Item -Path $spynetPolicy -Force | Out-Null
-  Set-ItemProperty -Path $spynetPolicy -Name SpynetReporting -Value 0 -Type DWord
-  Set-ItemProperty -Path $spynetPolicy -Name SubmitSamplesConsent -Value 2 -Type DWord
-} catch {
-  Write-Warning "vectis-provision: defender-policy-blocked: $($_.Exception.Message)"
-}
-Write-Output 'vectis-provision: defender-preferences'
-try {
-  Set-MpPreference -DisableRealtimeMonitoring $true -DisableBehaviorMonitoring $true -DisableIOAVProtection $true -DisableScriptScanning $true -MAPSReporting 0 -SubmitSamplesConsent 2
-} catch {
-  Write-Warning "vectis-provision: defender-preferences-blocked: $($_.Exception.Message)"
-}
-Write-Output 'vectis-provision: defender-verify'
-$defenderStatus = Get-MpComputerStatus
-$defenderPreferences = Get-MpPreference
-$defenderMode = 'disabled'
-if ($defenderStatus.RealTimeProtectionEnabled -ne $false -or
-    $defenderPreferences.DisableRealtimeMonitoring -ne $true -or
-    $defenderPreferences.DisableBehaviorMonitoring -ne $true -or
-    $defenderPreferences.DisableIOAVProtection -ne $true -or
-    $defenderPreferences.DisableScriptScanning -ne $true -or
-    $defenderPreferences.MAPSReporting -ne 0 -or
-    $defenderPreferences.SubmitSamplesConsent -ne 2) {
-  Write-Output 'vectis-provision: defender-exclusion-fallback'
-  Add-MpPreference -ExclusionPath 'C:\'
-  $defenderPreferences = Get-MpPreference
-  if (@($defenderPreferences.ExclusionPath) -notcontains 'C:\') { throw 'Defender remains enabled and the C:\ exclusion was blocked.' }
-  $defenderStatus = Get-MpComputerStatus
-  $defenderMode = 'exclusion'
-}
-$defenderState = [pscustomobject]@{
-  Mode = $defenderMode
-  IsTamperProtected = $defenderStatus.IsTamperProtected
-  RealTimeProtectionEnabled = $defenderStatus.RealTimeProtectionEnabled
-  DisableRealtimeMonitoring = $defenderPreferences.DisableRealtimeMonitoring
-  DisableBehaviorMonitoring = $defenderPreferences.DisableBehaviorMonitoring
-  DisableIOAVProtection = $defenderPreferences.DisableIOAVProtection
-  DisableScriptScanning = $defenderPreferences.DisableScriptScanning
-  MAPSReporting = $defenderPreferences.MAPSReporting
-  SubmitSamplesConsent = $defenderPreferences.SubmitSamplesConsent
-  ExclusionPath = @($defenderPreferences.ExclusionPath)
-}
-Write-Output "vectis-provision: defender-mode=$defenderMode realtime=$($defenderStatus.RealTimeProtectionEnabled)"
-`;
-
-export function windowsDefenderBootScript() {
-  return String.raw`$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
-$toolchainRoot = 'C:\ProgramData\Vectis'
-$bootReceipt = Join-Path $toolchainRoot 'security-boot.json'
-$bootTime = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
-Start-Transcript -Path (Join-Path $toolchainRoot 'security-boot.log') -Force | Out-Null
-try {
-${defenderScript}
-  Write-Output 'vectis-provision: security-boot-verify'
-  $services = @{}
-  foreach ($name in @('wuauserv', 'UsoSvc', 'WaaSMedicSvc', 'WSearch', 'SysMain')) {
-    $service = Get-Service -Name $name
-    $services[$name] = [pscustomobject]@{ StartType = [string]$service.StartType; Status = [string]$service.Status }
-    if ($name -notin @('UsoSvc', 'WaaSMedicSvc') -and ($service.StartType -ne 'Disabled' -or $service.Status -ne 'Stopped')) { throw "Service $name did not stay disabled after boot." }
-  }
-  $updatePolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
-  $noAutoUpdate = (Get-ItemProperty -Path $updatePolicy).NoAutoUpdate
-  if ($noAutoUpdate -ne 1) { throw 'Windows Update policy did not stay disabled after boot.' }
-  $hvciPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity'
-  $hvciEnabled = $null
-  if (Test-Path -LiteralPath $hvciPath) { $hvciEnabled = (Get-ItemProperty -Path $hvciPath).Enabled }
-  $deviceGuard = Get-CimInstance -Namespace 'root\Microsoft\Windows\DeviceGuard' -ClassName Win32_DeviceGuard
-  $hvciRunning = @($deviceGuard.SecurityServicesRunning) -contains 2
-  if (($null -ne $hvciEnabled -and $hvciEnabled -ne 0) -or $hvciRunning) { throw 'HVCI is still enabled after boot.' }
-  $manifestPath = Join-Path $toolchainRoot 'toolchain.json'
-  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
-  $manifest | Add-Member -NotePropertyName Defender -NotePropertyValue $defenderState -Force
-  $manifest | Add-Member -NotePropertyName Services -NotePropertyValue $services -Force
-  $manifest | Add-Member -NotePropertyName NoAutoUpdate -NotePropertyValue $noAutoUpdate -Force
-  $manifest | Add-Member -NotePropertyName HVCI -NotePropertyValue ([pscustomobject]@{ Enabled = $hvciEnabled; Running = $hvciRunning; RebootRequired = $false }) -Force
-  $manifest | Add-Member -NotePropertyName BootVerification -NotePropertyValue $bootTime -Force
-  $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding utf8
-  [pscustomobject]@{ Status = 'verified'; BootTime = $bootTime; Defender = $defenderState } |
-    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $bootReceipt -Encoding utf8
-  Write-Output "vectis-provision: defender-boot-verified mode=$defenderMode boot=$bootTime"
-} catch {
-  [pscustomobject]@{ Status = 'failed'; BootTime = $bootTime; Error = $_.Exception.Message } |
-    ConvertTo-Json | Set-Content -LiteralPath $bootReceipt -Encoding utf8
-  throw
-} finally {
-  Stop-Transcript | Out-Null
-}
-`;
-}
-
 export function windowsToolchainScript() {
   return String.raw`$ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -153,7 +46,6 @@ function Get-VectisRelease([string]$Url, [string]$Sha256, [string]$Destination) 
   Write-Output 'vectis-provision: tool-checksum'
   if ((Get-FileHash -Algorithm SHA256 -LiteralPath $Destination).Hash.ToLowerInvariant() -ne $Sha256) { throw "Tool checksum mismatch: $Url" }
 }
-${defenderScript}
 Write-Output 'vectis-provision: windows-update-policy'
 $updatePolicy = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate\AU'
 New-Item -Path $updatePolicy -Force | Out-Null
@@ -255,15 +147,22 @@ try {
   Remove-Item -LiteralPath $downloads -Recurse -Force
 }
 Write-Output 'vectis-provision: toolchain-path'
-$toolPaths = @((Join-Path $gitRoot 'bin'), (Join-Path $gitRoot 'cmd'), $zstdRoot, $pwshRoot)
+$toolPaths = @((Join-Path $gitRoot 'bin'), (Join-Path $gitRoot 'cmd'), $zstdRoot, $pwshRoot, (Join-Path $gitRoot 'usr\bin'))
 $minGitPaths = @('C:\Program Files\MinGit\cmd', 'C:\Program Files\MinGit\bin')
 $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 $remainingPath = @($machinePath -split ';' | Where-Object { $_.Trim().Trim('"').TrimEnd('\') -notin ($toolPaths + $minGitPaths) })
 [Environment]::SetEnvironmentVariable('Path', (($toolPaths + $remainingPath) -join ';'), 'Machine')
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
-foreach ($tool in @('git.exe', 'bash.exe', 'zstd.exe', 'pwsh.exe')) {
-  $resolved = (Get-Command $tool -CommandType Application).Source
-  if ($resolved -notin @($gitExe, $bashExe, $zstdExe, $pwshExe)) { throw "Unexpected tool on PATH: $tool at $resolved" }
+$expectedTools = @{
+  'git.exe' = @($gitExe, (Join-Path $gitRoot 'bin\git.exe'))
+  'bash.exe' = @($bashExe)
+  'tar.exe' = @($tarExe)
+  'zstd.exe' = @($zstdExe)
+  'pwsh.exe' = @($pwshExe)
+}
+foreach ($tool in $expectedTools.Keys) {
+  $resolved = @(Get-Command $tool -CommandType Application -All)[0].Source
+  if ($resolved -notin $expectedTools[$tool]) { throw "Unexpected tool on PATH: $tool at $resolved" }
 }
 Write-Output 'vectis-provision: toolchain-manifest'
 $manifestPath = Join-Path $toolchainRoot 'toolchain.json'
@@ -279,22 +178,21 @@ $values = @{
   Zstd = $zstdVersion
   ZstdArchitecture = 'x64-emulated'
   PowerShell = $pwshVersion
-  Defender = $defenderState
+  Defender = [pscustomobject]@{ Mode = 'policy-exclusion'; PolicyExclusionPath = @('C:\'); AppliesAt = 'next-boot' }
   Services = $serviceStates
   NoAutoUpdate = (Get-ItemProperty -Path $updatePolicy).NoAutoUpdate
   HVCI = $hvciState
-  BootVerification = 'pending: inspect security-boot.json after the next boot'
 }
 foreach ($name in $values.Keys) { $manifest | Add-Member -NotePropertyName $name -NotePropertyValue $values[$name] -Force }
+$manifest.PSObject.Properties.Remove('BootVerification')
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $manifestPath -Encoding utf8
-Write-Output 'vectis-provision: defender-startup-task'
-$bootScript = Join-Path $toolchainRoot 'verify-security.ps1'
-[IO.File]::WriteAllText($bootScript, [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${Buffer.from(windowsDefenderBootScript()).toString("base64")}')), [Text.UTF8Encoding]::new($true))
-$action = New-ScheduledTaskAction -Execute 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -Argument '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "C:\ProgramData\Vectis\verify-security.ps1"'
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
-Register-ScheduledTask -TaskName 'Vectis-VerifySecurity' -Action $action -Trigger $trigger -Settings $settings -User SYSTEM -RunLevel Highest -Force | Out-Null
-if (Test-Path -LiteralPath (Join-Path $toolchainRoot 'security-boot.json')) { Remove-Item -LiteralPath (Join-Path $toolchainRoot 'security-boot.json') -Force }
-Write-Output 'vectis-provision: defender-boot-verification-pending'
+Write-Output 'vectis-provision: remove-security-startup-task'
+if (Get-ScheduledTask -TaskName 'Vectis-VerifySecurity' -ErrorAction SilentlyContinue) {
+  Unregister-ScheduledTask -TaskName 'Vectis-VerifySecurity' -Confirm:$false
+}
+foreach ($file in @('verify-security.ps1', 'security-boot.json', 'security-boot.log')) {
+  $path = Join-Path $toolchainRoot $file
+  if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+}
 `;
 }

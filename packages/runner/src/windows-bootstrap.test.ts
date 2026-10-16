@@ -20,7 +20,7 @@ const connection = {
   hostKeyAlias: "windows-test",
 };
 
-test.each(["git-verification", "runner-preinstall"])(
+test.each(["git-verification", "runner-preinstall", "windows-defender"])(
   "bootstrap failures retain bounded private details and expose known stage %s",
   async (stage) => {
     const directory = await mkdtemp(join(tmpdir(), "vectis-bootstrap-diagnostic-"));

@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { windowsSeed } from "./windows-seed.js";
 import { runnerPreinstallScript } from "./provision-scripts.js";
 import { windowsGit, windowsToolchainScript } from "./windows-toolchain.js";
+import { windowsDefenderCommands } from "./windows-defender.js";
 
 const configuration = {
   id: "isolated-setup",
@@ -20,6 +21,27 @@ test("fresh Windows images share toolchain provisioning and bootstrap the runner
   expect(script).toContain("$stage = 'runner-preinstall'");
   expect(script).toContain(windowsToolchainScript());
   expect(script).toContain("$stage = 'windows-toolchain'");
+});
+
+test("fresh installation starts separate Defender processes before the toolchain without embedding their cmdlets", () => {
+  const { script, defenderScripts } = windowsSeed(configuration);
+  const commands = windowsDefenderCommands();
+  expect(defenderScripts).toHaveLength(commands.length);
+  expect(script).not.toMatch(/(?:Add|Set|Get)-Mp/);
+  let previous = script.indexOf("$stage = 'windows-defender'");
+  expect(previous).toBeGreaterThan(-1);
+  for (const [index, command] of commands.entries()) {
+    const file = defenderScripts[index];
+    expect(file?.contents).toContain(command.script);
+    expect(command.shell).toBe("cmd");
+    const launch = `& cmd.exe /d /c ('"' + (Join-Path $PSScriptRoot '${file?.name}') + '"')`;
+    const position = script.indexOf(launch);
+    expect(position).toBeGreaterThan(previous);
+    const next = script.slice(position + launch.length).split("\n")[1];
+    expect(next).toContain(command.allowFailure ? "Write-Warning" : "throw");
+    previous = position;
+  }
+  expect(script.indexOf("$stage = 'windows-toolchain'")).toBeGreaterThan(previous);
 });
 
 test("Windows answer media requires explicit license acceptance and safe script identifiers", () => {
@@ -61,6 +83,63 @@ test("answer-file values cannot inject XML or leak the password into the bootstr
 const hasPowerShell =
   spawnSync("pwsh", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "exit 0"]).status ===
   0;
+
+test.skipIf(!hasPowerShell).each(["none", "optional", "exclusion-policy", "exclusion-path"])(
+  "seed executes separate command files and handles %s failure",
+  async (failure) => {
+    const directory = await mkdtemp(join(tmpdir(), "vectis-seed-defender-"));
+    try {
+      const { script, defenderScripts } = windowsSeed(configuration);
+      for (const file of defenderScripts)
+        await writeFile(join(directory, file.name), file.contents);
+      const setup = script.slice(
+        script.indexOf("  $stage = 'windows-defender'"),
+        script.indexOf("  $stage = 'windows-toolchain'"),
+      );
+      const failedIndex =
+        failure === "exclusion-policy" ? 0 : failure === "exclusion-path" ? 1 : -1;
+      const wrapper = join(directory, "test.ps1");
+      await writeFile(
+        wrapper,
+        String.raw`$ErrorActionPreference = 'Stop'
+$script:count = 0
+function Invoke-TestCommand($File) {
+  $name = [IO.Path]::GetFileName($File.Trim('"'))
+  $index = [int]($name -replace '^defender-(\d+)\..*$', '$1')
+  if ($index -ne $script:count) { throw 'Commands ran out of order' }
+  $contents = Get-Content -LiteralPath (Join-Path $PSScriptRoot $name) -Raw
+  if ($name -like '*.cmd' -and $contents -notmatch 'reg.exe add') { throw 'Registry command missing' }
+  Write-Output "executed=$index"
+  $script:count++
+  $global:LASTEXITCODE = 0
+  if ($index -eq ${failedIndex} -or ('${failure}' -eq 'optional' -and $index -ge 2)) { $global:LASTEXITCODE = 1 }
+}
+function cmd.exe {
+  if ($args[0] -ne '/d' -or $args[1] -ne '/c') { throw 'Expected cmd shell' }
+  Invoke-TestCommand $args[-1]
+}
+${setup}
+Write-Output 'toolchain-next'
+`,
+      );
+      const result = spawnSync(
+        "pwsh",
+        ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", wrapper],
+        { encoding: "utf8", timeout: 10000 },
+      );
+      const shouldFail = failedIndex >= 0;
+      expect(result.status, result.stderr).toBe(shouldFail ? 1 : 0);
+      expect(result.stdout.includes("toolchain-next")).toBe(!shouldFail);
+      const count = shouldFail ? failedIndex + 1 : defenderScripts.length;
+      expect(result.stdout.match(/executed=\d+/g)).toEqual(
+        Array.from({ length: count }, (_, index) => `executed=${index}`),
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
 test.skipIf(!hasPowerShell).each([false, true])(
   "bootstrap records failure and clears stale completion even if diagnostics cannot be written: %s",
   async (failDiagnostics) => {
@@ -110,7 +189,10 @@ function Set-Content {
             timeout: 10000,
           },
         ),
-      ).rejects.toMatchObject({ code: 1 });
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining("Synthetic capability installation failure"),
+      });
       expect(await readFile(join(root, "failed"), "utf8")).toMatch(/^ssh-installation\s*$/);
       if (failDiagnostics) {
         await expect(readFile(join(root, "diagnostic.json"), "utf8")).rejects.toMatchObject({

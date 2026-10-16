@@ -21,6 +21,8 @@ import { executeGuest, GuestUnavailableError } from "../../../packages/runner/sr
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { runnerVersion } from "../../../packages/runner/src/runner-release.js";
+import { windowsDefenderCommands } from "../../../packages/runner/src/windows-defender.js";
+import { windowsToolchainScript } from "../../../packages/runner/src/windows-toolchain.js";
 import { cloneProvisionImage } from "../../../packages/runner/src/provision-image.js";
 import { Service } from "./service.js";
 import { Store } from "./store.js";
@@ -400,13 +402,73 @@ test.each(["linux", "macos", "windows"] as const)(
     expect(
       vi
         .mocked(executeGuest)
-        .mock.calls.every((call) => call[2].shell === (os === "windows" ? "powershell" : "bash")),
+        .mock.calls.every(
+          (call) =>
+            call[2].shell ===
+            (os === "windows" ? (call[1].startsWith("reg.exe ") ? "cmd" : "powershell") : "bash"),
+        ),
     ).toBe(true);
     expect(shutdown).toHaveBeenCalledWith(operation.id);
     expect(stop).not.toHaveBeenCalled();
     const scripts = vi.mocked(executeGuest).mock.calls.map((call) => call[1]);
     expect(scripts.join("\n")).not.toMatch(/poweroff|shutdown/);
     if (os !== "linux") expect(scripts.join("\n")).not.toContain("sudo");
+  },
+);
+
+test("Windows runs isolated Defender commands in order before toolchain provisioning", async () => {
+  const { parent, store, submit, completed } = await fixture();
+  store.put("environment", parent.id, { ...parent, os: "windows" });
+  const commands = windowsDefenderCommands();
+  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
+    exitCode: commands.some((command) => command.allowFailure && command.script === script) ? 1 : 0,
+    stdout: "",
+    stderr: "optional change blocked by Tamper Protection",
+    truncated: false,
+  }));
+  const operation = await submit();
+  expect(await completed(operation.id)).toMatchObject({ status: "succeeded" });
+  const calls = vi.mocked(executeGuest).mock.calls;
+  expect(
+    calls.slice(0, commands.length).map((call) => ({ script: call[1], shell: call[2].shell })),
+  ).toEqual(commands.map(({ script, shell }) => ({ script, shell })));
+  expect(calls.slice(0, commands.length).every((call) => call[2].shell === "cmd")).toBe(true);
+  expect(calls.map((call) => call[1]).join("\n")).not.toMatch(/(?:Add|Set|Get)-Mp/);
+  expect(calls[commands.length]?.[1]).toContain(windowsToolchainScript());
+  expect(calls[commands.length]?.[1]).not.toMatch(/(?:Add|Set|Get)-Mp/);
+});
+
+test.each(["exclusion-policy", "exclusion-path", "transport"])(
+  "Windows %s failure prevents toolchain execution",
+  async (failure) => {
+    const { parent, store, submit, completed, stop } = await fixture();
+    store.put("environment", parent.id, { ...parent, os: "windows" });
+    const commands = windowsDefenderCommands();
+    const failed = commands[failure === "exclusion-policy" ? 0 : 1]?.script;
+    vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
+      if (script === failed && failure === "transport")
+        throw new GuestUnavailableError("connection lost");
+      return {
+        exitCode: script === failed ? 1 : 0,
+        stdout: "",
+        stderr: "actual Defender failure",
+        truncated: false,
+      };
+    });
+    const operation = await submit();
+    expect(await completed(operation.id)).toMatchObject({
+      status: "failed",
+      result: {
+        code: failure === "transport" ? "guest_unavailable" : "provision_script_failed",
+        diagnostics: expect.stringContaining(
+          failure === "transport" ? "connection lost" : "actual Defender failure",
+        ),
+      },
+    });
+    expect(
+      vi.mocked(executeGuest).mock.calls.some((call) => call[1].includes("toolchain-admin-check")),
+    ).toBe(false);
+    expect(stop).toHaveBeenCalledOnce();
   },
 );
 

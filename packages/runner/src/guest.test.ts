@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { PassThrough } from "node:stream";
 import { EventEmitter } from "node:events";
+import { guestCommandDiagnostics } from "./guest-diagnostics.js";
 import { guestArguments, executeGuest } from "./guest.js";
 
 const connection = {
@@ -12,7 +13,10 @@ const connection = {
   hostKeyAlias: "vectis-test-image",
 };
 const processMock = vi.hoisted(() => ({ spawn: vi.fn() }));
-vi.mock("node:child_process", () => processMock);
+vi.mock("node:child_process", async (original) => ({
+  ...(await original<typeof import("node:child_process")>()),
+  ...processMock,
+}));
 
 function child() {
   const process = Object.assign(new EventEmitter(), {
@@ -46,7 +50,7 @@ test("rejects SSH option injection and requires pinned guest host keys", () => {
   );
 });
 
-test.each(["bash", "powershell"] as const)(
+test.each(["bash", "powershell", "cmd"] as const)(
   "%s sends scripts through stdin and bounds retained guest output",
   async (shell) => {
     const process = child();
@@ -67,6 +71,58 @@ test.each(["bash", "powershell"] as const)(
     expect((await result).stdout.endsWith("guest-end")).toBe(true);
   },
 );
+
+test("registry commands use cmd directly without a PowerShell script block", async () => {
+  const process = child();
+  const script = 'reg.exe add "HKLM\\SOFTWARE\\Policies\\Example" /v Test /t REG_DWORD /d 1 /f';
+  const result = executeGuest(connection, script, {
+    signal: AbortSignal.timeout(5000),
+    shell: "cmd",
+  });
+  expect(processMock.spawn.mock.lastCall?.[1].at(-1)).toBe("cmd.exe /d /q");
+  expect(process.stdin.read().toString()).toBe(script + "\n");
+  process.exitCode = 0;
+  process.emit("close");
+  expect((await result).exitCode).toBe(0);
+});
+
+const nativeProcess =
+  await vi.importActual<typeof import("node:child_process")>("node:child_process");
+const hasPowerShell =
+  nativeProcess.spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"]).status === 0;
+
+test.skipIf(!hasPowerShell).each([
+  {
+    name: "runtime error",
+    script: "throw 'Synthetic guest failure'",
+    cause: "Synthetic guest failure",
+  },
+  { name: "parser error", script: "if (", cause: "Missing condition" },
+  { name: "bounded record", script: "throw ('x' * 20000)", cause: "xxxx" },
+])("PowerShell wrapper preserves the $name on stderr", async ({ script, cause }) => {
+  processMock.spawn.mockImplementationOnce((_executable, args: string[]) => {
+    const command = args.at(-1) ?? "";
+    const prefix = 'powershell.exe -NoLogo -NonInteractive -NoProfile -Command "';
+    expect(command.startsWith(prefix)).toBe(true);
+    return nativeProcess.spawn(
+      "pwsh",
+      ["-NoLogo", "-NonInteractive", "-NoProfile", "-Command", command.slice(prefix.length, -1)],
+      {
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...globalThis.process.env, NO_COLOR: "1" },
+      },
+    );
+  });
+  const result = await executeGuest(connection, script, {
+    signal: AbortSignal.timeout(10000),
+    shell: "powershell",
+  });
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain(cause);
+  expect(result.stderr.length).toBeLessThanOrEqual(16385);
+  expect(guestCommandDiagnostics(result)).toContain(cause);
+  expect(result.stderr).not.toContain("Guest script failed.");
+});
 
 test("cancellation stops only the owned SSH process and does not report completion", async () => {
   const process = child();
