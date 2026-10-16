@@ -5,10 +5,17 @@ import { GitHubIcon } from "@/components/github-icon";
 import { JobLog } from "@/components/job-log";
 import { Details, ExpandableRow, Mono } from "@/components/layout";
 import { OsTile } from "@/components/os-icon";
-import { JobStatus, OperationStatus, RunnerStage, StatusText } from "@/components/status";
+import {
+  JobStatus,
+  OperationStatus,
+  RunnerStage,
+  StatusBadge,
+  StatusText,
+} from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { activityJob, activitySummary, activityTitle } from "@/lib/activities";
 import { formatDateTime, formatRelative } from "@/lib/format";
+import { resultCodePresentation } from "@/lib/result-code";
 import { isGeneratedStageMessage, activeRunnerStage } from "@/lib/runner-stage";
 import { cancellableCommands, commandLabels } from "@/lib/operations";
 import { MigrationResult } from "@/views/migration-result";
@@ -55,6 +62,7 @@ export function ActivityRow({
   const closable = activity.status === "action_required" && !preparation && !reconcilable;
   const stage = activeRunnerStage(activity, deciding, job?.status);
   const result: unknown = deciding?.result;
+  const codeStatus = resultCodePresentation(result);
   const nextStep =
     typeof result === "object" &&
     result &&
@@ -101,6 +109,8 @@ export function ActivityRow({
           {job?.status && <JobStatus status={job.status} conclusion={job.conclusion ?? null} />}
           {stage ? (
             <RunnerStage stage={stage} />
+          ) : codeStatus && !runnerQuiet ? (
+            <StatusBadge tone={codeStatus.tone} label={codeStatus.label} />
           ) : (
             !runnerQuiet && <OperationStatus status={activity.status} />
           )}
