@@ -184,7 +184,7 @@ test("cloud access failure leaves a stopped runner unresolved", async () => {
     service.submit("recover", { type: "runner.reconcile", id: interrupted.id });
     await service.drain();
     expect(store.get("operation", interrupted.id)).toMatchObject({ status: "action_required" });
-    expect(service.snapshot().runnerCapacity?.active).toBe(1);
+    expect(service.snapshot().runnerCapacity?.active).toBe(0);
     expect(broker.releaseRunner).not.toHaveBeenCalled();
   } finally {
     await service.close();

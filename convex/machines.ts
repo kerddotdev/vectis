@@ -68,10 +68,23 @@ export const heartbeat = mutation({
     paused: v.optional(v.boolean()),
     runnerIdle: v.optional(v.boolean()),
     runnerSlots: v.optional(v.number()),
+    environmentSlots: v.optional(
+      v.array(v.object({ environmentId: v.string(), available: v.number() })),
+    ),
   },
   handler: async (ctx, args) => {
     const record = await machine(ctx);
     const environments = args.environments;
+    const validSlots = (value: number) => Number.isInteger(value) && value >= 0 && value <= 16;
+    if (
+      (args.runnerSlots !== undefined && !validSlots(args.runnerSlots)) ||
+      (args.environmentSlots !== undefined &&
+        (args.environmentSlots.length > 100 ||
+          new Set(args.environmentSlots.map((item) => item.environmentId)).size !==
+            args.environmentSlots.length ||
+          args.environmentSlots.some((item) => !validSlots(item.available))))
+    )
+      throw new ConvexError({ code: "invalid_runner_capacity" });
     if (
       environments &&
       (environments.length > 100 ||
@@ -104,9 +117,14 @@ export const heartbeat = mutation({
       lastSeenAt: Date.now(),
       ...(args.runnerIdle === undefined ? {} : { runnerIdle: args.runnerIdle }),
       ...(args.runnerSlots === undefined ? {} : { runnerSlots: args.runnerSlots }),
+      ...(args.environmentSlots === undefined ? {} : { environmentSlots: args.environmentSlots }),
     };
     const current = await presence(ctx, record._id);
-    if (current) await ctx.db.patch("machinePresence", current._id, liveness);
+    if (current)
+      await ctx.db.patch("machinePresence", current._id, {
+        ...liveness,
+        environmentSlots: args.environmentSlots,
+      });
     else await ctx.db.insert("machinePresence", { machineId: record._id, ...liveness });
     const target = { ...record, ...changes };
     const bindings = target.paused === false ? await automaticBindings(ctx, record._id) : [];

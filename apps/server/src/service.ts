@@ -971,11 +971,6 @@ export class Service {
             );
           if (snapshot.machine.paused)
             throw new VectisError("machine_paused", "The machine is paused.", "Run vectis resume.");
-          if (snapshot.instances.some((instance) => instance.status === "interrupted"))
-            throw new VectisError(
-              "reconciliation_required",
-              "An interrupted instance needs inspection before new work can start.",
-            );
           const defaults = Schema.decodeUnknownSync(Environment)(
             this.store.get("environment", command.id),
           );

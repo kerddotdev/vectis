@@ -274,7 +274,12 @@ test("an accepted shutdown stops advertising readiness before the listener close
 
 test("machine runner limits reject invalid values and survive a service restart", async () => {
   const { home, server, client } = await fixture();
-  expect((await client.status()).runnerCapacity).toEqual({ max: 5, active: 0, available: 0 });
+  expect((await client.status()).runnerCapacity).toEqual({
+    max: 5,
+    active: 0,
+    available: 0,
+    environments: [],
+  });
   for (const maxRunners of [0, 17, -1, 1.5, "5"]) {
     const response = await fetch(server.connection.url + "/v1/commands", {
       method: "POST",
@@ -294,7 +299,12 @@ test("machine runner limits reject invalid values and survive a service restart"
     expect(operation.status).toBe("succeeded");
     const state = await client.status();
     expect(state.machine.maxRunners).toBe(maxRunners);
-    expect(state.runnerCapacity).toEqual({ max: maxRunners, active: 0, available: 0 });
+    expect(state.runnerCapacity).toEqual({
+      max: maxRunners,
+      active: 0,
+      available: 0,
+      environments: [],
+    });
     expect(state.activities).toEqual([]);
   }
   await server.close();

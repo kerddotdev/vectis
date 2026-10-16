@@ -324,9 +324,15 @@ test("slot changes send a heartbeat on the next tick without waiting for the cad
   vi.useFakeTimers();
   const { store, local } = await fixture();
   let available = 2;
+  let macSlots = 1;
   vi.spyOn(local, "status").mockImplementation(async () => ({
     ...store.snapshot(),
-    runnerCapacity: { max: 5, active: 1, available },
+    runnerCapacity: {
+      max: 5,
+      active: 1,
+      available,
+      environments: [{ environmentId: "mac", available: macSlots }],
+    },
   }));
   transport.query.mockImplementation(async (query) =>
     getFunctionName(query) === "machines:self"
@@ -336,19 +342,31 @@ test("slot changes send a heartbeat on the next tick without waiting for the cad
   transport.auth.changed?.(true);
   await vi.advanceTimersByTimeAsync(0);
   expect(transport.mutation).toHaveBeenCalledTimes(1);
-  expect(transport.mutation.mock.calls[0]?.[1]).toMatchObject({ runnerSlots: 2, runnerIdle: true });
+  expect(transport.mutation.mock.calls[0]?.[1]).toMatchObject({
+    runnerSlots: 2,
+    runnerIdle: true,
+    environmentSlots: [{ environmentId: "mac", available: 1 }],
+  });
   await vi.advanceTimersByTimeAsync(2000);
   expect(transport.mutation).toHaveBeenCalledTimes(1);
   available = 0;
   await vi.advanceTimersByTimeAsync(2000);
   expect(transport.mutation).toHaveBeenCalledTimes(2);
   expect(transport.mutation.mock.calls[1]?.[1]).toMatchObject({ runnerSlots: 0, runnerIdle: true });
+  macSlots = 0;
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  expect(transport.mutation.mock.calls[2]?.[1]).toMatchObject({
+    runnerSlots: 0,
+    environmentSlots: [{ environmentId: "mac", available: 0 }],
+  });
   vi.mocked(local.status).mockImplementation(async () => store.snapshot());
   await vi.advanceTimersByTimeAsync(2000);
-  expect(transport.mutation).toHaveBeenCalledTimes(3);
-  expect(transport.mutation.mock.calls[2]?.[1]).not.toHaveProperty("runnerSlots");
+  expect(transport.mutation).toHaveBeenCalledTimes(4);
+  expect(transport.mutation.mock.calls[3]?.[1]).not.toHaveProperty("runnerSlots");
+  expect(transport.mutation.mock.calls[3]?.[1]).not.toHaveProperty("environmentSlots");
   await vi.advanceTimersByTimeAsync(2000);
-  expect(transport.mutation).toHaveBeenCalledTimes(3);
+  expect(transport.mutation).toHaveBeenCalledTimes(4);
 });
 
 test("identity is verified once per authentication, not on every tick", async () => {
