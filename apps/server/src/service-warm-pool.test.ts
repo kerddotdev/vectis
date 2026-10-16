@@ -34,6 +34,7 @@ async function fixture(
     reconciled?: boolean;
     pendingStart?: boolean;
     cache?: boolean;
+    scaleSet?: boolean;
   } = {},
 ) {
   const home = await mkdtemp(join(tmpdir(), "vectis-service-warm-"));
@@ -100,6 +101,7 @@ async function fixture(
       {
         id: "binding",
         environmentId: "linux",
+        ...(options.scaleSet ? { capacityMode: "scale_set" as const, automatic: true } : {}),
         installationId: 1,
         repositoryId: 1,
         repositoryName: "test/repo",
@@ -171,25 +173,38 @@ async function fixture(
   return { home, store, runtime, service, broker, start, stop, reconcile, warm, listening };
 }
 
-test("runner takeover skips boot and readiness, then cancellation stops the claimed VM", async () => {
-  const f = await fixture();
-  await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
-  const id = f.warm()[0]!.id;
-  vi.mocked(executeGuest).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok);
-  f.listening();
-  const run = f.service.submit("takeover", { type: "runner.run", bindingId: "binding" });
-  await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce());
-  expect(f.start).toHaveBeenCalledOnce();
-  expect(readyGuest).toHaveBeenCalledOnce();
-  expect(f.store.snapshot().operations.find((op) => op.id === run.id)?.result).toMatchObject({
-    instanceId: id,
-    stage: "listening",
-  });
-  expect(f.store.snapshot().instances.find((item) => item.id === id)?.role).toBeUndefined();
-  f.service.submit("cancel", { type: "operation.cancel", id: run.id });
-  await vi.waitFor(() => expect(f.broker.releaseRunner).toHaveBeenCalledOnce());
-  expect(f.stop).toHaveBeenCalledWith(id);
-});
+test.each([false, true])(
+  "runner takeover (scaleSet=%s) skips boot and readiness, then cancellation stops the claimed VM",
+  async (scaleSet) => {
+    const f = await fixture({ scaleSet });
+    await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+    const id = f.warm()[0]!.id;
+    vi.mocked(executeGuest).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok);
+    f.listening();
+    const run = f.service.submit("takeover", {
+      type: "runner.run",
+      bindingId: "binding",
+      ...(scaleSet ? { automatic: true, scaleSet: { generation: 3 } } : {}),
+    });
+    await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce());
+    expect(f.broker.prepareRunner).toHaveBeenCalledWith(
+      "binding",
+      run.id,
+      expect.any(AbortSignal),
+      scaleSet ? { automatic: true, scaleSet: { generation: 3 } } : {},
+    );
+    expect(f.start).toHaveBeenCalledOnce();
+    expect(readyGuest).toHaveBeenCalledOnce();
+    expect(f.store.snapshot().operations.find((op) => op.id === run.id)?.result).toMatchObject({
+      instanceId: id,
+      stage: "listening",
+    });
+    expect(f.store.snapshot().instances.find((item) => item.id === id)?.role).toBeUndefined();
+    f.service.submit("cancel", { type: "operation.cancel", id: run.id });
+    await vi.waitFor(() => expect(f.broker.releaseRunner).toHaveBeenCalledOnce());
+    expect(f.stop).toHaveBeenCalledWith(id);
+  },
+);
 
 test("unhealthy warm SSH stops that VM before cold startup and JIT registration", async () => {
   const f = await fixture();

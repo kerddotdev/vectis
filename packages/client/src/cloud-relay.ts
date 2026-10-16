@@ -1,3 +1,4 @@
+import { ScaleSetGrant, type CapacityMode } from "../../protocol/src/scale-sets.js";
 import { RunControlOutcome, type RunControlCommand } from "../../protocol/src/runs.js";
 import { ConvexError } from "convex/values";
 import type { FunctionReturnType } from "convex/server";
@@ -40,6 +41,30 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
     promise
       .then(resolve, (error: unknown) => {
         if (
+          error instanceof ConvexError &&
+          Schema.is(
+            Schema.Struct({
+              code: Schema.String,
+              message: Schema.optional(Schema.String),
+              nextStep: Schema.optional(Schema.String),
+              status: Schema.optional(Schema.Number),
+            }),
+          )(error.data) &&
+          error.data.code.startsWith("scale_set_")
+        ) {
+          const code =
+            error.data.code === "scale_set_unavailable" &&
+            [401, 403].includes(error.data.status ?? 0)
+              ? "scale_set_auth_failed"
+              : error.data.code;
+          reject(
+            new VectisError(
+              code,
+              error.data.message ?? "Scale set control was refused.",
+              error.data.nextStep,
+            ),
+          );
+        } else if (
           error instanceof ConvexError &&
           Schema.is(
             Schema.Struct({
@@ -123,6 +148,17 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
       .finally(() => signal.removeEventListener("abort", abort));
     if (signal.aborted) abort();
   });
+}
+
+function decodeScaleSetGrant(value: unknown) {
+  try {
+    return Schema.decodeUnknownSync(ScaleSetGrant)(value);
+  } catch {
+    throw new VectisError(
+      "scale_set_protocol_invalid",
+      "The cloud returned an invalid scale set grant.",
+    );
+  }
 }
 
 const removalCodes = ["machine_rejected", "machine_revoked"];
@@ -486,6 +522,44 @@ export function startCloudRelay(
         AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
       );
     },
+    async setCapacityMode(bindingId: string, capacityMode: CapacityMode) {
+      requireConnection();
+      await interruptible(
+        cloud.mutation(api.repositoryBindings.setCapacityModeForMachine, {
+          bindingId,
+          capacityMode,
+        }),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
+    async openScaleSet(bindingId: string, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      return decodeScaleSetGrant(
+        await interruptible(
+          cloud.action(api.githubScaleSets.open, { bindingId }),
+          AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+        ),
+      );
+    },
+    async refreshScaleSet(bindingId: string, generation: number, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      return decodeScaleSetGrant(
+        await interruptible(
+          cloud.action(api.githubScaleSets.refresh, { bindingId, generation }),
+          AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
+        ),
+      );
+    },
+    async closeScaleSet(bindingId: string, generation: number, signal: AbortSignal) {
+      signal.throwIfAborted();
+      requireConnection();
+      await interruptible(
+        cloud.action(api.githubScaleSets.close, { bindingId, generation }),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
     async controlRun(command: RunControlCommand, key: string, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();
@@ -610,7 +684,7 @@ export function startCloudRelay(
       bindingId: string,
       key: string,
       signal: AbortSignal,
-      request?: { jobId?: number; automatic?: boolean },
+      request?: Parameters<RunnerBroker["prepareRunner"]>[3],
     ) {
       signal.throwIfAborted();
       requireConnection();

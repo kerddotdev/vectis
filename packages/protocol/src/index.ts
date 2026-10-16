@@ -3,6 +3,7 @@ import { RerunFailed, CancelRun, DispatchWorkflow } from "./runs.js";
 import { CacheSizeGiB } from "./cache-volume.js";
 import { RepositoryAccess } from "./repository-access.js";
 import { Identifier } from "./identifier.js";
+import { CapacityMode, ScaleSetState } from "./scale-sets.js";
 import { MachineRepositories, RepositoryConnection } from "./repositories.js";
 
 export { Identifier } from "./identifier.js";
@@ -224,6 +225,7 @@ export const Snapshot = Schema.Struct({
   activities: Schema.optional(Schema.Array(Activity)),
   cloud: Schema.optional(CloudStatus),
   repositories: Schema.optional(MachineRepositories),
+  scaleSets: Schema.optional(Schema.Array(ScaleSetState)),
 });
 export type Snapshot = typeof Snapshot.Type;
 export const Command = Schema.Union([
@@ -289,6 +291,14 @@ export const Command = Schema.Union([
     bindingId: Identifier,
     automatic: Schema.optional(Schema.Literal(true)),
     jobId: Schema.optional(Schema.Int.check(Schema.isGreaterThan(0))),
+    // Present when a scale set listener requested this runner; the JIT config then comes from that
+    // scale set and GitHub assigns the job.
+    scaleSet: Schema.optional(Schema.Struct({ generation: Schema.Int })),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("repository.capacity-mode"),
+    bindingId: Identifier,
+    mode: CapacityMode,
   }),
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("activity.cancel"), id: Identifier }),
@@ -489,6 +499,12 @@ export const capabilities = [
     kind: "command",
     activity: "setting",
     description: "Delete a repository cache volume when no job uses it.",
+  },
+  {
+    name: "repository.capacity-mode",
+    kind: "command",
+    activity: "setting",
+    description: "Choose demand scheduling or preview scale set capacity for a repository binding.",
   },
   {
     name: "repository.automatic",

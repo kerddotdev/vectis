@@ -119,6 +119,7 @@ test("MCP discovers and executes the same authenticated commands as the CLI clie
       "workflow.dispatch",
       "repository.cache",
       "cache.clear",
+      "repository.capacity-mode",
     ]) {
       expect(schema).toContain(name);
       expect(JSON.stringify(discovery.structuredContent)).toContain(name);

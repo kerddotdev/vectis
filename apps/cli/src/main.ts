@@ -158,6 +158,7 @@ Repositories and jobs
   repository connect <name>     Connect with --account <id> and --environment <id>, optional --owner <org>
   repository enable-auto <id>   Start runners automatically for matching queued jobs
   repository disable-auto <id>  Stop starting runners automatically
+  repository capacity-mode <id> demand|scale-set  Choose runner capacity mode (scale sets are preview)
   repository disconnect <id>    Stop future runners without interrupting running jobs
   runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
   runner reconcile <operation-id>  Clean up an interrupted runner after verifying its VM stopped
@@ -249,7 +250,7 @@ Options
   -h, --help                    Show this help
 
 Exit codes: 0 success, 1 failure or cancellation, 3 action required or still pending.
-Setting commands always wait: pause/resume, repository enable-auto/disable-auto, repository cache,
+Setting commands always wait: pause/resume, repository enable-auto/disable-auto/capacity-mode, repository cache,
 environment register/configure/remove, instance stop/reconcile, operation cancel, and activity cancel.
 Their wait timeout reports wait_cancelled with exit code 3; the operation may still be running.
 Errors are JSON: {"error":{"code","message","nextStep"}}.
@@ -647,6 +648,18 @@ Documentation: https://vectis.kerd.dev/docs
         "invalid_cache_command",
         "Use repository cache enable|disable|clear <binding-id>; --size-gib is only valid with enable.",
       );
+  } else if (command === "repository" && subcommand === "capacity-mode" && id) {
+    const mode = positionals[3];
+    if (positionals.length !== 4 || (mode !== "demand" && mode !== "scale-set"))
+      throw new VectisError(
+        "invalid_capacity_mode",
+        "Use repository capacity-mode <binding-id> demand|scale-set.",
+      );
+    request = decodeCommand({
+      type: "repository.capacity-mode",
+      bindingId: id,
+      mode: mode === "scale-set" ? "scale_set" : "demand",
+    });
   } else if (command === "repository" && subcommand === "access" && id) {
     if (
       !values.actors ||

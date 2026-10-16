@@ -36,9 +36,11 @@ export const commandLabels: Record<string, string> = {
   ...sharedCommandLabels,
   "repository.cache": "Configure repository cache",
   "cache.clear": "Clear repository cache",
+  "repository.capacity-mode": "Change runner capacity mode",
 };
 // A setting is confirmed after it happened, so its message is what changed, not what was asked.
 export const settingLabels: Record<string, string> = {
+  "repository.capacity-mode": "Runner capacity mode updated",
   "repository.automatic": "Automatic runners updated",
   "repository.access": "Repository access updated",
   "repository.cache": "Repository cache updated",

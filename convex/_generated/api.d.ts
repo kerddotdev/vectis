@@ -34,6 +34,7 @@ import type * as githubRepositories from "../githubRepositories.js";
 import type * as githubRunnerProbe from "../githubRunnerProbe.js";
 import type * as githubRunners from "../githubRunners.js";
 import type * as githubRuns from "../githubRuns.js";
+import type * as githubScaleSets from "../githubScaleSets.js";
 import type * as githubValidators from "../githubValidators.js";
 import type * as githubWebhook from "../githubWebhook.js";
 import type * as http from "../http.js";
@@ -54,6 +55,8 @@ import type * as runCommands from "../runCommands.js";
 import type * as runReceipts from "../runReceipts.js";
 import type * as runnerDemand from "../runnerDemand.js";
 import type * as runnerLeases from "../runnerLeases.js";
+import type * as runnerScaleSets from "../runnerScaleSets.js";
+import type * as scaleSetPolicy from "../scaleSetPolicy.js";
 import type * as site from "../site.js";
 
 /**
@@ -86,6 +89,7 @@ declare const fullApi: ApiFromModules<{
   githubRunnerProbe: typeof githubRunnerProbe;
   githubRunners: typeof githubRunners;
   githubRuns: typeof githubRuns;
+  githubScaleSets: typeof githubScaleSets;
   githubValidators: typeof githubValidators;
   githubWebhook: typeof githubWebhook;
   http: typeof http;
@@ -106,6 +110,8 @@ declare const fullApi: ApiFromModules<{
   runReceipts: typeof runReceipts;
   runnerDemand: typeof runnerDemand;
   runnerLeases: typeof runnerLeases;
+  runnerScaleSets: typeof runnerScaleSets;
+  scaleSetPolicy: typeof scaleSetPolicy;
   site: typeof site;
 }>;
 export declare const api: FilterApi<

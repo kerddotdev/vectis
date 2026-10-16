@@ -1,5 +1,6 @@
 "use node";
 import { readCacheWrite } from "../packages/github/src/cache-write.js";
+import { generateScaleSetJit } from "./githubScaleSets.js";
 import { runnerRequest } from "./runnerLeases.js";
 import { githubErrors, repositoryAccess } from "./githubAccess.js";
 import { runnerLabels } from "../packages/github/src/runner-labels.js";
@@ -29,6 +30,7 @@ export const prepare = action({
       preparing: true,
       ...(args.jobId === undefined ? {} : { jobId: args.jobId }),
       ...(args.automatic === undefined ? {} : { automatic: args.automatic }),
+      ...(args.scaleSet ? { scaleSet: args.scaleSet } : {}),
     });
     const client = new GitHubAppClient(authority.app);
     const access = await repositoryAccess(client, {
@@ -74,27 +76,56 @@ export const prepare = action({
       await ctx.runMutation(internal.runnerLeases.attention, { id: lease._id });
       return { state: "action_required", id: lease._id };
     }
-    const cache = authority.cacheJob
-      ? await readCacheWrite(
-          (path) => client.request(access.token, access.path + path),
-          authority.binding.repositoryId,
-          authority.cacheJob.runId,
-          authority.cacheJob.runAttempt,
-        )
-      : { cacheWrite: false };
+    const cache =
+      !args.scaleSet && authority.cacheJob
+        ? await readCacheWrite(
+            (path) => client.request(access.token, access.path + path),
+            authority.binding.repositoryId,
+            authority.cacheJob.runId,
+            authority.cacheJob.runAttempt,
+          )
+        : { cacheWrite: false };
     let runnerId: number | undefined;
     try {
-      const registration = Schema.decodeUnknownSync(Registration)(
-        await client.request(access.token, `${access.path}/actions/runners/generate-jitconfig`, {
-          name: `vectis-${lease._id}`,
-          runner_group_id: 1,
-          labels: runnerLabels(lease.os, lease.environmentId),
-          work_folder: "_work",
-        }),
-      );
+      const scaleSetRegistration = args.scaleSet
+        ? await generateScaleSetJit(
+            ctx,
+            {
+              bindingId: args.bindingId,
+              generation: args.scaleSet.generation,
+              runnerName: `vectis-${lease._id}`,
+            },
+            authority,
+            access,
+          )
+        : undefined;
+      const registration = scaleSetRegistration
+        ? {
+            runner: scaleSetRegistration.runner,
+            encoded_jit_config: scaleSetRegistration.encodedJITConfig,
+          }
+        : Schema.decodeUnknownSync(Registration)(
+            await client.request(
+              access.token,
+              `${access.path}/actions/runners/generate-jitconfig`,
+              {
+                name: `vectis-${lease._id}`,
+                runner_group_id: 1,
+                labels: runnerLabels(lease.os, lease.environmentId),
+                work_folder: "_work",
+              },
+            ),
+          );
       runnerId = registration.runner.id;
       if (registration.runner.name !== `vectis-${lease._id}`)
         throw new Error("Runner identity mismatch.");
+      if (args.scaleSet) {
+        const registered = Schema.decodeUnknownSync(Runner)(
+          await client.request(access.token, `${access.path}/actions/runners/${runnerId}`),
+        );
+        if (registered.id !== runnerId || registered.name !== `vectis-${lease._id}`)
+          throw new Error("Runner identity mismatch.");
+      }
       await ctx.runMutation(internal.runnerLeases.ready, {
         id: lease._id,
         runnerId,

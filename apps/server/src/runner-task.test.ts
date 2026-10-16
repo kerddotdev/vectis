@@ -603,7 +603,12 @@ async function listeningFixture(
   withJob = true,
   timings: Pick<
     Parameters<typeof runRunnerTask>[3],
-    "now" | "pollIntervalMs" | "idleTimeoutMs" | "offlineTimeoutMs" | "statusFailureTimeoutMs"
+    | "request"
+    | "now"
+    | "pollIntervalMs"
+    | "idleTimeoutMs"
+    | "offlineTimeoutMs"
+    | "statusFailureTimeoutMs"
   > = {},
 ) {
   vi.useFakeTimers();
@@ -1452,4 +1457,33 @@ test("cache jobs boot with their attached disk instead of claiming a generic war
   expect(readyGuest).toHaveBeenCalledOnce();
   expect(result.progress.phases?.map((phase) => phase.name)).toContain("vm_start");
   expect(result.progress.phases?.map((phase) => phase.name)).not.toContain("warm_takeover");
+});
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s scale set registration forwards its generation without per-job checks",
+  async (os) => {
+    const { controls, broker } = fixture(os);
+    const needed = vi.fn(async () => false);
+    const request = { automatic: true, scaleSet: { generation: 3 } };
+    const signal = new AbortController().signal;
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      { ...environment, os },
+      { ...controls, needed, request },
+      signal,
+    );
+    expect(broker.prepareRunner).toHaveBeenCalledWith("binding", "key", signal, request);
+    expect(needed).not.toHaveBeenCalled();
+    expect(result.status).toBe("succeeded");
+  },
+);
+
+test("a scale set runner drains after five idle minutes even if a supplied demand check says needed", async () => {
+  const { needed, done } = await listeningFixture(true, {
+    request: { automatic: true, scaleSet: { generation: 3 } },
+  });
+  await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+  expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
+  expect(needed).not.toHaveBeenCalled();
 });

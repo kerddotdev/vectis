@@ -31,8 +31,8 @@ const pollIntervalMs = 30000;
 interface Controls {
   cache?: { sizeGiB: number; complete(): void };
   broker: RunnerBroker;
-  needed?: (signal: AbortSignal) => Promise<boolean>;
-  request?: { jobId?: number; automatic?: boolean };
+  needed?: ((signal: AbortSignal) => Promise<boolean>) | undefined;
+  request?: Parameters<RunnerBroker["prepareRunner"]>[3];
   now?: () => number;
   acceptedAt?: string;
   pollIntervalMs?: number;
@@ -103,12 +103,10 @@ export async function runRunnerTask(
       endPhase(phase);
     }
   };
-  const needed = controls.needed;
+  const needed = controls.request?.scaleSet ? undefined : controls.needed;
   const watchedControls = {
     ...controls,
-    ...(needed
-      ? { needed: (signal: AbortSignal) => timed("job_check", () => needed(signal)) }
-      : {}),
+    needed: needed ? (signal: AbortSignal) => timed("job_check", () => needed(signal)) : undefined,
   };
   update({});
   try {

@@ -30,6 +30,26 @@ Readiness returns ordered checks with a status, an optional error code, a next s
 
 `repository list` shows each connection's ID (the binding ID used by other commands) and its `runsOn` label. Connecting the same repository and environment again reuses the connection.
 
+## Capacity mode
+
+Connections default to `demand`, which starts capacity for individually admitted queued jobs. The preview `scale_set` mode lets this Mac long-poll one GitHub runner scale set session and create runners from GitHub's assigned-job level. Automatic runners must be enabled in either mode.
+
+```sh
+vectis repository capacity-mode <binding-id> scale-set
+vectis repository enable-auto <binding-id>
+vectis repository list --json
+vectis status --json
+```
+
+`repository list` includes `capacityMode`; listener state and error codes appear in `status.scaleSets`. Use the reported label or scale set name, and check the workflow against the preview integration before relying on it. See [scale set capacity](/docs/guides/runners#scale-set-capacity-preview) for lifecycle and verification limits.
+
+Scale set preview requires actors `any` and approval `automatic`. Keep restrictive policies in demand mode; switching to scale sets refuses unsupported policies with `scale_set_policy_unsupported`. GitHub's external pull request approval remains a maintainer decision. Pausing, disabling automatic runners, disconnecting or changing mode stops new scale set intake and attempts to close its session without interrupting running jobs.
+
+```sh
+vectis repository disable-auto <binding-id>
+vectis repository capacity-mode <binding-id> demand
+```
+
 ## Who can use this Mac
 
 Each connection can limit the numeric GitHub user IDs that may use its runner capacity, and require a manual start. Existing connections allow any actor and use automatic approval unless a policy is set. Automatic runner admission must still be enabled separately.
@@ -123,7 +143,7 @@ Workflows and setup actions can override these variables. Cargo is deliberately 
 
 ### Write-back authority
 
-The cloud grants `cacheWrite: true` only for a known job whose workflow run is a `push`, `schedule`, or `workflow_dispatch`, targets the repository's current default branch, and has `head_repository.id` equal to the binding's repository ID. It reads `/actions/runs/{run_id}` and the verified repository's default branch when preparing the lease. Unreadable or missing metadata denies write-back. Pull requests, `pull_request_target`, forks, other branches and runners started without a specific job ID always discard their forks. The job-started hook fences writable grants to their run ID and attempt so another queued job cannot reuse that grant.
+The cloud grants `cacheWrite: true` only for a known job whose workflow run is a `push`, `schedule`, or `workflow_dispatch`, targets the repository's current default branch, and has `head_repository.id` equal to the binding's repository ID. It reads `/actions/runs/{run_id}` and the verified repository's default branch when preparing the lease. Unreadable or missing metadata denies write-back. Pull requests, `pull_request_target`, forks, other branches and runners started without a specific job ID always discard their forks. Scale set runners have no known workflow run at prepare time and always receive `cacheWrite: false`, including when cache volumes are enabled. They can read the saved generation but discard their changes. The job-started hook fences writable grants to their run ID and attempt so another queued job cannot reuse that grant.
 
 A writable fork becomes the new generation only after the listener finishes normally, the guest successfully unmounts or offlines the cache, and the VM process exits. Failed runner lifecycles, cancellation, uncertain cleanup and guest connection loss leave the current generation intact. A failed workflow step can still populate the cache if the runner lifecycle and unmount complete normally. Promotions are serialized by the host and use atomic rename. Concurrent writers use **last-completed-promotion wins**; changes from parallel forks are not merged. One previous generation is retained, and a missing current image can recover from it. Crashed instances never replay a promotion: reconcile them through the normal instance and runner commands.
 

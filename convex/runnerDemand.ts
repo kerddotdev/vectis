@@ -21,7 +21,11 @@ export const forRepository = internalMutation({
       )
       .take(100);
     // Each machine's bounded scan gets its own transaction, including after batched job imports.
-    for (const machineId of new Set(bindings.map((binding) => binding.machineId)))
+    for (const machineId of new Set(
+      bindings
+        .filter((binding) => binding.capacityMode !== "scale_set")
+        .map((binding) => binding.machineId),
+    ))
       await ctx.scheduler.runAfter(0, internal.runnerDemand.forMachine, { machineId });
   },
 });
@@ -126,7 +130,7 @@ export async function scheduleRunnerDemand(
   if (free <= 0) return;
   const queues: Array<{ binding: Doc<"repositoryBindings">; jobs: Doc<"githubJobs">[] }> = [];
   for (const binding of bindings ?? (await automaticBindings(ctx, machineId))) {
-    if (binding.owner !== target.owner) continue;
+    if (binding.owner !== target.owner || binding.capacityMode === "scale_set") continue;
     const environment = target.environments?.find(
       (item) => item.id === binding.environmentId && item.state === "ready",
     );
