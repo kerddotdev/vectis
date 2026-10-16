@@ -43,7 +43,7 @@ afterEach(async () => {
   vi.resetAllMocks();
 });
 
-async function fixture() {
+async function fixture(configuration: { exitCode?: number } = {}) {
   const home = await mkdtemp(join(tmpdir(), "vectis-provision-"));
   const store = new Store(join(home, "state.sqlite"));
   const runtime = new VmRuntime({ home });
@@ -72,6 +72,10 @@ async function fixture() {
   const stop = vi.spyOn(runtime, "stop").mockImplementation(async () => {
     await exit?.();
   });
+  const shutdown = vi.spyOn(runtime, "requestShutdown").mockImplementation(async () => {
+    await exit?.();
+    return true;
+  });
   vi.spyOn(runtime, "validate").mockResolvedValue();
   const start = vi
     .spyOn(runtime, "start")
@@ -82,7 +86,7 @@ async function fixture() {
       const helper = join(home, "fake-helper.cjs");
       await writeFile(
         helper,
-        "process.stdin.resume(); process.stdin.on('end', () => process.exit(0));",
+        `process.stdin.resume(); process.stdin.on('end', () => process.exit(${configuration.exitCode ?? 0}));`,
       );
       const child = spawn(process.execPath, [helper], { stdio: ["pipe", "ignore", "ignore"] });
       const settled = new Promise<void>((resolve) =>
@@ -144,7 +148,19 @@ async function fixture() {
     );
     return store.snapshot().operations.find((item) => item.id === id);
   }
-  return { home, store, runtime, service, parent, command, submit, completed, start, stop };
+  return {
+    home,
+    store,
+    runtime,
+    service,
+    parent,
+    command,
+    submit,
+    completed,
+    start,
+    stop,
+    shutdown,
+  };
 }
 
 test("success freezes and registers a new manifest without changing the parent", async () => {
@@ -179,12 +195,14 @@ test("success freezes and registers a new manifest without changing the parent",
 
 test("a guest script failure stops the owned VM and removes partial output", async () => {
   const { command, store, submit, completed, stop } = await fixture();
-  vi.mocked(executeGuest).mockResolvedValue({
-    exitCode: 1,
-    stdout: "",
-    stderr: "synthetic script failure",
-    truncated: false,
-  });
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValue({
+      exitCode: 1,
+      stdout: "",
+      stderr: "synthetic script failure",
+      truncated: false,
+    });
   const operation = await submit();
   expect(await completed(operation.id)).toMatchObject({
     status: "failed",
@@ -199,19 +217,81 @@ test("a guest script failure stops the owned VM and removes partial output", asy
   await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
+test.each([true, false])(
+  "Linux without sudo fails before downloads or setup, runner=%s",
+  async (runner) => {
+    const { command, store, submit, completed, stop, shutdown } = await fixture();
+    vi.mocked(executeGuest).mockResolvedValue({
+      exitCode: 1,
+      stdout: "",
+      stderr: "sudo: a password is required",
+      truncated: false,
+    });
+    const operation = await submit({ ...command, runner, setupScript: "echo must-not-run" });
+    expect(await completed(operation.id)).toMatchObject({
+      status: "failed",
+      result: {
+        code: "provision_requires_guest_sudo",
+        nextStep:
+          "Prepare a new Linux environment with this Vectis version, then provision from it.",
+        exitCode: 1,
+        diagnostics: expect.stringContaining("a password is required"),
+      },
+    });
+    expect(vi.mocked(executeGuest).mock.calls.map((call) => call[1])).toEqual(["sudo -n true"]);
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalledWith(operation.id);
+    expect(store.snapshot().environments).toHaveLength(1);
+    await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+test("Linux identity cleanup failure cannot freeze or register an image", async () => {
+  const { command, submit, completed, shutdown } = await fixture();
+  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
+    exitCode: script.includes("clear-identity") ? 23 : 0,
+    stdout: "",
+    stderr: "synthetic cleanup failure",
+    truncated: false,
+  }));
+  const operation = await submit();
+  expect(await completed(operation.id)).toMatchObject({
+    status: "failed",
+    result: { code: "provision_identity_reset_failed", exitCode: 23 },
+  });
+  expect(shutdown).not.toHaveBeenCalled();
+  await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s uses guest shutdown only when the hypervisor request is unavailable",
+  async (os) => {
+    const { parent, store, submit, completed, shutdown, stop } = await fixture();
+    store.put("environment", parent.id, { ...parent, os });
+    shutdown.mockResolvedValue(false);
+    const operation = await submit();
+    expect(await completed(operation.id)).toMatchObject({ status: "succeeded" });
+    expect(shutdown).toHaveBeenCalledWith(operation.id);
+    const calls = vi.mocked(executeGuest).mock.calls;
+    expect(calls.at(-1)?.[1]).toContain("vectis-provision: shutdown");
+    expect(stop).not.toHaveBeenCalled();
+  },
+);
+
 test.each(["linux", "macos", "windows"] as const)(
   "%s shutdown failures retain redacted output and the exit code after cleanup",
   async (os) => {
-    const { parent, store, submit, completed } = await fixture();
+    const { parent, store, submit, completed, shutdown } = await fixture();
     store.put("environment", parent.id, { ...parent, os });
-    vi.mocked(executeGuest)
-      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
-      .mockResolvedValueOnce({
-        exitCode: 23,
-        stdout: "vectis-provision: shutdown",
-        stderr: "Authorization: Bearer HiddenShutdownCanary\nsudo: a password is required",
-        truncated: false,
-      });
+    shutdown.mockResolvedValue(false);
+    vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
+      exitCode: script.includes("vectis-provision: shutdown") ? 23 : 0,
+      stdout: script.includes("vectis-provision: shutdown") ? "vectis-provision: shutdown" : "",
+      stderr: script.includes("vectis-provision: shutdown")
+        ? "Authorization: Bearer HiddenShutdownCanary\nsudo: a password is required"
+        : "",
+      truncated: false,
+    }));
     const operation = await submit();
     expect(await completed(operation.id)).toMatchObject({
       status: "failed",
@@ -228,12 +308,14 @@ test.each(["linux", "macos", "windows"] as const)(
 
 test("setup upload failure retains bounded diagnostic tails before VM cleanup", async () => {
   const { command, store, submit, completed, stop } = await fixture();
-  vi.mocked(executeGuest).mockResolvedValue({
-    exitCode: 28,
-    stdout: `discarded-prefix\n${"漢".repeat(10000)}\nupload interrupted`,
-    stderr: `Authorization: Bearer ${"a".repeat(10000)}\nNo space left on device`,
-    truncated: true,
-  });
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValue({
+      exitCode: 28,
+      stdout: `discarded-prefix\n${"漢".repeat(10000)}\nupload interrupted`,
+      stderr: `Authorization: Bearer ${"a".repeat(10000)}\nNo space left on device`,
+      truncated: true,
+    });
   const inspectCleanup = stop.getMockImplementation();
   stop.mockImplementation(async (id) => {
     expect(store.snapshot().operations.find((item) => item.id === id)).toMatchObject({
@@ -258,12 +340,14 @@ test("setup upload failure retains bounded diagnostic tails before VM cleanup", 
 
 test("unconfirmed cleanup preserves the original guest failure diagnostics", async () => {
   const { store, submit, completed, stop } = await fixture();
-  vi.mocked(executeGuest).mockResolvedValue({
-    exitCode: 7,
-    stderr: "download failed",
-    stdout: "vectis-provision: download",
-    truncated: false,
-  });
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValue({
+      exitCode: 7,
+      stderr: "download failed",
+      stdout: "vectis-provision: download",
+      truncated: false,
+    });
   stop.mockRejectedValue(new Error("Synthetic cleanup failure"));
   const operation = await submit();
   expect(await completed(operation.id)).toMatchObject({
@@ -303,10 +387,10 @@ test("lost provisioning connections retain redacted connection diagnostics", asy
     },
   });
 });
-test.each(["macos", "windows"] as const)(
-  "%s uses its guest shell and registers only after a clean exit",
+test.each(["linux", "macos", "windows"] as const)(
+  "%s uses hypervisor shutdown without a privileged guest shutdown command",
   async (os) => {
-    const { parent, store, submit, completed } = await fixture();
+    const { parent, store, submit, completed, shutdown, stop } = await fixture();
     store.put("environment", parent.id, { ...parent, os });
     const operation = await submit();
     expect(await completed(operation.id)).toMatchObject({
@@ -318,6 +402,11 @@ test.each(["macos", "windows"] as const)(
         .mocked(executeGuest)
         .mock.calls.every((call) => call[2].shell === (os === "windows" ? "powershell" : "bash")),
     ).toBe(true);
+    expect(shutdown).toHaveBeenCalledWith(operation.id);
+    expect(stop).not.toHaveBeenCalled();
+    const scripts = vi.mocked(executeGuest).mock.calls.map((call) => call[1]);
+    expect(scripts.join("\n")).not.toMatch(/poweroff|shutdown/);
+    if (os !== "linux") expect(scripts.join("\n")).not.toContain("sudo");
   },
 );
 
@@ -412,26 +501,76 @@ test("operation cancellation remains available, reserves preparation capacity an
   await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-test("a shutdown timeout forces cleanup and never freezes a dirty image", async () => {
-  const { command, store, runtime, completed, stop } = await fixture();
-  vi.mocked(executeGuest).mockResolvedValue({
-    exitCode: 0,
-    stdout: "",
-    stderr: "",
-    truncated: false,
+test.each(["linux", "macos", "windows"] as const)(
+  "%s shutdown timeout forces cleanup and never freezes a dirty image",
+  async (os) => {
+    const { parent, command, store, runtime, completed, stop, shutdown } = await fixture();
+    store.put("environment", parent.id, { ...parent, os });
+    shutdown.mockResolvedValue(true);
+    vi.mocked(executeGuest)
+      .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+      .mockResolvedValue({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+      });
+    const { operation } = store.accept("timeout", "timeout", command.type);
+    const active = await startProvision(store, runtime, operation, command, {
+      shutdownTimeoutMs: 10,
+    });
+    await active.done;
+    expect(await completed(operation.id)).toMatchObject({
+      status: "failed",
+      result: { code: "guest_shutdown_timeout" },
+    });
+    expect(stop).toHaveBeenCalledOnce();
+    await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s rejects a failed VM exit after an accepted hypervisor shutdown",
+  async (os) => {
+    const { parent, command, store, submit, completed, shutdown } = await fixture({ exitCode: 17 });
+    store.put("environment", parent.id, { ...parent, os });
+    const operation = await submit();
+    expect(await completed(operation.id)).toMatchObject({
+      status: "failed",
+      result: { code: "guest_shutdown_failed" },
+    });
+    expect(shutdown).toHaveBeenCalledWith(operation.id);
+    expect(store.snapshot().environments).toHaveLength(1);
+    await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+test("an accepted shutdown still waits for VM exit and remains cancellable", async () => {
+  const { parent, command, store, service, submit, completed, shutdown, stop } = await fixture();
+  store.put("environment", parent.id, { ...parent, os: "macos" });
+  let requested = () => {};
+  const ready = new Promise<void>((resolve) => {
+    requested = resolve;
   });
-  const { operation } = store.accept("timeout", "timeout", command.type);
-  const active = await startProvision(store, runtime, operation, command, {
-    shutdownTimeoutMs: 10,
+  shutdown.mockImplementation(async () => {
+    requested();
+    return true;
   });
-  await active.done;
-  expect(await completed(operation.id)).toMatchObject({
-    status: "failed",
-    result: { code: "guest_shutdown_timeout" },
+  const operation = await submit();
+  await ready;
+  expect(store.snapshot().operations.find((item) => item.id === operation.id)).toMatchObject({
+    status: "running",
+    result: { stage: "shutting_down" },
   });
-  expect(stop).toHaveBeenCalledOnce();
+  expect(store.snapshot().environments).toHaveLength(1);
+  expect(stop).not.toHaveBeenCalled();
+  service.submit("cancel-shutdown", { type: "operation.cancel", id: operation.id });
+  await service.drain();
+  expect(await completed(operation.id)).toMatchObject({ status: "cancelled" });
+  expect(stop).toHaveBeenCalledWith(operation.id);
   await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
 });
+
 test("stopping the provisioning instance cancels the operation rather than freezing a forced stop", async () => {
   const { command, service, store, submit, completed } = await fixture();
   vi.mocked(executeGuest).mockImplementation(

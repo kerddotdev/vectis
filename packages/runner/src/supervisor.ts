@@ -22,12 +22,17 @@ function owned(command: string, arguments_: string[], primary: boolean) {
     stdio: primary ? ["pipe", "inherit", "inherit"] : ["ignore", "ignore", "inherit"],
   });
   const closed = new Promise<void>((resolve) =>
-    child.once("close", () => {
+    child.once("close", (code, signal) => {
+      if (primary && (code !== 0 || signal !== null)) process.exitCode = code ?? 1;
+      if (!primary && !shutdown.signal.aborted) process.exitCode = 1;
       stop();
       resolve();
     }),
   );
-  child.once("error", stop);
+  child.once("error", () => {
+    process.exitCode = 1;
+    stop();
+  });
   child.stdin?.on("error", stop);
   children.push({ process: child, closed });
   return child;

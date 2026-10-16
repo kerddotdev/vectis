@@ -10,6 +10,7 @@ import { guestCommandDiagnostics } from "../../../packages/runner/src/guest-diag
 import { cloneProvisionImage } from "../../../packages/runner/src/provision-image.js";
 import {
   provisionScript,
+  provisionLinuxIdentityResetScript,
   provisionShutdownScript,
   setupUploadScripts,
 } from "../../../packages/runner/src/provision-scripts.js";
@@ -296,6 +297,15 @@ export async function startProvision(
         throw error;
       }
     };
+    if (environment.os === "linux") {
+      progress("checking_guest_sudo");
+      if ((await runGuest("sudo -n true")).exitCode !== 0)
+        throw new VectisError(
+          "provision_requires_guest_sudo",
+          "Linux provisioning requires passwordless sudo to reset the derived image's machine identity.",
+          "Prepare a new Linux environment with this Vectis version, then provision from it.",
+        );
+    }
     progress("provisioning");
     const scripts = [
       ...(command.setupScript !== undefined
@@ -314,19 +324,29 @@ export async function startProvision(
           "The guest provisioning script failed. No environment was registered.",
         );
     }
-    progress("shutting_down");
-    try {
-      const shutdown = await runGuest(
-        provisionShutdownScript(environment.os),
-        AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-      );
-      if (shutdown.exitCode !== 0)
+    if (environment.os === "linux") {
+      progress("clearing_identity");
+      if ((await runGuest(provisionLinuxIdentityResetScript())).exitCode !== 0)
         throw new VectisError(
-          "guest_shutdown_failed",
-          "Guest shutdown failed. Inspect the guest command diagnostics and passwordless sudo permissions.",
+          "provision_identity_reset_failed",
+          "Linux identity cleanup failed. No environment was registered.",
         );
-    } catch (error) {
-      if (!(error instanceof GuestUnavailableError)) throw error;
+    }
+    progress("shutting_down");
+    if (!(await runtime.requestShutdown(instance.id))) {
+      try {
+        const shutdown = await runGuest(
+          provisionShutdownScript(environment.os),
+          AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+        );
+        if (shutdown.exitCode !== 0)
+          throw new VectisError(
+            "guest_shutdown_failed",
+            "Guest shutdown failed. Inspect the guest command diagnostics and passwordless sudo permissions.",
+          );
+      } catch (error) {
+        if (!(error instanceof GuestUnavailableError)) throw error;
+      }
     }
     await waitForShutdown(instance, signal, options.shutdownTimeoutMs ?? 120000);
     if (instance.process.exitCode !== 0 || instance.process.signalCode !== null)
@@ -401,6 +421,7 @@ export async function startProvision(
             : error instanceof VectisError
               ? error.code
               : "provision_failed",
+          ...(error instanceof VectisError && error.nextStep ? { nextStep: error.nextStep } : {}),
         },
       });
     } catch {

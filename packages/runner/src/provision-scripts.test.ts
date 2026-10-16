@@ -1,10 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
   provisionScript,
+  provisionLinuxIdentityResetScript,
   provisionShutdownScript,
   runnerPreinstallScript,
   setupUploadScripts,
@@ -168,19 +169,57 @@ test("setup text travels as bounded data chunks and executes only from its decod
   }
 });
 
-test("Linux freeze clears the provision VM identity while preserving the instance identity unit", () => {
-  const script = provisionShutdownScript("linux");
-  expect(script).toContain(
-    "rm -f /etc/ssh/ssh_host_* /etc/vectis/instance-id /var/lib/dbus/machine-id",
-  );
-  expect(script).toContain("printf 'uninitialized\\n' > /etc/machine-id");
-  expect(script.indexOf("sync")).toBeLessThan(script.indexOf("poweroff"));
+test("Linux identity reset clears persistent identifiers without shutting down or removing boot units", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-identity-reset-"));
+  try {
+    const files = [
+      "etc/ssh/ssh_host_ed25519_key",
+      "etc/ssh/ssh_host_rsa_key",
+      "etc/vectis/instance-id",
+      "var/lib/dbus/machine-id",
+    ];
+    await Promise.all(
+      ["etc/ssh", "etc/vectis", "var/lib/dbus", "etc/systemd/system"].map((path) =>
+        mkdir(join(home, path), { recursive: true }),
+      ),
+    );
+    for (const path of [
+      ...files,
+      "etc/machine-id",
+      "etc/systemd/system/vectis-instance-identity.service",
+    ])
+      await writeFile(join(home, path), "provisioning-boot-identity");
+    const script = provisionLinuxIdentityResetScript()
+      .replaceAll("/etc/", `${home}/etc/`)
+      .replaceAll("/var/lib/", `${home}/var/lib/`);
+    const result = spawnSync("/bin/bash", ["-s"], {
+      input: `
+sudo() { test "$1" = -n || return 97; shift; "$@"; }
+sync() { echo 'synced'; }
+poweroff() { echo 'unexpected poweroff'; exit 98; }
+export -f sync poweroff
+${script}`,
+      encoding: "utf8",
+      cwd: home,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toContain("synced");
+    expect(result.stdout).not.toContain("unexpected");
+    for (const path of files)
+      await expect(stat(join(home, path))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(join(home, "etc/machine-id"), "utf8")).toBe("uninitialized\n");
+    expect(
+      await readFile(join(home, "etc/systemd/system/vectis-instance-identity.service"), "utf8"),
+    ).toBe("provisioning-boot-identity");
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
 });
 
-test("Linux shutdown stops at a failing privileged cleanup step", async () => {
+test("Linux identity reset stops at a failing privileged cleanup step", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-shutdown-"));
   try {
-    const script = provisionShutdownScript("linux")
+    const script = provisionLinuxIdentityResetScript()
       .replaceAll("/etc/", `${home}/etc/`)
       .replaceAll("/var/lib/", `${home}/var/lib/`);
     const result = spawnSync("/bin/bash", ["-s"], {

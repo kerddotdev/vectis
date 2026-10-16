@@ -1,5 +1,19 @@
 import type { ChildProcess } from "node:child_process";
 import { VectisError } from "../../protocol/src/index.js";
+import { requestVmCommand } from "./vm-command.js";
+
+export function requestQemuShutdown(child: ChildProcess, timeoutMs = 5000) {
+  return requestVmCommand(
+    child,
+    JSON.stringify({ execute: "system_powerdown", id: "shutdown" }) + "\n",
+    (message) => {
+      if (!("id" in message) || message.id !== "shutdown") return undefined;
+      if ("error" in message) return false;
+      return "return" in message ? true : undefined;
+    },
+    timeoutMs,
+  );
+}
 
 export function qemuSshPort(report: string): number {
   if (report.length > 65536)

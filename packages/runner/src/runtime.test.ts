@@ -105,7 +105,12 @@ fs.writeFileSync('uefi-vars.fd', 'new-vars');
 fs.writeFileSync('tpm/state', 'new-tpm');
 console.log(JSON.stringify({QMP:{}}));
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
-  const {id} = JSON.parse(line);
+  const {id, execute} = JSON.parse(line);
+  if (execute === 'system_powerdown') {
+    console.log(JSON.stringify({id, return:{}}));
+    setTimeout(() => process.exit(0), 50);
+    return;
+  }
   console.log(JSON.stringify({id, return: id === 'status' ? {running:true} : id === 'network' ? 'TCP[HOST_FORWARD] 1 127.0.0.1 12345 10.0.2.15 22 0 0' : {}}));
 });
 `,
@@ -136,7 +141,11 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
       undefined,
       { diskInPlace: true },
     );
-    await windows.stop(instance.id);
+    const kill = vi.spyOn(instance.process, "kill");
+    expect(await windows.requestShutdown(instance.id)).toBe(true);
+    await instance.settled;
+    expect(instance.process.exitCode).toBe(0);
+    expect(kill).not.toHaveBeenCalled();
     expect(await readFile(environment.basePath, "utf8")).toBe("new-disk");
     expect(await readFile(firmwareVarsPath, "utf8")).toBe("new-vars");
     expect(await readFile(join(tpmStatePath, "state"), "utf8")).toBe("new-tpm");
@@ -161,6 +170,39 @@ hostTest("explicit stop waits for process exit and cleanup", async () => {
   expect(instance.process.signalCode).toBe("SIGTERM");
   expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
 });
+
+hostTest.each(["linux", "macos"] as const)(
+  "%s graceful request waits for natural exit without forcing",
+  async (os) => {
+    const { runtime, environment } = await fixture(`
+console.log(JSON.stringify({event:'vm.running'}));
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  if (line !== 'shutdown') process.exit(97);
+  console.log(JSON.stringify({event:'vm.shutdown_requested'}));
+  setTimeout(() => process.exit(0), 50);
+});`);
+    const basePath = os === "macos" ? join(environment.basePath + ".bundle") : environment.basePath;
+    if (os === "macos") {
+      await mkdir(basePath);
+      await writeFile(join(basePath, "disk.img"), "synthetic disk");
+    }
+    const instance = await runtime.start(
+      "graceful",
+      { ...environment, os, basePath },
+      () => {},
+      undefined,
+      { diskInPlace: true },
+    );
+    const kill = vi.spyOn(instance.process, "kill");
+    expect(await runtime.requestShutdown(instance.id)).toBe(true);
+    expect(instance.process.exitCode).toBeNull();
+    await instance.settled;
+    expect(instance.process.exitCode).toBe(0);
+    expect(kill).not.toHaveBeenCalled();
+    expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+    await expect(runtime.requestShutdown(instance.id)).rejects.toMatchObject({ code: "not_owned" });
+  },
+);
 
 hostTest(
   "partial cleanup preserves exit evidence so Finder residue can be reconciled",

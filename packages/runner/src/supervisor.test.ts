@@ -6,6 +6,41 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+test.each([0, 17])("natural VM exit preserves code %s through the supervisor", async (code) => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-supervisor-exit-"));
+  const child = spawn(
+    process.execPath,
+    [
+      fileURLToPath(new URL("./supervisor.ts", import.meta.url)),
+      process.execPath,
+      "-e",
+      `process.stdin.resume(); process.stdin.once('data', () => process.exit(${code})); console.log('ready');`,
+    ],
+    {
+      cwd: home,
+      stdio: ["pipe", "pipe", "ignore"],
+      env: {
+        ...process.env,
+        VECTIS_VM_TPM_EXECUTABLE: "",
+        VECTIS_EXIT_RECEIPT: join(home, "receipt.json"),
+        VECTIS_INSTANCE_ID: "test",
+      },
+    },
+  );
+  const closed = once(child, "close");
+  try {
+    await once(child.stdout, "data");
+    child.stdin.write("shutdown\n");
+    await closed;
+    expect(child.exitCode).toBe(code);
+    expect(child.signalCode).toBeNull();
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
+    await closed;
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("owner pipe closure terminates a child that ignores SIGTERM", async () => {
   const supervisor = fileURLToPath(new URL("./supervisor.ts", import.meta.url));
   const child = spawn(

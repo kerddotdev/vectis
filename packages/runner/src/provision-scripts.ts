@@ -154,8 +154,11 @@ export function provisionShutdownScript(os: Environment["os"]) {
     return "$ErrorActionPreference = 'Stop'\nWrite-Output 'vectis-provision: shutdown'\n& shutdown.exe /s /t 0\nif ($LASTEXITCODE -ne 0) { throw 'Guest shutdown failed.' }\n";
   if (os === "macos")
     return "set -eu\necho 'vectis-provision: shutdown'\nsudo -n /sbin/shutdown -h now\n";
+  return "set -eu\necho 'vectis-provision: shutdown'\nsudo -n poweroff\n";
+}
+
+export function provisionLinuxIdentityResetScript() {
   return `set -euo pipefail
-echo 'vectis-provision: shutdown'
 sudo -n bash -s <<'VECTIS_IDENTITY'
 set -euo pipefail
 echo 'vectis-provision: clear-identity'
@@ -163,8 +166,6 @@ rm -f /etc/ssh/ssh_host_* /etc/vectis/instance-id /var/lib/dbus/machine-id
 printf 'uninitialized\\n' > /etc/machine-id
 echo 'vectis-provision: sync'
 sync
-echo 'vectis-provision: poweroff'
-poweroff
 VECTIS_IDENTITY
 `;
 }
