@@ -45,7 +45,7 @@ afterEach(async () => {
   vi.resetAllMocks();
 });
 
-async function fixture(configuration: { exitCode?: number } = {}) {
+async function fixture(configuration: { exitCode?: number; os?: Environment["os"] } = {}) {
   const home = await mkdtemp(join(tmpdir(), "vectis-provision-"));
   const store = new Store(join(home, "state.sqlite"));
   const runtime = new VmRuntime({ home });
@@ -53,7 +53,7 @@ async function fixture(configuration: { exitCode?: number } = {}) {
   const parent: Environment = {
     id: "parent",
     name: "Parent",
-    os: "linux",
+    os: configuration.os ?? "linux",
     basePath: join(home, "parent.img"),
     state: "ready",
     cpu: 1,
@@ -126,7 +126,8 @@ async function fixture(configuration: { exitCode?: number } = {}) {
     if (
       script.includes("poweroff") ||
       script.includes("shutdown.exe") ||
-      script.includes("/sbin/shutdown")
+      script.includes("/sbin/shutdown") ||
+      script.includes("osascript")
     )
       await exit?.();
     return { exitCode: 0, stdout: "", stderr: "", truncated: false };
@@ -162,6 +163,7 @@ async function fixture(configuration: { exitCode?: number } = {}) {
     start,
     stop,
     shutdown,
+    exit: async () => exit?.(),
   };
 }
 
@@ -265,7 +267,7 @@ test("Linux identity cleanup failure cannot freeze or register an image", async 
   await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-test.each(["linux", "macos", "windows"] as const)(
+test.each(["linux", "windows"] as const)(
   "%s uses guest shutdown only when the hypervisor request is unavailable",
   async (os) => {
     const { parent, store, submit, completed, shutdown, stop } = await fixture();
@@ -280,7 +282,7 @@ test.each(["linux", "macos", "windows"] as const)(
   },
 );
 
-test.each(["linux", "macos", "windows"] as const)(
+test.each(["linux", "windows"] as const)(
   "%s shutdown failures retain redacted output and the exit code after cleanup",
   async (os) => {
     const { parent, store, submit, completed, shutdown } = await fixture();
@@ -307,6 +309,291 @@ test.each(["linux", "macos", "windows"] as const)(
     expect(store.snapshot().environments).toHaveLength(1);
   },
 );
+
+test("macOS uses loginwindow without sudo or an ACPI request", async () => {
+  const { submit, completed, shutdown, stop } = await fixture({ os: "macos" });
+  const operation = await submit();
+  expect(await completed(operation.id)).toMatchObject({
+    status: "succeeded",
+    result: { shutdown: "loginwindow" },
+  });
+  const scripts = vi.mocked(executeGuest).mock.calls.map((call) => call[1]);
+  expect(scripts.at(-1)).toContain(
+    "osascript -e 'tell application \"loginwindow\" to «event aevtshut»'",
+  );
+  expect(scripts.join("\n")).not.toContain("sudo");
+  expect(shutdown).not.toHaveBeenCalled();
+  expect(stop).not.toHaveBeenCalled();
+});
+
+test("macOS accepts a lost SSH reply only after observing the guest stop", async () => {
+  const { submit, completed, exit, shutdown, stop } = await fixture({ os: "macos" });
+  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
+    if (script.includes("osascript")) {
+      await exit();
+      throw new GuestUnavailableError("Connection closed by remote host");
+    }
+    return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+  });
+  const operation = await submit();
+  expect(await completed(operation.id)).toMatchObject({
+    status: "succeeded",
+    result: { shutdown: "loginwindow" },
+  });
+  expect(shutdown).not.toHaveBeenCalled();
+  expect(stop).not.toHaveBeenCalled();
+});
+
+const guestSuccess = { exitCode: 0, stdout: "", stderr: "", truncated: false };
+const fastShutdown = { shutdownTimeoutMs: 10, shutdownCommandTimeoutMs: 100, syncDelayMs: 1 };
+
+test.each(["denied", "connection-lost", "no-effect"])(
+  "macOS loginwindow %s falls back to available passwordless sudo",
+  async (failure) => {
+    const { store, runtime, command, completed, shutdown, stop, exit } = await fixture({
+      os: "macos",
+    });
+    vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
+      if (script.includes("osascript")) {
+        if (failure === "connection-lost") throw new GuestUnavailableError("Connection reset");
+        if (failure === "denied") return { ...guestSuccess, exitCode: 1, stderr: "Not authorized" };
+      }
+      if (script.includes("/sbin/shutdown")) await exit();
+      return guestSuccess;
+    });
+    const { operation } = store.accept("sudo", "sudo", command.type);
+    await (
+      await startProvision(store, runtime, operation, command, fastShutdown)
+    ).done;
+    expect(await completed(operation.id)).toMatchObject({
+      status: "succeeded",
+      result: { shutdown: "sudo" },
+    });
+    expect(
+      vi
+        .mocked(executeGuest)
+        .mock.calls.slice(-2)
+        .map((call) => call[1]),
+    ).toEqual(["sudo -n true", expect.stringContaining("sudo -n /sbin/shutdown -h now")]);
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["unavailable", "failed", "no-effect"])(
+  "macOS sudo %s freezes only after two syncs, a delay and a confirmed helper stop",
+  async (sudo) => {
+    const { store, runtime, command, completed, parent, stop, shutdown } = await fixture({
+      os: "macos",
+    });
+    vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
+      ...guestSuccess,
+      exitCode:
+        (script === "sudo -n true" && sudo === "unavailable") ||
+        (script.includes("/sbin/shutdown") && sudo === "failed")
+          ? 1
+          : 0,
+    }));
+    const { operation } = store.accept("forced", "forced", command.type);
+    await (
+      await startProvision(store, runtime, operation, command, fastShutdown)
+    ).done;
+    expect(await completed(operation.id)).toMatchObject({
+      status: "succeeded",
+      message: expect.stringContaining("frozen after a forced stop following two guest syncs"),
+      result: { shutdown: "forced_stop_after_sync" },
+    });
+    const calls = vi.mocked(executeGuest).mock.calls;
+    expect(calls.slice(-2).map((call) => call[1])).toEqual(["sync", "sync"]);
+    expect(calls.some((call) => call[1].includes("/sbin/shutdown"))).toBe(sudo !== "unavailable");
+    expect(stop).toHaveBeenCalledOnce();
+    expect(stop.mock.invocationCallOrder[0]).toBeGreaterThan(
+      vi.mocked(executeGuest).mock.invocationCallOrder.at(-1) ?? 0,
+    );
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(store.snapshot().instances[0]?.status).toBe("stopped");
+    expect(await readFile(parent.basePath, "utf8")).toBe("parent remains immutable");
+  },
+);
+
+test.each([1, 2])("macOS sync failure at attempt %s discards the image", async (failedSync) => {
+  const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
+  let syncs = 0;
+  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
+    ...guestSuccess,
+    exitCode: script === "sudo -n true" || (script === "sync" && ++syncs === failedSync) ? 23 : 0,
+    stderr: "synthetic sync failure",
+  }));
+  const { operation } = store.accept("sync-failure", "sync-failure", command.type);
+  await (
+    await startProvision(store, runtime, operation, command, fastShutdown)
+  ).done;
+  expect(await completed(operation.id)).toMatchObject({
+    status: "failed",
+    result: {
+      code: "provision_sync_failed",
+      exitCode: 23,
+      diagnostics: expect.stringContaining("synthetic sync failure"),
+    },
+  });
+  expect(stop).toHaveBeenCalledOnce();
+  expect(store.snapshot().environments).toHaveLength(1);
+  await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test.each(["loginwindow", "sudo-probe", "sudo-shutdown", "sync", "helper-stop"])(
+  "macOS bounds a hung %s step and never freezes without sync and VM exit",
+  async (step) => {
+    const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
+    vi.mocked(executeGuest).mockImplementation(async (_connection, script, { signal }) => {
+      const hung =
+        (step === "loginwindow" && script.includes("osascript")) ||
+        (step === "sudo-probe" && script === "sudo -n true") ||
+        (step === "sudo-shutdown" && script.includes("/sbin/shutdown")) ||
+        (step === "sync" && script === "sync");
+      if (hung)
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new VectisError("guest_cancelled", "Synthetic timeout")),
+            { once: true },
+          );
+        });
+      return {
+        ...guestSuccess,
+        exitCode: script === "sudo -n true" && step !== "sudo-shutdown" ? 1 : 0,
+      };
+    });
+    if (step === "helper-stop") stop.mockImplementation(() => new Promise(() => {}));
+    const { operation } = store.accept("hung", "hung", command.type);
+    await (
+      await startProvision(store, runtime, operation, command, {
+        ...fastShutdown,
+        shutdownCommandTimeoutMs: 20,
+      })
+    ).done;
+    expect(await completed(operation.id)).toMatchObject({
+      status: step === "helper-stop" ? "action_required" : step === "sync" ? "failed" : "succeeded",
+    });
+    if (step === "sync" || step === "helper-stop") {
+      expect(store.snapshot().environments).toHaveLength(1);
+      expect(
+        store.snapshot().operations.find((item) => item.id === operation.id)?.result,
+      ).not.toMatchObject({ shutdown: "forced_stop_after_sync" });
+    } else
+      expect(
+        store.snapshot().operations.find((item) => item.id === operation.id)?.result,
+      ).toMatchObject({ shutdown: "forced_stop_after_sync" });
+  },
+);
+
+test("macOS bounds cleanup when the helper exits but VM settlement is unconfirmed", async () => {
+  const { store, runtime, command, completed, start } = await fixture({ os: "macos" });
+  const startVm = start.getMockImplementation();
+  if (!startVm) throw new Error("Missing fake runtime start");
+  start.mockImplementation(async (...args) => ({
+    ...(await startVm(...args)),
+    settled: new Promise<void>(() => {}),
+  }));
+  vi.mocked(executeGuest).mockResolvedValue(guestSuccess);
+  const { operation } = store.accept("unsettled", "unsettled", command.type);
+  await (
+    await startProvision(store, runtime, operation, command, fastShutdown)
+  ).done;
+  expect(await completed(operation.id)).toMatchObject({
+    status: "action_required",
+    result: { code: "provision_cleanup_required" },
+  });
+  expect(store.snapshot().environments).toHaveLength(1);
+  expect((await stat(command.imageDirectory)).isDirectory()).toBe(true);
+});
+
+test.each(["loginwindow", "shutdown-wait", "sync-delay"])(
+  "macOS cancellation during %s removes output without freezing",
+  async (stage) => {
+    const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
+    vi.mocked(executeGuest).mockImplementation(async (_connection, script, { signal }) => {
+      if (stage === "loginwindow" && script.includes("osascript"))
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
+      return { ...guestSuccess, exitCode: script === "sudo -n true" ? 1 : 0 };
+    });
+    const { operation } = store.accept("cancel-macos", "cancel-macos", command.type);
+    const active = await startProvision(store, runtime, operation, command, {
+      ...fastShutdown,
+      shutdownTimeoutMs: stage === "shutdown-wait" ? 60000 : 10,
+      syncDelayMs: 5000,
+    });
+    await vi.waitFor(() => {
+      const calls = vi.mocked(executeGuest).mock.calls;
+      if (stage === "sync-delay")
+        expect(calls.filter((call) => call[1] === "sync")).toHaveLength(2);
+      else expect(calls.some((call) => call[1].includes("osascript"))).toBe(true);
+    });
+    active.abort.abort();
+    await active.done;
+    expect(await completed(operation.id)).toMatchObject({ status: "cancelled" });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(store.snapshot().environments).toHaveLength(1);
+    await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+  },
+);
+
+test("macOS waits five seconds after both syncs before stopping the helper", async () => {
+  const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
+  let syncedAt = 0;
+  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
+    if (script === "sync") syncedAt = Date.now();
+    return { ...guestSuccess, exitCode: script === "sudo -n true" ? 1 : 0 };
+  });
+  const stopVm = stop.getMockImplementation();
+  stop.mockImplementation(async (id) => {
+    expect(Date.now() - syncedAt).toBeGreaterThanOrEqual(5000);
+    await stopVm?.(id);
+  });
+  const { operation } = store.accept("sync-delay", "sync-delay", command.type);
+  await (
+    await startProvision(store, runtime, operation, command, { shutdownTimeoutMs: 10 })
+  ).done;
+  expect(await completed(operation.id)).toMatchObject({
+    status: "succeeded",
+    result: { shutdown: "forced_stop_after_sync" },
+  });
+}, 10000);
+
+test("macOS notices guest shutdown during the sync delay without claiming a forced stop", async () => {
+  const { store, runtime, command, completed, exit, stop } = await fixture({ os: "macos" });
+  let syncs = 0;
+  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
+    if (script === "sync" && ++syncs === 2) await exit();
+    return { ...guestSuccess, exitCode: script === "sudo -n true" ? 1 : 0 };
+  });
+  const { operation } = store.accept("late-shutdown", "late-shutdown", command.type);
+  await (
+    await startProvision(store, runtime, operation, command, fastShutdown)
+  ).done;
+  expect(await completed(operation.id)).toMatchObject({
+    status: "succeeded",
+    result: { shutdown: "loginwindow" },
+  });
+  expect(stop).not.toHaveBeenCalled();
+});
+
+test("macOS rejects a failed helper exit even after successful syncs", async () => {
+  const { store, runtime, command, completed } = await fixture({ os: "macos", exitCode: 17 });
+  vi.mocked(executeGuest).mockResolvedValue(guestSuccess);
+  const { operation } = store.accept("bad-stop", "bad-stop", command.type);
+  await (
+    await startProvision(store, runtime, operation, command, fastShutdown)
+  ).done;
+  expect(await completed(operation.id)).toMatchObject({
+    status: "failed",
+    result: { code: "guest_shutdown_failed" },
+  });
+  expect(store.snapshot().environments).toHaveLength(1);
+  await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+});
 
 test("setup upload failure retains bounded diagnostic tails before VM cleanup", async () => {
   const { command, store, submit, completed, stop } = await fixture();
@@ -389,7 +676,7 @@ test("lost provisioning connections retain redacted connection diagnostics", asy
     },
   });
 });
-test.each(["linux", "macos", "windows"] as const)(
+test.each(["linux", "windows"] as const)(
   "%s uses hypervisor shutdown without a privileged guest shutdown command",
   async (os) => {
     const { parent, store, submit, completed, shutdown, stop } = await fixture();
@@ -567,7 +854,7 @@ test("operation cancellation remains available, reserves preparation capacity an
   await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
 });
 
-test.each(["linux", "macos", "windows"] as const)(
+test.each(["linux", "windows"] as const)(
   "%s shutdown timeout forces cleanup and never freezes a dirty image",
   async (os) => {
     const { parent, command, store, runtime, completed, stop, shutdown } = await fixture();
@@ -596,7 +883,7 @@ test.each(["linux", "macos", "windows"] as const)(
 );
 
 test.each(["linux", "macos", "windows"] as const)(
-  "%s rejects a failed VM exit after an accepted hypervisor shutdown",
+  "%s rejects a failed VM exit after shutdown",
   async (os) => {
     const { parent, command, store, submit, completed, shutdown } = await fixture({ exitCode: 17 });
     store.put("environment", parent.id, { ...parent, os });
@@ -605,7 +892,8 @@ test.each(["linux", "macos", "windows"] as const)(
       status: "failed",
       result: { code: "guest_shutdown_failed" },
     });
-    expect(shutdown).toHaveBeenCalledWith(operation.id);
+    if (os === "macos") expect(shutdown).not.toHaveBeenCalled();
+    else expect(shutdown).toHaveBeenCalledWith(operation.id);
     expect(store.snapshot().environments).toHaveLength(1);
     await expect(stat(command.imageDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   },
@@ -613,7 +901,7 @@ test.each(["linux", "macos", "windows"] as const)(
 
 test("an accepted shutdown still waits for VM exit and remains cancellable", async () => {
   const { parent, command, store, service, submit, completed, shutdown, stop } = await fixture();
-  store.put("environment", parent.id, { ...parent, os: "macos" });
+  store.put("environment", parent.id, { ...parent, os: "linux" });
   let requested = () => {};
   const ready = new Promise<void>((resolve) => {
     requested = resolve;
@@ -767,6 +1055,7 @@ test.each([false, true])(
     await writeFile(join(record.directory, ".vectis-provision.json"), JSON.stringify(record));
     await writeFile(join(record.directory, "disk.img"), "owned output");
     store.put("provision", record.id, record);
+    store.update(operation, { result: { stage: "freezing", shutdown: "forced_stop_after_sync" } });
     if (registered)
       store.put("environment", command.id, {
         ...parent,
@@ -783,9 +1072,12 @@ test.each([false, true])(
     expect(store.snapshot().operations.find((item) => item.id === operation.id)?.status).toBe(
       registered ? "succeeded" : "failed",
     );
-    if (registered)
+    if (registered) {
       expect(await readFile(join(record.directory, "disk.img"), "utf8")).toBe("owned output");
-    else await expect(stat(record.directory)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        store.snapshot().operations.find((item) => item.id === operation.id)?.result,
+      ).toMatchObject({ shutdown: "forced_stop_after_sync" });
+    } else await expect(stat(record.directory)).rejects.toMatchObject({ code: "ENOENT" });
   },
 );
 

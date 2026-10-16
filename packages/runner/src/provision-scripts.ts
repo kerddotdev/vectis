@@ -153,6 +153,13 @@ rm -rf "$HOME/.vectis-provision"
   }`;
 }
 
+export function provisionMacosShutdownScript() {
+  return `set -eu
+echo 'vectis-provision: loginwindow-shutdown'
+osascript -e 'tell application "loginwindow" to «event aevtshut»'
+`;
+}
+
 export function provisionShutdownScript(os: Environment["os"]) {
   if (os === "windows")
     return "$ErrorActionPreference = 'Stop'\nWrite-Output 'vectis-provision: shutdown'\n& shutdown.exe /s /t 0\nif ($LASTEXITCODE -ne 0) { throw 'Guest shutdown failed.' }\n";

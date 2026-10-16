@@ -2,6 +2,7 @@ import { constants } from "node:fs";
 import { access, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative } from "node:path";
 import { cpus, totalmem } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import { Schema } from "effect";
 import { VectisError, type Command, type Operation } from "../../../packages/protocol/src/index.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
@@ -12,6 +13,7 @@ import {
   provisionScript,
   provisionLinuxIdentityResetScript,
   provisionShutdownScript,
+  provisionMacosShutdownScript,
   setupUploadScripts,
 } from "../../../packages/runner/src/provision-scripts.js";
 import { runnerVersion } from "../../../packages/runner/src/runner-release.js";
@@ -28,6 +30,9 @@ const ProvisionRecord = Schema.Struct({
 });
 type ProvisionRecord = typeof ProvisionRecord.Type;
 const ownerFile = ".vectis-provision.json";
+const ProvisionShutdown = Schema.Struct({
+  shutdown: Schema.Literals(["loginwindow", "sudo", "forced_stop_after_sync"]),
+});
 const GuestFailure = Schema.Struct({
   diagnostics: Schema.String.check(Schema.isMaxLength(16384)),
   exitCode: Schema.optional(Schema.Int),
@@ -68,11 +73,14 @@ export async function recoverProvisions(store: Store) {
       .environments.find(
         (item) => item.id === record.environmentId && item.image?.revision === record.id,
       );
+    const shutdown = Schema.is(ProvisionShutdown)(operation.result)
+      ? { shutdown: operation.result.shutdown }
+      : {};
     if (registered) {
       store.update(operation, {
         status: "succeeded",
         message: "Provisioned environment registration recovered.",
-        result: { stage: "finished", environment: registered },
+        result: { stage: "finished", environment: registered, ...shutdown },
       });
       store.remove("provision", record.id);
       continue;
@@ -128,12 +136,33 @@ async function waitForShutdown(instance: OwnedInstance, signal: AbortSignal, tim
   }
 }
 
+async function stopProvisionVm(
+  runtime: VmRuntime,
+  instance: OwnedInstance,
+  signal: AbortSignal,
+  timeoutMs: number,
+) {
+  const waiting = new AbortController();
+  try {
+    await Promise.race([
+      runtime.stop(instance.id).then(() => instance.settled),
+      waitForShutdown(instance, AbortSignal.any([signal, waiting.signal]), timeoutMs),
+    ]);
+  } finally {
+    waiting.abort();
+  }
+}
+
 export async function startProvision(
   store: Store,
   runtime: VmRuntime,
   operation: Operation,
   command: Extract<Command, { type: "environment.provision" }>,
-  options: { shutdownTimeoutMs?: number } = {},
+  options: {
+    shutdownTimeoutMs?: number;
+    shutdownCommandTimeoutMs?: number;
+    syncDelayMs?: number;
+  } = {},
 ) {
   const snapshot = store.snapshot();
   if (
@@ -211,6 +240,7 @@ export async function startProvision(
   let instance: OwnedInstance | undefined;
   let stage = "cloning";
   let guestFailure: typeof GuestFailure.Type | undefined;
+  let shutdown: typeof ProvisionShutdown.Type | undefined;
   const progress = (value: string) => {
     stage = value;
     operation = store.update(operation, {
@@ -222,6 +252,7 @@ export async function startProvision(
         directory,
         instanceId: operation.id,
         ...guestFailure,
+        ...shutdown,
       },
     });
   };
@@ -354,21 +385,79 @@ export async function startProvision(
         );
     }
     progress("shutting_down");
-    if (!(await runtime.requestShutdown(instance.id))) {
-      try {
-        const shutdown = await runGuest(provisionShutdownScript(environment.os), {
-          signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
-        });
-        if (shutdown.exitCode !== 0)
-          throw new VectisError(
-            "guest_shutdown_failed",
-            "Guest shutdown failed. Inspect the guest command diagnostics and passwordless sudo permissions.",
-          );
-      } catch (error) {
-        if (!(error instanceof GuestUnavailableError)) throw error;
+    if (environment.os === "macos") {
+      const provisioningInstance = instance;
+      const shutdownTimeoutMs = options.shutdownTimeoutMs ?? 60000;
+      const commandTimeoutMs = options.shutdownCommandTimeoutMs ?? 30000;
+      const wait = async () => {
+        try {
+          await waitForShutdown(provisioningInstance, signal, shutdownTimeoutMs);
+          return true;
+        } catch (error) {
+          if (error instanceof VectisError && error.code === "guest_shutdown_timeout") return false;
+          throw error;
+        }
+      };
+      const attempt = async (script: string) => {
+        signal.throwIfAborted();
+        const commandSignal = AbortSignal.any([signal, AbortSignal.timeout(commandTimeoutMs)]);
+        try {
+          return await runGuest(script, { signal: commandSignal, allowFailure: true });
+        } catch (error) {
+          signal.throwIfAborted();
+          if (!(error instanceof GuestUnavailableError) && !commandSignal.aborted) throw error;
+          return undefined;
+        }
+      };
+      await attempt(provisionMacosShutdownScript());
+      if (await wait()) {
+        shutdown = { shutdown: "loginwindow" };
+      } else {
+        const sudo = await attempt("sudo -n true");
+        if (sudo?.exitCode === 0) await attempt(provisionShutdownScript("macos"));
+        if (sudo?.exitCode === 0 && (await wait())) {
+          shutdown = { shutdown: "sudo" };
+        } else {
+          progress("syncing_before_forced_stop");
+          for (let count = 0; count < 2; count++) {
+            const synced = await runGuest("sync", {
+              signal: AbortSignal.any([signal, AbortSignal.timeout(commandTimeoutMs)]),
+            });
+            if (synced.exitCode !== 0)
+              throw new VectisError(
+                "provision_sync_failed",
+                "Guest sync failed. The provisioned image cannot be frozen after a forced stop.",
+              );
+          }
+          await delay(options.syncDelayMs ?? 5000, undefined, { signal });
+          signal.throwIfAborted();
+          if (instance.process.exitCode !== null || instance.process.signalCode !== null) {
+            await waitForShutdown(instance, signal, commandTimeoutMs);
+            shutdown = { shutdown: sudo?.exitCode === 0 ? "sudo" : "loginwindow" };
+          } else {
+            await stopProvisionVm(runtime, instance, signal, commandTimeoutMs);
+            shutdown = { shutdown: "forced_stop_after_sync" };
+          }
+        }
       }
+      guestFailure = undefined;
+    } else {
+      if (!(await runtime.requestShutdown(instance.id))) {
+        try {
+          const shutdown = await runGuest(provisionShutdownScript(environment.os), {
+            signal: AbortSignal.any([signal, AbortSignal.timeout(30000)]),
+          });
+          if (shutdown.exitCode !== 0)
+            throw new VectisError(
+              "guest_shutdown_failed",
+              "Guest shutdown failed. Inspect the guest command diagnostics and passwordless sudo permissions.",
+            );
+        } catch (error) {
+          if (!(error instanceof GuestUnavailableError)) throw error;
+        }
+      }
+      await waitForShutdown(instance, signal, options.shutdownTimeoutMs ?? 120000);
     }
-    await waitForShutdown(instance, signal, options.shutdownTimeoutMs ?? 120000);
     if (instance.process.exitCode !== 0 || instance.process.signalCode !== null)
       throw new VectisError(
         "guest_shutdown_failed",
@@ -397,8 +486,11 @@ export async function startProvision(
       store.remove("provision", operation.id);
       store.update(operation, {
         status: "succeeded",
-        message: "Derived environment provisioned and registered. The parent image was preserved.",
-        result: { stage: "finished", environment },
+        message:
+          shutdown?.shutdown === "forced_stop_after_sync"
+            ? "Derived environment frozen after a forced stop following two guest syncs and registered. The parent image was preserved."
+            : "Derived environment provisioned and registered. The parent image was preserved.",
+        result: { stage: "finished", environment, ...shutdown },
       });
       store.db.exec("COMMIT");
     } catch (error) {
@@ -409,9 +501,22 @@ export async function startProvision(
     progress("cleaning");
     try {
       if (instance) {
-        if (instance.process.exitCode === null && instance.process.signalCode === null)
-          await runtime.stop(instance.id);
-        else await instance.settled;
+        if (instance.process.exitCode === null && instance.process.signalCode === null) {
+          if (parent.os === "macos")
+            await stopProvisionVm(
+              runtime,
+              instance,
+              new AbortController().signal,
+              options.shutdownCommandTimeoutMs ?? 30000,
+            );
+          else await runtime.stop(instance.id);
+        } else if (parent.os === "macos") {
+          await waitForShutdown(
+            instance,
+            new AbortController().signal,
+            options.shutdownCommandTimeoutMs ?? 30000,
+          );
+        } else await instance.settled;
       }
       const current = store.snapshot().instances.find((item) => item.id === operation.id);
       if (current && current.status !== "stopped") {

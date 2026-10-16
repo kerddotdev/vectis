@@ -7,6 +7,7 @@ import {
   provisionScript,
   provisionLinuxIdentityResetScript,
   provisionShutdownScript,
+  provisionMacosShutdownScript,
   runnerPreinstallScript,
   setupUploadScripts,
 } from "./provision-scripts.js";
@@ -245,3 +246,23 @@ ${script}`,
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each([0, 1])(
+  "macOS loginwindow shutdown runs without sudo and preserves exit %s",
+  (exitCode) => {
+    const result = spawnSync("/bin/bash", ["-s"], {
+      input: `
+osascript() {
+  test "$#" = 2 && test "$1" = -e || return 97
+  printf '%s\\n' "$2"
+  return ${exitCode}
+}
+sudo() { echo 'unexpected sudo' >&2; return 98; }
+${provisionMacosShutdownScript()}`,
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(exitCode);
+    expect(result.stdout).toContain('tell application "loginwindow" to «event aevtshut»');
+    expect(result.stderr).not.toContain("unexpected sudo");
+  },
+);
