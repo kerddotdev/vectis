@@ -300,3 +300,92 @@ test("cache acquisition leaves commands responsive and cancellation releases the
     acquire.mockRestore();
   }
 });
+
+test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
+  "missing guest sudo preserves the cache generation and prevents another VM start",
+  async () => {
+    const { service, store, broker, cacheDirectory, runtime } = await fixture();
+    const environment = store.snapshot().environments[0];
+    if (!environment) throw new Error("Missing synthetic environment");
+    const acquired = await new CacheVolumes(runtime.options.home).acquire(
+      environment,
+      { installationId: 1, repositoryId: 2 },
+      1,
+    );
+    acquired.release();
+    const generation = await open(join(cacheDirectory, "cache.img"), "r+");
+    try {
+      await generation.write("saved-cache");
+    } finally {
+      await generation.close();
+    }
+    vi.mocked(executeGuest).mockResolvedValue({
+      exitCode: 1,
+      stdout: "",
+      stderr: "sudo: a password is required",
+      truncated: false,
+    });
+    const start = vi.spyOn(runtime, "start");
+    try {
+      const run = service.submit("no-sudo", { type: "runner.run", bindingId: "binding" });
+      await vi.waitFor(() => expect(store.operation(run.id).status).toBe("failed"));
+      expect(store.operation(run.id)).toMatchObject({
+        message:
+          "This environment cannot mount cache volumes: the guest user has no passwordless sudo.",
+        result: {
+          code: "cache_volume_requires_guest_sudo",
+          nextStep:
+            "Prepare or provision a new environment with this Vectis version, or disable the repository cache.",
+        },
+      });
+      expect(broker.prepareRunner).not.toHaveBeenCalled();
+      expect(store.snapshot().instances.every((instance) => instance.status === "stopped")).toBe(
+        true,
+      );
+      const file = await open(join(cacheDirectory, "cache.img"), "r");
+      try {
+        const data = Buffer.alloc(11);
+        await file.read(data, 0, data.length, 0);
+        expect(data.toString()).toBe("saved-cache");
+      } finally {
+        await file.close();
+      }
+      await expect(stat(join(cacheDirectory, "cache.previous.img"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const instance = store.snapshot().instances[0];
+      if (!instance?.directory) throw new Error("Missing stopped synthetic instance");
+      await expect(stat(join(instance.directory, "cache.img"))).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      const retry = service.submit("no-sudo-retry", { type: "runner.run", bindingId: "binding" });
+      await vi.waitFor(() => expect(store.operation(retry.id).status).toBe("failed"));
+      expect(store.operation(retry.id).result).toMatchObject({
+        code: "cache_volume_requires_guest_sudo",
+      });
+      expect(start).toHaveBeenCalledOnce();
+      expect(executeGuest).toHaveBeenCalledOnce();
+      service.submit("disable-no-sudo-cache", {
+        type: "repository.cache",
+        bindingId: "binding",
+        enabled: false,
+      });
+      await service.drain();
+      vi.mocked(executeGuest).mockResolvedValue({
+        exitCode: 0,
+        stdout: "",
+        stderr: "",
+        truncated: false,
+      });
+      const withoutCache = service.submit("no-sudo-without-cache", {
+        type: "runner.run",
+        bindingId: "binding",
+      });
+      await vi.waitFor(() => expect(store.operation(withoutCache.id).status).toBe("succeeded"));
+      expect(broker.prepareRunner).toHaveBeenCalledOnce();
+      expect(start).toHaveBeenCalledTimes(2);
+    } finally {
+      start.mockRestore();
+    }
+  },
+);

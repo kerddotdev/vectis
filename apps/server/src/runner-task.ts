@@ -9,7 +9,11 @@ import type {
   RunnerPhase,
   RunnerProgress,
 } from "../../../packages/protocol/src/runners.js";
-import { cacheUnmountScript } from "../../../packages/runner/src/cache-guest.js";
+import {
+  cachePrivilegeError,
+  cachePrivilegeScript,
+  cacheUnmountScript,
+} from "../../../packages/runner/src/cache-guest.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import type { GuestConnection } from "../../../packages/runner/src/guest.js";
@@ -30,7 +34,7 @@ const idleTimeoutMs = 5 * 60 * 1000;
 const pollIntervalMs = 30000;
 
 interface Controls {
-  cache?: { sizeGiB: number; complete(): void };
+  cache?: { sizeGiB: number; complete(): void; checked?(allowed: boolean): void };
   broker: RunnerBroker;
   needed?: ((signal: AbortSignal) => Promise<boolean>) | undefined;
   request?: Parameters<RunnerBroker["prepareRunner"]>[3];
@@ -150,6 +154,15 @@ export async function runRunnerTask(
     }
     connection ??= await timed("guest_ready", () => readyGuest(environment, instance, signal));
     const guest = connection;
+    if (controls.cache) {
+      const privilege = await executeGuest(guest, cachePrivilegeScript(environment.os), {
+        shell,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+      });
+      signal.throwIfAborted();
+      controls.cache.checked?.(privilege.exitCode === 0);
+      if (privilege.exitCode !== 0) throw cachePrivilegeError();
+    }
     const preinstalled = environment.image?.runnerVersion === runnerVersion;
     if (preinstalled) endPhase(beginPhase("runner_preinstalled"));
     else {
@@ -447,6 +460,7 @@ export async function runRunnerTask(
       progress,
       message: failure instanceof VectisError ? failure.message : "Runner execution failed.",
       code: failure instanceof VectisError ? failure.code : "runner_failed",
+      ...(failure instanceof VectisError ? { nextStep: failure.nextStep } : {}),
     };
   return {
     status: "succeeded" as const,

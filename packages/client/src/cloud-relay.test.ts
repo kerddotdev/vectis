@@ -627,6 +627,47 @@ test("remote acknowledgements redact older hosts' task errors before truncating 
   expect(JSON.stringify(acknowledgement)).not.toContain("private local details");
 });
 
+test("remote runner failures forward the cache privilege code without private result details", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-cache",
+    key: "remote:cache",
+    command: "runner.run",
+    status: "failed",
+    message:
+      "This environment cannot mount cache volumes: the guest user has no passwordless sudo.",
+    createdAt: "",
+    updatedAt: "",
+    result: { code: "cache_volume_requires_guest_sudo", diagnostics: "private guest details" },
+  });
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [
+        {
+          _id: "cache",
+          phase: "running",
+          commandJson: JSON.stringify({ type: "runner.run", bindingId: "binding" }),
+        },
+      ];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  const acknowledgement = transport.mutation.mock.calls.find(
+    ([mutation]) => getFunctionName(mutation) === "operations:acknowledge",
+  )?.[1];
+  expect(acknowledgement).toMatchObject({ phase: "failed", resultJson: expect.any(String) });
+  if (typeof acknowledgement?.resultJson !== "string") throw new Error("Missing acknowledgement");
+  expect(JSON.parse(acknowledgement.resultJson)).toMatchObject({
+    code: "cache_volume_requires_guest_sudo",
+  });
+  expect(JSON.stringify(acknowledgement)).not.toContain("private guest details");
+});
+
 test("job log relay forwards cursors to the action, decodes results and preserves coded failures", async () => {
   const { relay } = await fixture();
   const input = { bindingId: "binding1", jobId: 4, after: 10 };

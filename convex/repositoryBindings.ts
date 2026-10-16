@@ -341,6 +341,7 @@ export const readinessAuthority = internalQuery({
             automatic: binding.automatic ?? false,
             repositoryId: binding.repositoryId,
             installationId: binding.installationId,
+            cacheVolumeEnabled: binding.cacheVolume?.enabled ?? false,
           }
         : null,
       accounts: (binding ? (bindingAccount ? [bindingAccount] : []) : accounts).map(

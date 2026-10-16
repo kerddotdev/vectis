@@ -6,6 +6,7 @@ import { VectisError } from "../../../packages/protocol/src/index.js";
 import type { CloudRepositoryReadiness } from "../../../packages/protocol/src/readiness.js";
 import { startService } from "./http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
+import { recordCacheGuestPrivilege } from "./cache-guest-privilege.js";
 
 const cloud: CloudRepositoryReadiness = {
   environmentId: "linux",
@@ -23,6 +24,46 @@ const cloud: CloudRepositoryReadiness = {
     },
   ],
 };
+
+test("cache readiness reports persistent attention only for an enabled cache on the probed image", async () => {
+  const { server, close } = await fixture();
+  try {
+    const environment = server.store.snapshot().environments[0];
+    if (!environment) throw new Error("Missing synthetic environment");
+    const readCloud = async () => ({ ...cloud, cacheVolumeEnabled: true });
+    const readiness = () => server.service.repositoryReadiness({ bindingId: "binding" }, readCloud);
+    expect(
+      (await readiness()).checks.find((check) => check.id === "cache.guest_sudo")?.status,
+    ).toBe("unknown");
+    recordCacheGuestPrivilege(server.store, environment, false);
+    expect((await readiness()).checks).toContainEqual(
+      expect.objectContaining({
+        id: "cache.guest_sudo",
+        status: "attention",
+        code: "cache_volume_requires_guest_sudo",
+        nextStep: expect.any(String),
+      }),
+    );
+    const disabled = await server.service.repositoryReadiness(
+      { bindingId: "binding" },
+      async () => ({ ...cloud, cacheVolumeEnabled: false }),
+    );
+    expect(disabled.checks.some((check) => check.id === "cache.guest_sudo")).toBe(false);
+    recordCacheGuestPrivilege(server.store, environment, true);
+    expect(
+      (await readiness()).checks.find((check) => check.id === "cache.guest_sudo")?.status,
+    ).toBe("ok");
+    server.store.put("environment", environment.id, {
+      ...environment,
+      image: { revision: "replacement", provisionedAt: "now" },
+    });
+    expect(
+      (await readiness()).checks.find((check) => check.id === "cache.guest_sudo")?.status,
+    ).toBe("unknown");
+  } finally {
+    await close();
+  }
+});
 async function fixture() {
   const home = await mkdtemp(join(tmpdir(), "vectis-readiness-"));
   const server = await startService({ home });

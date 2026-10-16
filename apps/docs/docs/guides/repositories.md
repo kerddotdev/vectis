@@ -127,6 +127,10 @@ The host stores a sparse raw `cache.img` under `<environment-storage>/cache/<env
 
 First use formats the cache inside the guest. Linux identifies the `VECTISCACHE` virtio device, checks its size and that it has no mounted filesystems, formats blank disks as ext4, then mounts at `/vectis-cache`. macOS excludes the root APFS physical store, requires a single other physical disk with the exact configured size, and initializes only a blank disk as APFS at `/Volumes/VECTISCACHE`. Unknown layouts and unexpected existing filesystems fail closed. Windows identifies the separate NVMe disk by serial `VECTISCACHE`, excludes boot and system disks, checks its size and initializes only RAW disks as NTFS. Windows assigns an available drive letter. Guest setup requires passwordless `sudo` on Linux/macOS or an elevated Windows runner account.
 
+Cache-enabled runners check `sudo -n true` on Linux/macOS or the effective administrator token on Windows immediately after guest readiness, before runner installation or GitHub registration. Older Linux images may lack passwordless sudo even though they can run jobs without a cache. A failed privilege check ends the operation as `failed` with `cache_volume_requires_guest_sudo`, discards the private fork and leaves the saved generation intact. Prepare or provision a new environment with this Vectis version, or disable the repository cache.
+
+Vectis remembers the observed privilege result for that environment image and guest identity across service restarts. Repository readiness reports `cache.guest_sudo` as attention for a failed probe while caching is enabled; an unprobed image reports unknown. New image manifests or a different image path or guest identity require a fresh probe. Known failures stop subsequent local requests before VM startup. The cloud demand scheduler does not retry this failure for the same GitHub job ID, including after the environment is repaired: start a runner manually for the queued job or rerun the GitHub job to create new demand.
+
 Before the runner listener starts, it exports these paths to jobs:
 
 | Variable               | Directory inside the cache |

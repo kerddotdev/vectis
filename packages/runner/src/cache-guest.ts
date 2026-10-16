@@ -12,6 +12,23 @@ const cacheVariables = {
   GOCACHE: "go-build",
 };
 
+export function cachePrivilegeScript(os: Environment["os"]) {
+  if (os === "windows")
+    return `$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+if (!$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { exit 1 }
+`;
+  return "sudo -n true\n";
+}
+
+export function cachePrivilegeError() {
+  return new VectisError(
+    "cache_volume_requires_guest_sudo",
+    "This environment cannot mount cache volumes: the guest user has no passwordless sudo.",
+    "Prepare or provision a new environment with this Vectis version, or disable the repository cache.",
+  );
+}
+
 export function cacheSetupScript(os: Environment["os"], sizeGiB: number) {
   if (!Schema.is(CacheSizeGiB)(sizeGiB))
     throw new VectisError("invalid_cache_size", "Invalid cache disk size.");

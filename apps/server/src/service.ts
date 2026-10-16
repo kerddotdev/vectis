@@ -4,6 +4,8 @@ import { startProvision, recoverProvisions } from "./provision-task.js";
 import type { RunControlBroker } from "../../../packages/protocol/src/runs.js";
 import { unconfirmedRunCommand } from "../../../packages/github/src/run-control.js";
 import { repositoryReadiness } from "./repository-readiness.js";
+import { cacheGuestPrivilege, recordCacheGuestPrivilege } from "./cache-guest-privilege.js";
+import { cachePrivilegeError } from "../../../packages/runner/src/cache-guest.js";
 import type {
   CloudRepositoryReadiness,
   RepositoryReadiness,
@@ -285,7 +287,12 @@ export class Service {
     input: RepositoryReadinessInput,
     readCloud: (input: RepositoryReadinessInput) => Promise<CloudRepositoryReadiness>,
   ): Promise<RepositoryReadiness> {
-    return repositoryReadiness(input, () => this.store.snapshot().environments, readCloud);
+    return repositoryReadiness(
+      input,
+      () => this.store.snapshot().environments,
+      readCloud,
+      (environment) => cacheGuestPrivilege(this.store, environment),
+    );
   }
   async initialize() {
     await recoverWindowsInstallations(this.store);
@@ -1084,6 +1091,11 @@ export class Service {
                 "job_required",
                 "Start a specific job under this repository access policy.",
               );
+            if (
+              binding.cacheVolume?.enabled &&
+              cacheGuestPrivilege(this.store, environment) === false
+            )
+              throw cachePrivilegeError();
             cache = binding.cacheVolume?.enabled
               ? await this.cacheVolumes.acquire(environment, binding, binding.cacheVolume.sizeGiB)
               : undefined;
@@ -1101,6 +1113,8 @@ export class Service {
                       cache: {
                         sizeGiB: binding.cacheVolume?.sizeGiB ?? defaultCacheSizeGiB,
                         complete: cache.authorizeWrite,
+                        checked: (allowed: boolean) =>
+                          recordCacheGuestPrivilege(this.store, environment, allowed),
                       },
                     }
                   : {}),
@@ -1453,6 +1467,7 @@ export class Service {
               "The environment has running or interrupted instances.",
             );
           this.store.remove("environment", command.id);
+          this.store.remove("cacheGuestPrivilege", command.id);
           break;
         case "environment.start": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");

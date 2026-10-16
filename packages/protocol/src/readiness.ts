@@ -40,5 +40,6 @@ export type RepositoryReadiness = typeof RepositoryReadiness.Type;
 export const CloudRepositoryReadiness = Schema.Struct({
   checks: Schema.Array(ReadinessCheck),
   environmentId: Schema.optionalKey(Identifier),
+  cacheVolumeEnabled: Schema.optionalKey(Schema.Boolean),
 });
 export type CloudRepositoryReadiness = typeof CloudRepositoryReadiness.Type;

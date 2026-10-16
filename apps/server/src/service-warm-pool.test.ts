@@ -337,7 +337,7 @@ test("a cache runner boots with its private disk while a generic warm VM remains
   const f = await fixture({ cache: true });
   await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
   const warmId = f.warm()[0]!.id;
-  vi.mocked(executeGuest).mockResolvedValueOnce(ok);
+  vi.mocked(executeGuest).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok);
   f.listening();
   const run = f.service.submit("cache-cold", { type: "runner.run", bindingId: "binding" });
   await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce());

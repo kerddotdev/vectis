@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 import { resultCodePresentation } from "./result-code";
 
 describe("result code presentation", () => {
+  it("labels images that cannot mount repository caches", () => {
+    expect(resultCodePresentation({ code: "cache_volume_requires_guest_sudo" })).toEqual({
+      tone: "attention",
+      label: "Cache needs a newer image",
+    });
+  });
   it("reads GitHub outages and rate limits as an external condition", () => {
     for (const code of ["github_unavailable", "github_rate_limited"]) {
       expect(resultCodePresentation({ code, nextStep: "Wait and retry." })).toEqual({

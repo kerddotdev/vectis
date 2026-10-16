@@ -1,6 +1,7 @@
 import type { Tone } from "@/components/status";
 
 const codes: Record<string, readonly [Tone, string]> = {
+  cache_volume_requires_guest_sudo: ["attention", "Cache needs a newer image"],
   github_unavailable: ["attention", "GitHub degraded"],
   github_rate_limited: ["attention", "GitHub degraded"],
   runner_recovery_pending: ["attention", "Recovering after restart"],

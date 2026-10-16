@@ -5,11 +5,13 @@ import type {
   RepositoryReadinessInput,
 } from "../../../packages/protocol/src/readiness.js";
 import { VectisError, type Environment } from "../../../packages/protocol/src/index.js";
+import { cachePrivilegeError } from "../../../packages/runner/src/cache-guest.js";
 
 export async function repositoryReadiness(
   input: RepositoryReadinessInput,
   environments: () => readonly Environment[],
   readCloud: (input: RepositoryReadinessInput) => Promise<CloudRepositoryReadiness>,
+  cachePrivilege: (environment: Environment) => boolean | undefined = () => undefined,
 ): Promise<RepositoryReadiness> {
   let cloud: CloudRepositoryReadiness | undefined;
   const checks: ReadinessCheck[] = [];
@@ -87,6 +89,27 @@ export async function repositoryReadiness(
         }),
   };
   checks.splice(checks.length - 1, 0, check);
+  if (cloud?.cacheVolumeEnabled && environment) {
+    const allowed = cachePrivilege(environment);
+    const error = cachePrivilegeError();
+    checks.splice(checks.length - 1, 0, {
+      id: "cache.guest_sudo",
+      status: allowed === false ? "attention" : allowed ? "ok" : "unknown",
+      message:
+        allowed === false
+          ? error.message
+          : allowed
+            ? "The guest has the privileges needed to mount cache volumes."
+            : "Cache mount privileges have not been checked for this environment image.",
+      ...(allowed === false
+        ? {
+            code: error.code,
+            nextStep: error.nextStep,
+            target: { area: "environments", section: environment.id } as const,
+          }
+        : {}),
+    });
+  }
   return {
     checks,
     ready: checks.every((check) => check.status === "ok" || check.status === "attention"),

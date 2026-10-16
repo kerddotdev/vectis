@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api, internal } from "../../convex/_generated/api.js";
 const modules = {
+  "../../convex/githubRepositories.ts": () => import("../../convex/githubRepositories.js"),
   "../../convex/purge.ts": () => import("../../convex/purge.js"),
   "../../convex/repositoryBindings.ts": () => import("../../convex/repositoryBindings.js"),
   "../../convex/machines.ts": () => import("../../convex/machines.js"),
@@ -33,6 +34,38 @@ async function setup() {
   );
   return { t, owner, machineId, accountId };
 }
+
+test("authorized readiness carries the current binding cache setting", async () => {
+  const { t, machineId, accountId } = await setup();
+  const bindingId = await t.mutation(internal.repositoryBindings.save, {
+    owner: identity.tokenIdentifier,
+    machineId,
+    accountId,
+    repositoryId: 42,
+    repositoryName: "sandbox",
+    installationId: 81,
+    environmentId: "linux",
+  });
+  const machine = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: machineId,
+    credentialVersion: 0,
+  });
+  expect(
+    (await machine.action(api.githubRepositories.readiness, { input: { bindingId } }))
+      .cacheVolumeEnabled,
+  ).toBe(false);
+  await machine.mutation(api.repositoryBindings.setCacheVolume, { bindingId, enabled: true });
+  expect(
+    (await machine.action(api.githubRepositories.readiness, { input: { bindingId } }))
+      .cacheVolumeEnabled,
+  ).toBe(true);
+  await machine.mutation(api.repositoryBindings.setCacheVolume, { bindingId, enabled: false });
+  expect(
+    (await machine.action(api.githubRepositories.readiness, { input: { bindingId } }))
+      .cacheVolumeEnabled,
+  ).toBe(false);
+});
 test("bindings deduplicate and disappear from machine admission when disabled", async () => {
   const { t, owner, machineId, accountId } = await setup();
   const args = {

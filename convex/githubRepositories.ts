@@ -195,6 +195,7 @@ export const readiness = action({
       };
     return {
       checks,
+      cacheVolumeEnabled: binding?.enabled === true && binding.cacheVolumeEnabled,
       ...(authority.environmentId ? { environmentId: authority.environmentId } : {}),
     };
   },

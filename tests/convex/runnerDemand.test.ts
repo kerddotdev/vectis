@@ -175,6 +175,29 @@ test("successful runners serving other jobs do not consume the three-failure bud
   });
 });
 
+test("missing cache privileges fail the job demand without spending another automatic attempt", async () => {
+  const { t, heartbeat, operations, jobId } = await fixture();
+  await heartbeat(0);
+  const first = (await operations())[0];
+  if (!first) throw new Error("Missing demand");
+  await t.run(async (ctx) =>
+    ctx.db.patch("operations", first._id, {
+      phase: "failed",
+      updatedAt: Date.now() - 600000,
+      resultJson: JSON.stringify({ status: "failed", code: "cache_volume_requires_guest_sudo" }),
+    }),
+  );
+  await heartbeat(0);
+  await heartbeat(1);
+  await t.run(async (ctx) => ctx.db.patch("githubJobs", jobId, { updatedAt: Date.now() }));
+  await heartbeat(0);
+  expect(await operations()).toHaveLength(1);
+  expect((await operations())[0]?.phase).toBe("failed");
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").unique())).toMatchObject({
+    attempt: 1,
+  });
+});
+
 test("repository scans are deduplicated across machines and retry on later heartbeats", async () => {
   const { t, heartbeat, operations } = await fixture();
   await t.run(async (ctx) =>

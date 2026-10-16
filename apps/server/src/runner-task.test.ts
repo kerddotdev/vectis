@@ -8,6 +8,10 @@ import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-dia
 import { VectisError, type Environment } from "../../../packages/protocol/src/index.js";
 import { jobStartedMarker } from "../../../packages/runner/src/runner-access.js";
 import {
+  cachePrivilegeError,
+  cachePrivilegeScript,
+} from "../../../packages/runner/src/cache-guest.js";
+import {
   preinstalledRunnerDirectory,
   runnerVersion,
 } from "../../../packages/runner/src/runner-release.js";
@@ -96,6 +100,70 @@ function fixture(os: Environment["os"] = "linux") {
   });
   return { controls, broker, events };
 }
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s cache privilege failure stops before installation and registration and discards the fork",
+  async (os) => {
+    const { controls, broker } = fixture(os);
+    const complete = vi.fn();
+    const checked = vi.fn();
+    vi.mocked(executeGuest).mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "sudo: a password is required",
+      truncated: false,
+    });
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      { ...environment, os },
+      {
+        ...controls,
+        cache: { sizeGiB: 1, complete, checked },
+      },
+      new AbortController().signal,
+    );
+    const error = cachePrivilegeError();
+    expect(result).toMatchObject({
+      status: "failed",
+      code: error.code,
+      message: error.message,
+      nextStep: error.nextStep,
+    });
+    expect(executeGuest).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      cachePrivilegeScript(os),
+      expect.objectContaining({ shell: os === "windows" ? "powershell" : "bash" }),
+    );
+    expect(readyGuest).toHaveBeenCalledOnce();
+    expect(checked).toHaveBeenCalledExactlyOnceWith(false);
+    expect(broker.prepareRunner).not.toHaveBeenCalled();
+    expect(broker.releaseRunner).not.toHaveBeenCalled();
+    expect(broker.reconcileRunner).not.toHaveBeenCalled();
+    expect(controls.stop).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+  },
+);
+
+test("an unavailable privilege probe does not record missing sudo", async () => {
+  const { controls, broker } = fixture();
+  const checked = vi.fn();
+  vi.mocked(executeGuest).mockRejectedValueOnce(new GuestUnavailableError("connection lost"));
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      cache: { sizeGiB: 1, complete: vi.fn(), checked },
+    },
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({ status: "failed", code: "guest_unavailable" });
+  expect(checked).not.toHaveBeenCalled();
+  expect(broker.prepareRunner).not.toHaveBeenCalled();
+  expect(controls.stop).toHaveBeenCalledOnce();
+});
 
 test.each(
   (["linux", "macos", "windows"] as const).flatMap((os) =>
@@ -1458,11 +1526,19 @@ test.each([true, false])(
   async (cacheWrite) => {
     const { controls, broker, events } = fixture();
     const grant = await broker.prepareRunner();
-    const prepareRunner = vi.fn(async () => ({
-      ...grant,
-      cacheWrite,
-      access: { ...grant.access, ...(cacheWrite ? { cacheRun: { runId: 5, runAttempt: 1 } } : {}) },
-    }));
+    const checked = vi.fn();
+    const prepareRunner = vi.fn(async () => {
+      expect(checked).toHaveBeenCalledExactlyOnceWith(true);
+      expect(vi.mocked(executeGuest).mock.calls[0]?.[1]).toBe("sudo -n true\n");
+      return {
+        ...grant,
+        cacheWrite,
+        access: {
+          ...grant.access,
+          ...(cacheWrite ? { cacheRun: { runId: 5, runAttempt: 1 } } : {}),
+        },
+      };
+    });
     const complete = vi.fn(() => {
       events.push("promote");
     });
@@ -1474,7 +1550,11 @@ test.each([true, false])(
       "binding",
       "key",
       environment,
-      { ...controls, broker: { ...broker, prepareRunner }, cache: { sizeGiB: 20, complete } },
+      {
+        ...controls,
+        broker: { ...broker, prepareRunner },
+        cache: { sizeGiB: 20, complete, checked },
+      },
       new AbortController().signal,
     );
     expect(result.status).toBe("succeeded");

@@ -1,9 +1,25 @@
 import { spawnSync } from "node:child_process";
 import { expect, test } from "vitest";
-import { cacheSetupScript, cacheUnmountScript } from "./cache-guest.js";
+import { cachePrivilegeScript, cacheSetupScript, cacheUnmountScript } from "./cache-guest.js";
 import { runnerStartScript } from "./runner-release.js";
 
 const access = { repositoryId: 2, actors: "any", approval: "automatic" } as const;
+test.each(["linux", "macos"] as const)("%s cache probe requires noninteractive sudo", (os) => {
+  for (const exitCode of [0, 1]) {
+    const result = spawnSync("bash", ["-s"], {
+      input: `sudo() { test "$*" = '-n true' || return 99; return ${exitCode}; }\n${cachePrivilegeScript(os)}`,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(exitCode);
+  }
+});
+
+test("Windows cache probe checks the effective administrator token", () => {
+  const script = cachePrivilegeScript("windows");
+  expect(script).toContain("WindowsIdentity]::GetCurrent()");
+  expect(script).toContain("IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)");
+  expect(script).toContain("exit 1");
+});
 test.each(["linux", "macos", "windows"] as const)(
   "%s cache setup identifies the disk, formats first use and exports job caches",
   (os) => {

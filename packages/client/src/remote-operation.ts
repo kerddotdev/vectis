@@ -81,6 +81,12 @@ export async function advanceRemoteOperation(
       operationId: operation.id,
       status: operation.status,
       message: redact(operation.message).slice(0, 1000),
+      ...(typeof operation.result === "object" &&
+      operation.result !== null &&
+      "code" in operation.result &&
+      operation.result.code === "cache_volume_requires_guest_sudo"
+        ? { code: operation.result.code }
+        : {}),
       resultAvailableLocally: operation.result !== undefined,
     }),
   });

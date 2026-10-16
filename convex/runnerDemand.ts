@@ -104,6 +104,21 @@ function expiredBeforeClaim(operation: Doc<"operations">) {
   }
 }
 
+function cachePrivilegeFailure(operation: Doc<"operations">) {
+  if (operation.phase !== "failed" || !operation.resultJson) return false;
+  try {
+    const result: unknown = JSON.parse(operation.resultJson);
+    return (
+      result !== null &&
+      typeof result === "object" &&
+      "code" in result &&
+      result.code === "cache_volume_requires_guest_sudo"
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Runs on every heartbeat, so the reads an idle machine needs come first. Every return before the
 // scheduling loop is free of side effects, so this order schedules exactly what any other would.
 // Convex bills repeated reads within a transaction, so a heartbeat passes the bindings it already read.
@@ -216,6 +231,7 @@ export async function scheduleRunnerDemand(
         if (demand) {
           if (demand.owner !== target.owner || demand.attempt >= maxAttempts) continue;
           const previous = await ctx.db.get("operations", demand.operationId);
+          if (previous && cachePrivilegeFailure(previous)) continue;
           const now = Date.now();
           if (!previous) {
             if (demand.updatedAt > now - actionRequiredRetryDelay) continue;
