@@ -22,12 +22,10 @@ test("returns the newest lines and says when older lines were left out", async (
 
 test("reads at most the log tail without starting mid-line", async () => {
   home = await mkdtemp(join(tmpdir(), "vectis-logs-"));
-  const line = "x".repeat(99);
-  await writeFile(join(home, "service.log"), `${line}\n`.repeat(3000) + "last\n");
-  const log = await readServiceLog(home, 1000);
-  expect(log.truncated).toBe(true);
-  expect(log.lines.at(-1)).toBe("last");
-  expect(log.lines.every((entry) => entry === line || entry === "last")).toBe(true);
+  const line = "xxxxxxxxx";
+  await writeFile(join(home, "service.log"), `${line}\n`.repeat(4) + "last\n");
+  const log = await readServiceLog(home, 10, 32);
+  expect(log).toEqual({ lines: [line, line, "last"], truncated: true });
 });
 
 test("multiline private keys are redacted before selecting the requested lines", async () => {
@@ -45,13 +43,14 @@ test("multiline private keys are redacted before selecting the requested lines",
 test("a bounded tail never exposes a credential whose identifying prefix was cut off", async () => {
   home = await mkdtemp(join(tmpdir(), "vectis-logs-long-"));
   const canary = "LongLogCanary123456789";
-  await writeFile(join(home, "service.log"), `Authorization: Bearer ${canary.repeat(10000)}`);
-  expect(await readServiceLog(home, 10)).toEqual({ lines: [], truncated: true });
+  const tailBytes = 32;
+  await writeFile(join(home, "service.log"), `Authorization: Bearer ${canary.repeat(3)}`);
+  expect(await readServiceLog(home, 10, tailBytes)).toEqual({ lines: [], truncated: true });
   await writeFile(
     join(home, "service.log"),
-    `Authorization: Bearer ${canary.repeat(10000)}\nrunner-name exit 23\n`,
+    `Authorization: Bearer ${canary.repeat(3)}\nrunner-name exit 23\n`,
   );
-  expect(await readServiceLog(home, 10)).toEqual({
+  expect(await readServiceLog(home, 10, tailBytes)).toEqual({
     lines: ["runner-name exit 23"],
     truncated: true,
   });

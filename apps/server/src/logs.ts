@@ -3,9 +3,11 @@ import { open } from "node:fs/promises";
 import { join } from "node:path";
 import type { ServiceLog } from "../../../packages/protocol/src/logs.js";
 
-const tailBytes = 128 * 1024;
-
-export async function readServiceLog(home: string, lines: number): Promise<ServiceLog> {
+export async function readServiceLog(
+  home: string,
+  lines: number,
+  tailBytes = 128 * 1024,
+): Promise<ServiceLog> {
   let file;
   try {
     file = await open(join(home, "service.log"), "r");
