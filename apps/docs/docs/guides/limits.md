@@ -7,16 +7,18 @@ These values describe the current release. Settings you can change are marked as
 
 ## Runners and capacity
 
-| Limit                                                | Value                                                                                                |
-| ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Time a runner waits for and runs a job               | 6 hours                                                                                              |
-| Time allowed for installing the runner in the guest  | 10 minutes                                                                                           |
-| Concurrent VMs                                       | 5 by default, 1 to 16 with `vectis machine configure --max-runners` or **Concurrent VMs** in the app |
-| CPU used by all starting and running VMs together    | At most the host's CPU cores                                                                         |
-| Memory used by all starting and running VMs together | At most 75% of the host's memory                                                                     |
-| Concurrent macOS VMs                                 | 2 (an Apple limit)                                                                                   |
+| Limit                                               | Value                                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Time a runner waits for and runs a job              | 6 hours                                                                                                |
+| Time allowed for installing the runner in the guest | 10 minutes                                                                                             |
+| Concurrent VMs                                      | 5 by default, 1 to 16 with `vectis machine configure --max-runners` or **Concurrent VMs** in the app   |
+| CPU ceiling per VM                                  | At most the host's CPU cores; summed vCPUs may exceed host cores                                       |
+| Shared VM memory admission budget                   | 75% of host RAM by default; `machine configure --memory-budget-mib` accepts 2048 MiB to total host RAM |
+| Startup memory estimate                             | Linux 2048 MiB; macOS and Windows 4096 MiB; capped by each VM's ceiling                                |
+| Host memory pressure                                | Warning or critical blocks new starts; unknown is reported and treated as normal                       |
+| Concurrent macOS VMs                                | 2 (an Apple limit)                                                                                     |
 
-An automatic runner also waits while an environment is being prepared, while an interrupted instance is unresolved, and while the Mac is paused. A runner that has been accepted holds its slot, and its CPU and memory, before its VM starts.
+An automatic runner also waits while an environment is being prepared, while an interrupted instance is unresolved, and while the Mac is paused. A runner that has been accepted holds its slot and startup memory estimate before its VM starts. Each non-stopped VM commits the larger of its measured process RSS and startup estimate; failed measurements fall back to its configured ceiling. Probes are cached for five seconds. `runnerCapacity.budget` reports the effective memory budget, committed memory, host RAM, pressure and whether pressure is known. The budget gates admission; it does not reclaim memory or stop VMs that later grow beyond it.
 
 ## Environments
 
@@ -26,7 +28,7 @@ An automatic runner also waits while an environment is being prepared, while an 
 | macOS       | 2           | 4096 MiB       | 64 GiB       |
 | Windows     | 4           | 8192 MiB       | 96 GiB       |
 
-Override them with `--cpu`, `--memory-mib` and `--disk-gib`. Minimum disk sizes are 16 GiB for Ubuntu, 40 GiB for macOS and 64 GiB for Windows. A VM's memory can never exceed 75% of the host's memory. See [Storage and resources](/docs/guides/storage).
+Override them with `--cpu`, `--memory-mib` and `--disk-gib`. Minimum disk sizes are 16 GiB for Ubuntu, 40 GiB for macOS and 64 GiB for Windows. A VM's configured memory ceiling can never exceed 75% of host memory. Ceilings remain fixed for a running VM, but unused memory is allocated lazily and summed ceilings may exceed host RAM. For a suitable host, consider Linux 8 vCPUs / 12288 MiB, Windows 8 / 16384 MiB, and macOS 6 / 12288 MiB; preparation defaults are unchanged. See [Storage and resources](/docs/guides/storage).
 
 ## Cloud and automation
 

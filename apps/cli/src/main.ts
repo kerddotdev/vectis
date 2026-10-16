@@ -57,6 +57,7 @@ async function main() {
       x64: { type: "string" },
       egress: { type: "string" },
       "max-runners": { type: "string" },
+      "memory-budget-mib": { type: "string" },
       "job-id": { type: "string" },
       ref: { type: "string" },
       input: { type: "string", multiple: true },
@@ -144,7 +145,9 @@ Cloud and GitHub
   login finish                  Complete an approved remote control login
   logout                        Revoke this CLI's remote access and remove its credentials
   machine list                  List your machines and when they were last seen
-  machine configure --max-runners <N>  Set concurrent runner limit (1-16, default 5)
+  machine configure [--max-runners <N>] [--memory-budget-mib <N>]
+                                Set runner limit (1-16, default 5) and shared VM memory budget
+                                Memory budget: 2048 MiB to host RAM, default 75% of host RAM
 
 Repositories and jobs
   repository readiness <owner/name> [--environment <id>]  Check readiness before connecting
@@ -595,12 +598,17 @@ Documentation: https://vectis.kerd.dev/docs
   let request: Command;
   if (command === "pause" || command === "resume")
     request = { type: "machine.pause", paused: command === "pause" };
-  else if (command === "machine" && subcommand === "configure")
+  else if (command === "machine" && subcommand === "configure") {
+    if (values["max-runners"] === undefined && values["memory-budget-mib"] === undefined)
+      throw new VectisError("missing_argument", "Specify --max-runners or --memory-budget-mib.");
     request = decodeCommand({
       type: "machine.configure",
-      maxRunners: Number(values["max-runners"]),
+      ...(values["max-runners"] !== undefined ? { maxRunners: Number(values["max-runners"]) } : {}),
+      ...(values["memory-budget-mib"] !== undefined
+        ? { memoryBudgetMiB: Number(values["memory-budget-mib"]) }
+        : {}),
     });
-  else if (
+  } else if (
     command === "repository" &&
     (subcommand === "enable-auto" || subcommand === "disable-auto") &&
     id

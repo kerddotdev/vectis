@@ -1,5 +1,10 @@
 import { freemem, totalmem } from "node:os";
 import { runProcess } from "./process.js";
+import type { Environment } from "../../protocol/src/index.js";
+
+export function estimatedVmMemoryMiB(environment: Pick<Environment, "os" | "memoryMiB">): number {
+  return Math.min(environment.memoryMiB, environment.os === "linux" ? 2048 : 4096);
+}
 
 export function parseAvailableMemory(statistics: string): number | undefined {
   const size = /page size of (\d+) bytes/.exec(statistics)?.[1];

@@ -1,5 +1,9 @@
+vi.mock("./resource-probe.js", () => ({
+  resourceProbe: () => ({ footprintsMiB: new Map(), pressure: "normal", pressureKnown: true }),
+}));
+
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { startService } from "./http.js";
@@ -274,7 +278,7 @@ test("an accepted shutdown stops advertising readiness before the listener close
 
 test("machine runner limits reject invalid values and survive a service restart", async () => {
   const { home, server, client } = await fixture();
-  expect((await client.status()).runnerCapacity).toEqual({
+  expect((await client.status()).runnerCapacity).toMatchObject({
     max: 5,
     active: 0,
     available: 0,
@@ -299,7 +303,7 @@ test("machine runner limits reject invalid values and survive a service restart"
     expect(operation.status).toBe("succeeded");
     const state = await client.status();
     expect(state.machine.maxRunners).toBe(maxRunners);
-    expect(state.runnerCapacity).toEqual({
+    expect(state.runnerCapacity).toMatchObject({
       max: maxRunners,
       active: 0,
       available: 0,
@@ -314,6 +318,62 @@ test("machine runner limits reject invalid values and survive a service restart"
   const state = await new VectisClient(restarted.connection).status();
   expect(state.machine.maxRunners).toBe(3);
   expect(state.runnerCapacity?.max).toBe(3);
+});
+
+test("machine memory budget validates host bounds, preserves other settings and survives restart", async () => {
+  const { home, server, client } = await fixture();
+  const hostMemoryMiB = Math.floor(totalmem() / 1024 ** 2);
+  for (const memoryBudgetMiB of [0, 2047, -1, 2048.5, "8192"]) {
+    const response = await fetch(server.connection.url + "/v1/commands", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${server.connection.token}` },
+      body: JSON.stringify({
+        key: `invalid-budget-${memoryBudgetMiB}`,
+        command: { type: "machine.configure", memoryBudgetMiB },
+      }),
+    });
+    expect(response.status).toBe(400);
+  }
+  expect(
+    await client.settle(
+      { type: "machine.configure", memoryBudgetMiB: hostMemoryMiB + 1 },
+      "too-large",
+    ),
+  ).toMatchObject({ status: "failed", result: { code: "invalid_resources" } });
+  expect(await client.settle({ type: "machine.configure" }, "empty")).toMatchObject({
+    status: "failed",
+    result: { code: "invalid_resources" },
+  });
+  for (const memoryBudgetMiB of [2048, hostMemoryMiB]) {
+    expect(
+      (
+        await client.settle(
+          { type: "machine.configure", memoryBudgetMiB },
+          `budget-${memoryBudgetMiB}`,
+        )
+      ).status,
+    ).toBe("succeeded");
+    expect((await client.status()).runnerCapacity?.budget).toMatchObject({
+      memoryBudgetMiB,
+      memoryCommittedMiB: 0,
+      pressure: "normal",
+      pressureKnown: true,
+    });
+  }
+  await client.settle({ type: "machine.configure", maxRunners: 3 }, "runners-only");
+  expect((await client.status()).machine).toMatchObject({
+    maxRunners: 3,
+    memoryBudgetMiB: hostMemoryMiB,
+  });
+  await client.settle({ type: "machine.configure", memoryBudgetMiB: 2048 }, "memory-only");
+  await server.close();
+  cleanup.pop();
+  const restarted = await startService({ home });
+  cleanup.push(restarted.close);
+  expect((await new VectisClient(restarted.connection).status()).machine).toMatchObject({
+    maxRunners: 3,
+    memoryBudgetMiB: 2048,
+  });
 });
 
 test("task failures are redacted in storage and the logs query before any display", async () => {

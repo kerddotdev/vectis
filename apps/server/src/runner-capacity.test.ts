@@ -1,8 +1,21 @@
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { Schema } from "effect";
 import { Snapshot as SnapshotSchema } from "../../../packages/protocol/src/index.js";
 import type { Environment, Snapshot, Operation } from "../../../packages/protocol/src/index.js";
-import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
+import { instanceAdmissionError as admit, runnerCapacity as capacity } from "./runner-capacity.js";
+import { estimatedVmMemoryMiB } from "../../../packages/runner/src/memory.js";
+import type { ResourceProbe } from "./resource-probe.js";
+
+const probe: ResourceProbe = (instances) => ({
+  footprintsMiB: new Map(
+    instances.map((instance) => [instance.id, Math.min(instance.memoryMiB ?? 2048, 2048)]),
+  ),
+  pressure: "normal",
+  pressureKnown: true,
+});
+const runnerCapacity = (state: Snapshot, machine: typeof host) => capacity(state, machine, probe);
+const instanceAdmissionError = (state: Snapshot, env: Environment, machine: typeof host) =>
+  admit(state, env, machine, 1, probe);
 
 const host = { cpus: 14, memoryBytes: 48 * 1024 ** 3 };
 const environment: Environment = {
@@ -25,7 +38,14 @@ function snapshot(env = environment) {
   return { ...base, machine: { ...base.machine } };
 }
 function running(env = environment): Snapshot["instances"][number] {
-  return { id: "instance", environmentId: env.id, status: "running", pid: 0, createdAt: "" };
+  return {
+    id: "instance",
+    environmentId: env.id,
+    status: "running",
+    memoryMiB: env.memoryMiB,
+    pid: 0,
+    createdAt: "",
+  };
 }
 function operation(status: Operation["status"], command = "runner.run"): Operation {
   return { id: status, key: status, command, status, createdAt: "", updatedAt: "", message: "" };
@@ -41,22 +61,104 @@ test("defaults to five runners and counts only unfinished runner operations", ()
   expect(runnerCapacity(state, host)).toMatchObject({ max: 2, active: 2, available: 0 });
 });
 
-test("CPU budget accounts for running instances and their resource overrides", () => {
-  const state = snapshot();
-  state.instances = [running()];
-  expect(runnerCapacity(state, host).available).toBe(1);
-  state.instances = [{ ...running(), cpu: 10, memoryMiB: 512 }];
-  expect(runnerCapacity(state, host).available).toBe(0);
+test("five VMs with ceilings above host RAM and CPU cores admit another when footprints fit", () => {
+  const env = { ...environment, cpu: 8 };
+  const state = snapshot(env);
+  state.instances = Array.from({ length: 5 }, (_, index) => ({
+    ...running(),
+    id: `vm${index}`,
+    cpu: 8,
+    pid: index + 1,
+  }));
+  expect(state.instances.length * environment.memoryMiB).toBeGreaterThan(
+    host.memoryBytes / 1024 ** 2,
+  );
+  expect(instanceAdmissionError(state, env, host)).toBeUndefined();
+  expect(runnerCapacity(state, host).budget).toEqual({
+    memoryBudgetMiB: 36864,
+    memoryCommittedMiB: 10240,
+    hostMemoryMiB: 49152,
+    pressure: "normal",
+    pressureKnown: true,
+  });
+  expect(instanceAdmissionError(state, { ...environment, cpu: 15 }, host)).toMatchObject({
+    code: "invalid_resources",
+  });
 });
 
-test("memory budget allows at most 75 percent of host memory", () => {
-  const env = { ...environment, cpu: 1, memoryMiB: 18432 };
-  const state = snapshot(env);
-  expect(runnerCapacity(state, host).available).toBe(2);
-  state.instances = [running(env)];
-  expect(runnerCapacity(state, host).available).toBe(1);
-  state.instances = [{ ...running(env), memoryMiB: 18433 }];
-  expect(runnerCapacity(state, host).available).toBe(0);
+test("admission uses measured footprints, floors, overrides and configured fallback", () => {
+  const state = snapshot();
+  state.machine.memoryBudgetMiB = 8192;
+  state.instances = [{ ...running(), memoryMiB: 4096 }];
+  const usage: ResourceProbe = () => ({
+    footprintsMiB: new Map([["instance", 7000]]),
+    pressure: "normal",
+    pressureKnown: true,
+  });
+  expect(admit(state, environment, host, 1, usage)).toMatchObject({
+    code: "memory_budget_exceeded",
+    nextStep: expect.any(String),
+  });
+  expect(runnerCapacity(state, host).available).toBe(3);
+  const missing: ResourceProbe = () => ({ ...probe([]), footprintsMiB: new Map() });
+  expect(capacity(state, host, missing).budget?.memoryCommittedMiB).toBe(4096);
+  expect(capacity(state, host, missing).available).toBe(2);
+  state.instances = [running()];
+  expect(admit(state, environment, host, 1, missing)).toMatchObject({
+    code: "memory_budget_exceeded",
+  });
+  expect(capacity(state, host, missing).available).toBe(0);
+});
+
+test.each(["warning", "critical"] as const)(
+  "%s memory pressure closes admission and slots",
+  (pressure) => {
+    const state = snapshot();
+    const pressured: ResourceProbe = () => ({ ...probe([]), pressure });
+    expect(admit(state, environment, host, 1, pressured)).toMatchObject({
+      code: "memory_pressure",
+      nextStep: expect.any(String),
+    });
+    expect(capacity(state, host, pressured)).toMatchObject({
+      available: 0,
+      budget: { pressure, pressureKnown: true },
+    });
+    const unknown: ResourceProbe = () => ({ ...probe([]), pressureKnown: false });
+    expect(capacity(state, host, unknown)).toMatchObject({
+      available: 5,
+      budget: { pressure: "normal", pressureKnown: false },
+    });
+  },
+);
+
+test("per-environment slots share measured memory with OS startup estimates and one probe", () => {
+  const state = snapshot();
+  state.machine.memoryBudgetMiB = 10240;
+  state.instances = [running()];
+  state.environments = [
+    environment,
+    { ...environment, id: "mac", os: "macos" },
+    { ...environment, id: "win", os: "windows" },
+  ];
+  const measured = vi.fn(probe);
+  expect(capacity(state, host, measured).environments).toEqual([
+    { environmentId: "linux", available: 4 },
+    { environmentId: "mac", available: 2 },
+    { environmentId: "win", available: 2 },
+  ]);
+  expect(measured).toHaveBeenCalledOnce();
+});
+
+test("a footprint below the startup floor still holds the floor", () => {
+  const state = snapshot();
+  state.instances = [running()];
+  const low: ResourceProbe = () => ({ ...probe([]), footprintsMiB: new Map([["instance", 100]]) });
+  expect(capacity(state, host, low).budget?.memoryCommittedMiB).toBe(2048);
+  state.instances = [{ ...running(), status: "starting", pid: 0 }];
+  const absent: ResourceProbe = () => ({ ...probe([]), footprintsMiB: new Map() });
+  expect(capacity(state, host, absent).budget?.memoryCommittedMiB).toBe(2048);
+  state.instances = [{ ...running(), status: "interrupted", pid: 0 }];
+  expect(capacity(state, host, absent).budget?.memoryCommittedMiB).toBe(environment.memoryMiB);
 });
 
 test("macOS admits only two instances while stopped instances consume no capacity", () => {
@@ -86,7 +188,7 @@ test.each([
   }
   const state = snapshot();
   state.operations = [operation("action_required", command)];
-  expect(runnerCapacity(state, host).available).toBe(2);
+  expect(runnerCapacity(state, host).available).toBe(5);
 });
 
 test("preparation flag, pause and missing ready environments report no available slots", () => {
@@ -104,6 +206,7 @@ test("preparation flag, pause and missing ready environments report no available
 
 test("scalar capacity is the maximum available across ready environments", () => {
   const state = snapshot();
+  state.machine.memoryBudgetMiB = 8192;
   state.environments = [
     { ...environment, id: "small", cpu: 1, memoryMiB: 512 },
     environment,
@@ -114,8 +217,8 @@ test("scalar capacity is the maximum available across ready environments", () =>
     available: 5,
     environments: [
       { environmentId: "small", available: 5 },
-      { environmentId: "linux", available: 2 },
-      { environmentId: "large", available: 1 },
+      { environmentId: "linux", available: 4 },
+      { environmentId: "large", available: 4 },
     ],
   });
 });
@@ -126,6 +229,7 @@ test.each([
   { ...environment, os: "macos" as const, cpu: 1, memoryMiB: 512 },
 ])("capacity agrees with successive admission for $os / $cpu CPU / $memoryMiB MiB", (env) => {
   const state = snapshot(env);
+  state.machine.memoryBudgetMiB = Math.max(2048, estimatedVmMemoryMiB(env) * 4);
   state.instances = [running(env)];
   const { available } = runnerCapacity(state, host);
   for (let index = 0; index < available; index++) {
@@ -137,6 +241,7 @@ test.each([
 
 test("accepted runners reserve their VM before it boots, so slots are not offered twice", () => {
   const state = snapshot();
+  state.machine.memoryBudgetMiB = 4096;
   state.operations = [operation("accepted")];
   expect(runnerCapacity(state, host).available).toBe(1);
   state.operations = [operation("accepted"), { ...operation("running"), id: "second" }];
@@ -147,6 +252,7 @@ test("accepted runners reserve their VM before it boots, so slots are not offere
 
 test("starting and interrupted VMs hold only their own resources", () => {
   const state = snapshot();
+  state.machine.memoryBudgetMiB = 4096;
   state.operations = [
     operation("running"),
     { ...operation("succeeded", "environment.start"), id: "instance", key: "running:start" },
@@ -158,13 +264,13 @@ test("starting and interrupted VMs hold only their own resources", () => {
     { ...running(), id: "second" },
   ];
   expect(instanceAdmissionError(state, environment, host)).toMatchObject({
-    code: "capacity_exceeded",
+    code: "memory_budget_exceeded",
   });
   state.operations = [];
   state.instances = [{ ...running(), status: "interrupted" }];
   expect(runnerCapacity(state, host).available).toBe(1);
   state.instances = [{ ...running(), status: "interrupted", cpu: host.cpus }];
-  expect(runnerCapacity(state, host).available).toBe(0);
+  expect(runnerCapacity(state, host).available).toBe(1);
 });
 
 test("macOS limits apply across macOS environments without blocking Linux or Windows", () => {

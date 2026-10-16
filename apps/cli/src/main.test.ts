@@ -1,3 +1,7 @@
+vi.mock("../../server/src/resource-probe.js", () => ({
+  resourceProbe: () => ({ footprintsMiB: new Map(), pressure: "normal", pressureKnown: true }),
+}));
+
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +25,8 @@ test("machine configure settles without --wait and status prints runner capacity
       "configure",
       "--max-runners",
       "3",
+      "--memory-budget-mib",
+      "8192",
       "--key",
       "cli-configure",
       "--json",
@@ -29,7 +35,10 @@ test("machine configure settles without --wait and status prints runner capacity
     await vi.waitFor(() =>
       expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"succeeded"')),
     );
-    expect(server.service.snapshot().machine.maxRunners).toBe(3);
+    expect(server.service.snapshot().machine).toMatchObject({
+      maxRunners: 3,
+      memoryBudgetMiB: 8192,
+    });
     output.mockClear();
     vi.resetModules();
     process.argv = [process.execPath, "vectis", "--home", home, "status", "--json"];
@@ -37,7 +46,7 @@ test("machine configure settles without --wait and status prints runner capacity
     await vi.waitFor(() =>
       expect(output).toHaveBeenCalledWith(
         expect.stringContaining(
-          '"runnerCapacity":{"max":3,"active":0,"available":0,"environments":[]}',
+          '"runnerCapacity":{"max":3,"active":0,"available":0,"environments":[],',
         ),
       ),
     );
@@ -49,6 +58,59 @@ test("machine configure settles without --wait and status prints runner capacity
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each([
+  { args: ["--memory-budget-mib", "2048"], valid: true },
+  { args: ["--memory-budget-mib", "2047"], valid: false },
+  { args: ["--memory-budget-mib", "4096.5"], valid: false },
+  { args: ["--memory-budget-mib", "invalid"], valid: false },
+  { args: [], valid: false },
+])(
+  "machine configure parses memory-only and rejects invalid arguments: $args",
+  async ({ args, valid }) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cli-budget-"));
+    const server = await startService({ home });
+    const submit = vi.spyOn(server.service, "submit");
+    const argv = process.argv;
+    const exitCode = process.exitCode;
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      vi.resetModules();
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "machine",
+        "configure",
+        ...args,
+        "--key",
+        "budget",
+        "--json",
+      ];
+      await import("./main.js");
+      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+      if (valid) {
+        expect(submit).toHaveBeenCalledWith("budget", {
+          type: "machine.configure",
+          memoryBudgetMiB: 2048,
+        });
+        expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"succeeded"'));
+      } else {
+        expect(submit).not.toHaveBeenCalled();
+        expect(process.exitCode).toBe(1);
+        expect(output).toHaveBeenCalledWith(expect.stringContaining('"error":'));
+      }
+    } finally {
+      process.argv = argv;
+      process.exitCode = exitCode;
+      output.mockRestore();
+      submit.mockRestore();
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
 
 test.each([
   { actors: "7,7,8", approval: "required", expected: { ids: [7, 8] } },

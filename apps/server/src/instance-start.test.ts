@@ -1,6 +1,10 @@
+vi.mock("./resource-probe.js", () => ({
+  resourceProbe: () => ({ footprintsMiB: new Map(), pressure: "normal", pressureKnown: true }),
+}));
+
 import { ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
-import { cpus, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
@@ -81,16 +85,17 @@ test("a booting VM keeps its resources, so a start beyond the budget is refused"
     os: "linux",
     state: "ready",
     basePath: join(home, "base.img"),
-    cpu: Math.floor(cpus().length / 2) + 1,
-    memoryMiB: 512,
+    cpu: 1,
+    memoryMiB: 4096,
   });
+  store.put("machine", "self", { ...store.snapshot().machine, memoryBudgetMiB: 2048 });
   try {
     const start = service.submit("start", { type: "environment.start", id: "test" });
     const second = service.submit("second", { type: "environment.start", id: "test" });
     await service.drain();
     expect(store.snapshot().operations.find((item) => item.id === second.id)).toMatchObject({
       status: "failed",
-      result: { code: "capacity_exceeded" },
+      result: { code: "memory_budget_exceeded" },
     });
     expect(store.snapshot().instances).toHaveLength(1);
     service.submit("cancel", { type: "operation.cancel", id: start.id });

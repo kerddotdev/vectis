@@ -8,7 +8,7 @@ import { Schema } from "effect";
 import { cpus, totalmem } from "node:os";
 import { fileURLToPath } from "node:url";
 import { waitForQemu } from "./qmp.js";
-import { availableHostMemory } from "./memory.js";
+import { availableHostMemory, estimatedVmMemoryMiB } from "./memory.js";
 import { runProcess } from "./process.js";
 import { probeStorage } from "./storage-probe.js";
 import { waitForAppleVm } from "./apple.js";
@@ -120,11 +120,11 @@ export class VmRuntime {
     signal?.throwIfAborted();
     if (process.platform !== "darwin" || process.arch !== "arm64")
       throw new VectisError("unsupported_host", "This release requires an Apple Silicon Mac.");
-    if (environment.memoryMiB * 1024 * 1024 > (await availableHostMemory()))
+    if (estimatedVmMemoryMiB(environment) * 1024 * 1024 > (await availableHostMemory()))
       throw new VectisError(
         "insufficient_memory",
         "Not enough free host memory for this instance.",
-        "Stop an idle instance or lower the environment memory.",
+        "Stop an idle instance or free host memory, then retry.",
       );
     if (environment.state !== "ready")
       throw new VectisError(

@@ -859,9 +859,25 @@ export class Service {
           break;
         }
         case "machine.configure":
+          if (command.maxRunners === undefined && command.memoryBudgetMiB === undefined)
+            throw new VectisError("invalid_resources", "Specify a runner limit or memory budget.");
+          if (
+            command.memoryBudgetMiB !== undefined &&
+            (!Number.isSafeInteger(command.memoryBudgetMiB) ||
+              command.memoryBudgetMiB < 2048 ||
+              command.memoryBudgetMiB * 1024 ** 2 > totalmem())
+          )
+            throw new VectisError(
+              "invalid_resources",
+              "The VM memory budget must be a whole number between 2048 MiB and total host memory.",
+              "Choose a memory budget between 2048 MiB and total host memory.",
+            );
           this.store.put("machine", "self", {
             ...snapshot.machine,
-            maxRunners: command.maxRunners,
+            ...(command.maxRunners !== undefined ? { maxRunners: command.maxRunners } : {}),
+            ...(command.memoryBudgetMiB !== undefined
+              ? { memoryBudgetMiB: command.memoryBudgetMiB }
+              : {}),
           });
           break;
         case "machine.pause":

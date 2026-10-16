@@ -147,11 +147,13 @@ export const Operation = Schema.Struct({
 export type Operation = typeof Operation.Type;
 export const defaultMaxRunners = 5;
 const MaxRunners = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 16 }));
+const MemoryBudgetMiB = Schema.Int.check(Schema.isGreaterThanOrEqualTo(2048));
 export const Machine = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   paused: Schema.Boolean,
   maxRunners: Schema.optional(MaxRunners),
+  memoryBudgetMiB: Schema.optional(MemoryBudgetMiB),
 });
 export const Instance = Schema.Struct({
   id: Identifier,
@@ -183,6 +185,15 @@ export const RunnerCapacity = Schema.Struct({
   active: Schema.Int,
   available: Schema.Int,
   environments: Schema.optional(Schema.Array(EnvironmentSlots)),
+  budget: Schema.optional(
+    Schema.Struct({
+      memoryBudgetMiB: Schema.Number,
+      memoryCommittedMiB: Schema.Number,
+      hostMemoryMiB: Schema.Number,
+      pressure: Schema.Literals(["normal", "warning", "critical"]),
+      pressureKnown: Schema.optional(Schema.Boolean),
+    }),
+  ),
 });
 export type RunnerCapacity = typeof RunnerCapacity.Type;
 export const Snapshot = Schema.Struct({
@@ -265,7 +276,11 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("activity.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
-  Schema.Struct({ type: Schema.Literal("machine.configure"), maxRunners: MaxRunners }),
+  Schema.Struct({
+    type: Schema.Literal("machine.configure"),
+    maxRunners: Schema.optional(MaxRunners),
+    memoryBudgetMiB: Schema.optional(MemoryBudgetMiB),
+  }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
   Schema.Struct({
@@ -531,7 +546,7 @@ export const capabilities = [
     name: "machine.configure",
     kind: "command",
     activity: "setting",
-    description: "Set the maximum number of concurrent runners on this machine (1-16, default 5).",
+    description: "Set concurrent runners (1-16, default 5) and the shared VM memory budget in MiB.",
   },
   {
     name: "machine.pause",
