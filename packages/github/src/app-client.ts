@@ -108,6 +108,12 @@ function githubReadinessFailure(id: string, error: unknown): ReadinessCheck {
   };
 }
 
+export function createGitHubAppJwt(app: { clientId: string; privateKey: string }) {
+  const now = Math.floor(Date.now() / 1000);
+  const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+  const data = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: app.clientId, iat: now - 60, exp: now + 300 })}`;
+  return `${data}.${sign("RSA-SHA256", Buffer.from(data), createPrivateKey(app.privateKey)).toString("base64url")}`;
+}
 export class GitHubAppClient {
   private readonly cacheScope: string;
   constructor(
@@ -122,10 +128,7 @@ export class GitHubAppClient {
     this.cacheScope = createHash("sha256").update(JSON.stringify(app)).digest("hex");
   }
   private jwt() {
-    const now = Math.floor(Date.now() / 1000);
-    const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
-    const data = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: this.app.clientId, iat: now - 60, exp: now + 300 })}`;
-    return `${data}.${sign("RSA-SHA256", Buffer.from(data), createPrivateKey(this.app.privateKey)).toString("base64url")}`;
+    return createGitHubAppJwt(this.app);
   }
   async request(
     token: string,
