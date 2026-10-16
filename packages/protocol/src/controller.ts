@@ -22,12 +22,15 @@ export const LocalQuery = Schema.Union([
       "repositories",
       "github.accounts",
       "capabilities",
+      "activities",
     ]),
   }),
   Schema.Struct({ name: Schema.Literal("repository.readiness"), input: RepositoryReadinessInput }),
   Schema.Struct({ name: Schema.Literal("jobs"), bindingId: Identifier }),
   Schema.Struct({ name: Schema.Literal("job.logs"), ...JobLogRequest.fields }),
   Schema.Struct({ name: Schema.Literal("operation"), id: Identifier }),
+  Schema.Struct({ name: Schema.Literal("operation.key"), key: Schema.NonEmptyString }),
+  Schema.Struct({ name: Schema.Literal("activity"), id: Identifier }),
   Schema.Struct({ name: Schema.Literal("logs"), ...LogRequest.fields }),
 ]);
 export type LocalQuery = typeof LocalQuery.Type;

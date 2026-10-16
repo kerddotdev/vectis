@@ -127,7 +127,7 @@ Service
   service status                Inspect the login service registration for this home
   service update                Adopt this runtime when idle; restore the previous one on failure
   service recover-update        Restore the previous runtime after an interrupted update
-  status                        Inspect the machine and recent operations
+  status                        Inspect the machine, unfinished work and bounded recent history
   storage                       Inspect image and VM disk usage
   doctor                        Inspect host and runtime prerequisites
   logs [--lines <count>]        Read the newest service log lines (default 200, at most 1000)
@@ -197,10 +197,10 @@ Environments
   instance reconcile <id>       Recheck an interrupted VM safely
 
 Activities and operations
-  activity list                 List activities, newest first; filter with --kind, --status, --repository, --limit
+  activity list                 List unfinished and recent activities; filter with --kind, --status, --repository, --limit
   activity get <id>             Inspect one activity with the operations that belong to it
   activity cancel <id>          Cancel work an activity owns, or close one that only waits for you
-  operation get <id>            Inspect one operation
+  operation get <id>            Inspect one retained operation, including outside the status window
   operation wait <id>           Wait for an operation's terminal state; on --timeout, print it as it is
   operation cancel <id>         Cancel an active operation, or close one that only waits for you
   command --file <path>         Submit any protocol command as JSON

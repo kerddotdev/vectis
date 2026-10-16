@@ -51,10 +51,11 @@ import { Schema } from "effect";
 import {
   Command,
   ActivityJob,
+  ActivityBase,
   Environment,
   Preparation,
   VectisError,
-  type Operation,
+  Operation,
   type Snapshot,
 } from "../../../packages/protocol/src/index.js";
 import { previewMigration } from "../../../packages/migration/src/index.js";
@@ -253,12 +254,10 @@ export class Service {
       )
         continue;
       try {
-        const snapshot = this.store.snapshot();
         const progress = Schema.is(RunnerProgress)(result) ? result : undefined;
-        const start = snapshot.operations.find((item) => item.key === `${operation.id}:start`);
-        const instance = snapshot.instances.find(
-          (item) => item.id === (progress?.instanceId ?? start?.id),
-        );
+        const start = this.runnerStart(operation.id);
+        const instanceId = progress?.instanceId ?? start?.id;
+        const instance = instanceId === undefined ? undefined : this.store.instance(instanceId);
         if (
           instance?.status === "interrupted" &&
           (await this.runtime.reconcile(instance.id, instance.directory))
@@ -266,7 +265,7 @@ export class Service {
           this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
         await this.reconcileRunner(operation.id);
       } catch {
-        const current = this.store.snapshot().operations.find((item) => item.id === operation.id);
+        const current = this.store.operation(operation.id);
         if (current?.status === "action_required")
           this.store.update(current, {
             result: {
@@ -327,10 +326,18 @@ export class Service {
     });
     return { operationId: waiting.id, closed: true };
   }
+  private runnerStart(id: string) {
+    try {
+      return this.store.operationByKey(`${id}:start`);
+    } catch (error) {
+      if (!(error instanceof VectisError) || error.code !== "operation_missing") throw error;
+    }
+  }
   private async reconcileRunner(id: string) {
     this.cleanupAbort.signal.throwIfAborted();
-    const snapshot = this.store.snapshot();
-    const interrupted = snapshot.operations.find((item) => item.id === id);
+    const value = this.store.get("operation", id);
+    const interrupted =
+      value === undefined ? undefined : Schema.decodeUnknownSync(Operation)(value);
     if (
       !interrupted ||
       interrupted.command !== "runner.run" ||
@@ -341,12 +348,15 @@ export class Service {
         "reconciliation_required",
         "Only an interrupted runner operation can be reconciled.",
       );
+    const start = this.runnerStart(interrupted.id);
     if (!Schema.is(RunnerProgress)(interrupted.result)) {
-      const start = snapshot.operations.find((item) => item.key === `${interrupted.id}:start`);
-      const activity = snapshot.activities?.find((item) => item.rootOperationId === interrupted.id);
+      const value = this.store.get("activity", interrupted.activityId ?? interrupted.id);
+      const activity =
+        value === undefined ? undefined : Schema.decodeUnknownSync(ActivityBase)(value);
       if (
         !start &&
         activity?.bindingId &&
+        activity.rootOperationId === interrupted.id &&
         Schema.is(Schema.Struct({ code: Schema.Literal("runner_recovery_pending") }))(
           interrupted.result,
         )
@@ -371,10 +381,8 @@ export class Service {
       ? interrupted.result.recoveryCause
       : undefined;
     const cause = progress.cause ?? recoveryCause;
-    const start = snapshot.operations.find((item) => item.key === `${interrupted.id}:start`);
-    const instance = snapshot.instances.find(
-      (item) => item.id === (progress.instanceId ?? start?.id),
-    );
+    const instanceId = progress.instanceId ?? start?.id;
+    const instance = instanceId === undefined ? undefined : this.store.instance(instanceId);
     if (instance && instance.status !== "stopped")
       throw new VectisError(
         "reconciliation_required",
@@ -866,27 +874,21 @@ export class Service {
                   } finally {
                     abort.signal.removeEventListener("abort", cancelStart);
                   }
-                  const instance = this.store
-                    .snapshot()
-                    .instances.find((item) => item.id === started.id);
+                  const instance = this.store.instance(started.id);
                   if (!instance || instance.status !== "running")
                     throw new VectisError("runner_vm_missing", "The runner VM did not start.");
                   return instance;
                 },
                 stop: async () => {
                   if (!startId) return;
-                  const current = this.store
-                    .snapshot()
-                    .instances.find((item) => item.id === startId);
+                  const current = this.store.instance(startId);
                   if (!current || current.status === "stopped") return;
                   const stopped = this.submitChild(operation.id, `${operation.id}:stop`, {
                     type: "instance.stop",
                     id: startId,
                   });
                   await this.waitForOperation(stopped.id);
-                  const instance = this.store
-                    .snapshot()
-                    .instances.find((item) => item.id === startId);
+                  const instance = this.store.instance(startId);
                   if (instance && instance.status !== "stopped")
                     throw new VectisError(
                       "runner_cleanup_required",
@@ -1193,7 +1195,7 @@ export class Service {
               "The instance startup task has not finished.",
               "Cancel the startup operation and wait for cleanup before reconciling.",
             );
-          const instance = snapshot.instances.find((item) => item.id === command.id);
+          const instance = this.store.instance(command.id);
           if (!instance) throw new VectisError("instance_missing", "Instance not found.");
           if (
             instance.status !== "interrupted" ||
@@ -1217,9 +1219,7 @@ export class Service {
                 startup.abort.abort();
                 await startup.done;
               }
-              const instance = this.store
-                .snapshot()
-                .instances.find((item) => item.id === command.id);
+              const instance = this.store.instance(command.id);
               if (instance?.status !== "stopped") await this.runtime.stop(command.id);
             })().finally(() => this.instanceStops.delete(command.id));
             this.instanceStops.set(command.id, stopping);
@@ -1272,9 +1272,7 @@ export class Service {
   private async waitForOperation(id: string) {
     const deadline = Date.now() + 600000;
     while (Date.now() < deadline) {
-      const operation = this.store.snapshot().operations.find((item) => item.id === id);
-      if (!operation)
-        throw new VectisError("operation_missing", "Runner control operation is missing.");
+      const operation = this.store.operation(id);
       if (operation.status === "succeeded") return;
       if (operation.status !== "accepted" && operation.status !== "running") {
         const result = operation.result;

@@ -8,6 +8,7 @@ import { createMcpServer } from "./server.js";
 import { startService } from "../../server/src/http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { VectisError } from "../../../packages/protocol/src/index.js";
+import { activityFor } from "../../server/src/activities.js";
 
 test("MCP discovers and executes the same authenticated commands as the CLI client", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-mcp-"));
@@ -309,6 +310,77 @@ test("MCP job logs forwards the byte cursor and rejects invalid requests", async
     expect(read).toHaveBeenCalledOnce();
   } finally {
     read.mockRestore();
+    await client.close();
+    await server.close();
+    await service.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("MCP status stays compact with thousands of retained results and returns data only once", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mcp-bounded-"));
+  const service = await startService({ home });
+  const api = new VectisClient(service.connection);
+  const server = createMcpServer(async () => api);
+  const client = new Client({ name: "bounded-status-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    const command = { type: "job.scan", bindingId: "binding" } as const;
+    service.store.db.exec("BEGIN IMMEDIATE");
+    for (let index = 0; index < 2000; index++) {
+      const id = `history-${index}`;
+      const link = activityFor(id, command);
+      service.store.put("activity", id, link?.create);
+      service.store.put("operation", id, {
+        id,
+        key: id,
+        command: command.type,
+        activityId: id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        status: index === 0 ? "action_required" : "succeeded",
+        result: { largeResult: "x".repeat(4096) },
+        message: "x".repeat(1024),
+      });
+    }
+    service.store.db.exec("COMMIT");
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const result = await client.callTool({ name: "vectis_status", arguments: {} });
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toEqual([]);
+    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThan(64 * 1024);
+    expect(result).toMatchObject({
+      structuredContent: {
+        result: {
+          operations: expect.any(Array),
+          activities: expect.any(Array),
+          counts: { operations: { byStatus: { action_required: 1 } } },
+          details: expect.stringContaining("vectis_operation"),
+        },
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("largeResult");
+    const status = vi.spyOn(api, "status").mockRejectedValue(new Error("Unexpected status read"));
+    const activities = await client.callTool({
+      name: "vectis_activities",
+      arguments: { status: "action_required" },
+    });
+    expect(activities).toMatchObject({
+      content: [],
+      structuredContent: { result: [{ id: "history-0" }] },
+    });
+    expect(status).not.toHaveBeenCalled();
+    status.mockRestore();
+    const full = await client.callTool({
+      name: "vectis_operation",
+      arguments: { id: "history-0" },
+    });
+    expect(full).toMatchObject({
+      content: [],
+      structuredContent: { result: { result: { largeResult: expect.any(String) } } },
+    });
+  } finally {
     await client.close();
     await server.close();
     await service.close();

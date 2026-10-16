@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { Store } from "./store.js";
 import { activityFor } from "./activities.js";
-import { Snapshot } from "../../../packages/protocol/src/index.js";
+import { Snapshot, type Operation } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -281,6 +281,73 @@ test("restart marks runner recovery pending without losing its durable lease ide
     expect(store.get("operation", operation.id)).toMatchObject({
       result: { code: "runner_recovery_pending" },
     });
+  } finally {
+    store.close();
+  }
+});
+
+test("snapshot bounds only terminal history, by completion time, independently of activity members", async () => {
+  const { store } = await fixture();
+  try {
+    const add = (id: string, status: Operation["status"], updatedAt: string) => {
+      const command = { type: "job.scan", bindingId: "binding" } as const;
+      const operation = store.accept(id, id, command.type, activityFor(id, command), id).operation;
+      store.put("operation", id, { ...operation, status, updatedAt });
+    };
+    for (const status of ["accepted", "running", "action_required"] as const)
+      add(status, status, "2020-01-01T00:00:00Z");
+    add("recent-completion", "succeeded", "2026-10-16T12:00:00Z");
+    add("older-completion", "failed", "2026-10-15T12:00:00Z");
+    add("oldest-completion", "cancelled", "2026-10-14T12:00:00Z");
+    for (const [id, status, createdAt] of [
+      ["running-instance", "running", "2020-01-01T00:00:00Z"],
+      ["starting-instance", "starting", "2020-01-01T00:00:00Z"],
+      ["interrupted-instance", "interrupted", "2020-01-01T00:00:00Z"],
+      ["new-stopped", "stopped", "2026-10-16T12:00:00Z"],
+      ["old-stopped", "stopped", "2026-10-15T12:00:00Z"],
+    ] as const)
+      store.put("instance", id, { id, status, createdAt, environmentId: "env", pid: 0 });
+
+    const snapshot = store.snapshot({ operations: 2, activities: 1, stoppedInstances: 1 });
+    expect(snapshot.operations.map(({ id }) => id).sort()).toEqual([
+      "accepted",
+      "action_required",
+      "older-completion",
+      "recent-completion",
+      "running",
+    ]);
+    expect(snapshot.activities?.map(({ id }) => id).sort()).toEqual([
+      "accepted",
+      "action_required",
+      "recent-completion",
+      "running",
+    ]);
+    expect(snapshot.instances.map(({ id }) => id).sort()).toEqual([
+      "interrupted-instance",
+      "new-stopped",
+      "running-instance",
+      "starting-instance",
+    ]);
+    const revision = snapshot.revision;
+    const withoutTerminalOperations = store.snapshot({
+      operations: 0,
+      activities: 1,
+      stoppedInstances: 0,
+    });
+    expect(withoutTerminalOperations.activities).toEqual(snapshot.activities);
+    expect(withoutTerminalOperations.revision).toBe(revision);
+    expect(store.operation("oldest-completion").status).toBe("cancelled");
+    expect(store.activity("oldest-completion").operations).toHaveLength(1);
+    store.put("operation", "oldest-completion", {
+      ...store.operation("oldest-completion"),
+      updatedAt: "2026-10-17T12:00:00Z",
+    });
+    const next = store.snapshot({ operations: 1, activities: 1, stoppedInstances: 0 });
+    expect(next.revision).not.toBe(revision);
+    expect(next.activities?.find(({ status }) => status === "cancelled")?.id).toBe(
+      "oldest-completion",
+    );
+    expect(next.operations.some(({ id }) => id === "recent-completion")).toBe(false);
   } finally {
     store.close();
   }

@@ -6,6 +6,7 @@ import { startService } from "./http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { Snapshot, VectisError } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
+import { activityFor } from "./activities.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -27,6 +28,60 @@ test("an unpaired status snapshot decodes with a stable revision and no reposito
   expect(snapshot.revision).toBe(server.service.snapshot().revision);
   expect(snapshot).not.toHaveProperty("repositories");
   expect((await client.status()).revision).toBe(snapshot.revision);
+});
+
+test("individual operations, keys and activities remain readable outside the status window", async () => {
+  const { client, server } = await fixture();
+  const command = { type: "job.scan", bindingId: "binding" } as const;
+  const id = "old-operation";
+  const key = "request:/with spaces?&=value";
+  const operation = server.store.accept(
+    key,
+    key,
+    command.type,
+    activityFor(id, command),
+    id,
+  ).operation;
+  server.store.put("operation", id, {
+    ...operation,
+    status: "succeeded",
+    updatedAt: "2020-01-01T00:00:00Z",
+  });
+  for (let index = 0; index < 110; index++) {
+    const recent = server.store.accept(`recent-${index}`, "recent", "machine.pause").operation;
+    server.store.update(recent, { status: "succeeded" });
+  }
+  expect((await client.status()).operations.some((item) => item.id === id)).toBe(false);
+  const snapshot = vi.spyOn(server.service, "snapshot").mockImplementation(() => {
+    throw new Error("Targeted reads must not use status");
+  });
+  const revision = server.store.snapshot().revision;
+  expect(await client.operation(id)).toMatchObject({ id, key, status: "succeeded" });
+  expect(await client.operationByKey(key)).toEqual(await client.operation(id));
+  expect(await client.activity(id)).toMatchObject({
+    activity: { id, status: "succeeded" },
+    operations: [{ id }],
+  });
+  expect((await client.activities()).map((activity) => activity.id)).toContain(id);
+  for (const path of [
+    "/v1/operations/unknown",
+    "/v1/operations?key=unknown",
+    "/v1/activities/unknown",
+  ]) {
+    expect(
+      (
+        await fetch(`${server.connection.url}${path}`, {
+          headers: { Authorization: `Bearer ${server.connection.token}` },
+        })
+      ).status,
+    ).toBe(404);
+    expect((await fetch(`${server.connection.url}${path}`)).status).toBe(401);
+  }
+  await expect(client.operation("unknown")).rejects.toMatchObject({ code: "operation_missing" });
+  await expect(client.activity("unknown")).rejects.toMatchObject({ code: "activity_missing" });
+  expect(server.store.snapshot().revision).toBe(revision);
+  expect(snapshot).not.toHaveBeenCalled();
+  snapshot.mockRestore();
 });
 
 test("strict snapshot decoding accepts older services during an app update", async () => {

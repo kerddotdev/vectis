@@ -20,7 +20,7 @@ import { isGeneratedStageMessage, activeRunnerStage } from "@/lib/runner-stage";
 import { cancellableCommands, commandLabels } from "@/lib/operations";
 import { MigrationResult } from "@/views/migration-result";
 import { PreparationResult } from "@/views/preparation-result";
-import { useStateApi } from "@/state";
+import { useActivityDetail, useStateApi } from "@/state";
 
 function VectisTile() {
   return (
@@ -31,16 +31,19 @@ function VectisTile() {
 }
 
 export function ActivityRow({
-  activity,
+  activity: summary,
   defaultOpen = false,
 }: {
   activity: Activity;
   defaultOpen?: boolean;
 }) {
   const { snapshot, submit, perform } = useStateApi();
-  const operations = (snapshot?.operations ?? []).filter(
-    (operation) => operation.activityId === activity.id,
-  );
+  const [open, setOpen] = useState(defaultOpen);
+  const detail = useActivityDetail(summary.id, open);
+  const activity = detail?.activity ?? summary;
+  const operations =
+    detail?.operations.toReversed() ??
+    (snapshot?.operations ?? []).filter((operation) => operation.activityId === activity.id);
   // Operations arrive newest first; an activity reads as the story of what happened.
   const steps = [...operations].reverse();
   const deciding =
@@ -88,6 +91,7 @@ export function ActivityRow({
   return (
     <ExpandableRow
       defaultOpen={defaultOpen}
+      onOpenChange={setOpen}
       leading={
         activity.kind === "github" ? (
           <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-muted text-foreground/80">

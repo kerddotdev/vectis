@@ -1,6 +1,7 @@
 import { expect, test, vi } from "vitest";
 import { ControllerClient } from "./controller.js";
 import { RemoteClient } from "./remote.js";
+import type { ActivityDetail } from "../../protocol/src/index.js";
 
 function fixture() {
   const controller = new ControllerClient(
@@ -25,6 +26,61 @@ const record = {
   createdAt: 1000,
   updatedAt: 1000,
 };
+
+test("remote detail and activity-list reads submit targeted inspections instead of status", async () => {
+  const { request, client } = fixture();
+  const detail: ActivityDetail = {
+    activity: {
+      id: "activity",
+      kind: "vectis",
+      subject: { type: "command", command: "job.scan" },
+      rootOperationId: "local-operation",
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+      status: "succeeded",
+      message: "Done",
+    },
+    operations: [
+      {
+        id: "local-operation",
+        key: "local-key",
+        command: "job.scan",
+        activityId: "activity",
+        status: "succeeded",
+        message: "Done",
+        createdAt: "2026-01-01",
+        updatedAt: "2026-01-01",
+      },
+    ],
+  };
+  const cases = [
+    {
+      query: { name: "activity", id: "activity" },
+      result: detail,
+      read: () => client.activity("activity"),
+    },
+    { query: { name: "activities" }, result: [detail.activity], read: () => client.activities() },
+    {
+      query: { name: "operation", id: "local-operation" },
+      result: detail.operations[0],
+      read: () => client.localOperation("local-operation"),
+    },
+    {
+      query: { name: "operation.key", key: "local-key" },
+      result: detail.operations[0],
+      read: () => client.operationByKey("local-key"),
+    },
+  ];
+  for (const { query, result, read } of cases) {
+    request.mockClear();
+    request.mockResolvedValueOnce({ queryId: "query" }).mockResolvedValueOnce({
+      pending: false,
+      responseJson: JSON.stringify({ ok: true, result }),
+    });
+    expect(await read()).toEqual(result);
+    expect(request.mock.calls[0]?.[0]).toMatchObject({ type: "query.submit", query });
+  }
+});
 test("activity cancellation is replayed on the machine with the local activity identity", async () => {
   const { request, client } = fixture();
   const command = { type: "activity.cancel", id: "local-activity" } as const;

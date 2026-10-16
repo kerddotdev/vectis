@@ -176,7 +176,7 @@ test("lost local replies and relay restart reuse the durable local operation", a
       advanceRemoteOperation(
         await pending(),
         {
-          status: (...args) => local.status(...args),
+          operationByKey: (...args) => local.operationByKey(...args),
           submit: async (...args) => {
             await local.submit(...args);
             throw new Error("Connection lost after the service accepted the command.");
@@ -339,8 +339,8 @@ test.each([
   }));
   const local = {
     submit,
-    status: async () => {
-      throw new Error("Unexpected status read");
+    operationByKey: async () => {
+      throw new Error("Unexpected operation lookup");
     },
   };
   const pending = async () => {

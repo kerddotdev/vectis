@@ -1,6 +1,6 @@
 import { expect, test, vi } from "vitest";
 import { Service } from "./service.js";
-import { Store } from "./store.js";
+import { Store, snapshotLimits } from "./store.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
 import { activityFor } from "./activities.js";
@@ -314,3 +314,273 @@ test("restart closes a request interrupted before startup without registering a 
     store.close();
   }
 });
+
+function addRecentHistory(store: Store) {
+  for (let index = 0; index <= snapshotLimits.operations; index++) {
+    const { operation } = store.accept(`recent-${index}`, "history", "machine.pause");
+    store.update(operation, { status: "succeeded" });
+  }
+}
+
+test.each(["stopped", "interrupted"] as const)(
+  "restart recovers an old start child with a %s instance outside the terminal window",
+  async (status) => {
+    const { store, service, broker, interrupted, runtime } = await fixture();
+    await service.close();
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const { operation: start } = store.accept(
+      `${interrupted.id}:start`,
+      "start",
+      "environment.start",
+      { activityId: interrupted.id },
+    );
+    store.put("operation", start.id, {
+      ...start,
+      status: "succeeded",
+      updatedAt: createdAt,
+    });
+    store.update(interrupted, {
+      status: "running",
+      result: {
+        bindingId: "binding",
+        environmentId: "test",
+        leaseKey: interrupted.id,
+        stage: "registering",
+      },
+    });
+    store.put("instance", start.id, {
+      id: start.id,
+      environmentId: "test",
+      status,
+      pid: 0,
+      createdAt,
+      stoppedAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    for (let index = 0; index < snapshotLimits.stoppedInstances; index++)
+      store.put("instance", `recent-instance-${index}`, {
+        id: `recent-instance-${index}`,
+        environmentId: "test",
+        status: "stopped",
+        pid: 0,
+        createdAt: new Date().toISOString(),
+      });
+    addRecentHistory(store);
+    const reconcile = vi
+      .spyOn(runtime, "reconcile")
+      .mockResolvedValueOnce(false)
+      .mockResolvedValue(true);
+    const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+      connected: () => true,
+    });
+    try {
+      expect(store.snapshot().operations.some(({ id }) => id === start.id)).toBe(false);
+      if (status === "stopped")
+        expect(store.snapshot().instances.some(({ id }) => id === start.id)).toBe(false);
+      await restarted.initialize();
+      await restarted.drain();
+      expect(store.instance(start.id)?.status).toBe("stopped");
+      expect(store.operation(interrupted.id)).toMatchObject({
+        status: "cancelled",
+        result: { code: "runner_interrupted" },
+      });
+      if (status === "interrupted") {
+        expect(reconcile).toHaveBeenCalledTimes(2);
+        expect(reconcile).toHaveBeenLastCalledWith(start.id, undefined);
+      }
+      expect(broker.releaseRunner).toHaveBeenCalledOnce();
+      expect(broker.prepareRunner).not.toHaveBeenCalled();
+      expect(restarted.snapshot().runnerCapacity?.active).toBe(0);
+    } finally {
+      await restarted.close();
+      store.close();
+    }
+  },
+);
+
+test("recovery without progress never mistakes an old start child for an unstarted runner", async () => {
+  const { store, service, broker, interrupted, runtime } = await fixture();
+  await service.close();
+  const { operation: start } = store.accept(
+    `${interrupted.id}:start`,
+    "start",
+    "environment.start",
+    { activityId: interrupted.id },
+  );
+  store.put("operation", start.id, {
+    ...start,
+    status: "succeeded",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  store.updateActivity(interrupted.id, (activity) => ({ ...activity, bindingId: "binding" }));
+  store.update(interrupted, { status: "running", result: undefined });
+  addRecentHistory(store);
+  const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+    connected: () => true,
+  });
+  try {
+    expect(store.snapshot().operations.some(({ id }) => id === start.id)).toBe(false);
+    await restarted.initialize();
+    await restarted.drain();
+    expect(store.operation(interrupted.id)).toMatchObject({
+      status: "action_required",
+      result: { code: "runner_recovery_pending", recovery: { attempts: 1 } },
+    });
+    expect(broker.reconcileRunner).not.toHaveBeenCalled();
+    expect(broker.releaseRunner).not.toHaveBeenCalled();
+  } finally {
+    await restarted.close();
+    store.close();
+  }
+});
+
+test("instance stop recognizes a retained stopped instance outside the status window", async () => {
+  const { store, service, runtime } = await fixture();
+  const stop = vi.spyOn(runtime, "stop").mockResolvedValue(undefined);
+  try {
+    store.put("instance", "instance", {
+      ...store.instance("instance"),
+      stoppedAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    for (let index = 0; index < snapshotLimits.stoppedInstances; index++)
+      store.put("instance", `recent-instance-${index}`, {
+        id: `recent-instance-${index}`,
+        environmentId: "test",
+        status: "stopped",
+        pid: 0,
+        createdAt: new Date().toISOString(),
+      });
+    expect(store.snapshot().instances.some(({ id }) => id === "instance")).toBe(false);
+    const operation = service.submit("stop-old", { type: "instance.stop", id: "instance" });
+    await service.drain();
+    await vi.waitFor(() => expect(store.operation(operation.id).status).toBe("succeeded"));
+    expect(stop).not.toHaveBeenCalled();
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
+
+test("reconciliation finds an old start child before releasing its runner lease", async () => {
+  const { store, service, broker, interrupted } = await fixture();
+  try {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const { operation: start } = store.accept(
+      `${interrupted.id}:start`,
+      "start",
+      "environment.start",
+      { activityId: interrupted.id },
+    );
+    store.put("operation", start.id, {
+      ...start,
+      status: "succeeded",
+      createdAt,
+      updatedAt: createdAt,
+    });
+    store.put("operation", interrupted.id, {
+      ...store.operation(interrupted.id),
+      createdAt,
+      updatedAt: createdAt,
+      result: {
+        bindingId: "binding",
+        environmentId: "test",
+        leaseKey: interrupted.id,
+        stage: "registering",
+      },
+    });
+    store.put("instance", start.id, {
+      id: start.id,
+      environmentId: "test",
+      status: "interrupted",
+      pid: 0,
+      createdAt,
+    });
+    addRecentHistory(store);
+    expect(store.snapshot().operations.some(({ id }) => id === start.id)).toBe(false);
+    const blocked = service.submit("recover-blocked", {
+      type: "runner.reconcile",
+      id: interrupted.id,
+    });
+    await service.drain();
+    expect(store.operation(blocked.id)).toMatchObject({
+      status: "action_required",
+      result: { code: "reconciliation_required" },
+    });
+    expect(broker.reconcileRunner).not.toHaveBeenCalled();
+    expect(broker.releaseRunner).not.toHaveBeenCalled();
+
+    store.put("instance", start.id, {
+      id: start.id,
+      environmentId: "test",
+      status: "stopped",
+      pid: 0,
+      createdAt,
+      stoppedAt: createdAt,
+    });
+    for (let index = 0; index < snapshotLimits.stoppedInstances; index++)
+      store.put("instance", `recent-instance-${index}`, {
+        id: `recent-instance-${index}`,
+        environmentId: "test",
+        status: "stopped",
+        pid: 0,
+        createdAt: new Date().toISOString(),
+      });
+    expect(store.snapshot().instances.some(({ id }) => id === start.id)).toBe(false);
+    const stoppedInstance = service.submit("reconcile-stopped-instance", {
+      type: "instance.reconcile",
+      id: start.id,
+    });
+    await service.drain();
+    expect(store.operation(stoppedInstance.id)).toMatchObject({
+      status: "action_required",
+      result: { code: "reconciliation_required" },
+    });
+    const recovered = service.submit("recover-stopped", {
+      type: "runner.reconcile",
+      id: interrupted.id,
+    });
+    await service.drain();
+    expect(store.operation(recovered.id).status).toBe("succeeded");
+    expect(store.operation(interrupted.id).status).toBe("cancelled");
+    expect(broker.releaseRunner).toHaveBeenCalledOnce();
+  } finally {
+    await service.close();
+    store.close();
+  }
+});
+
+test.each(["succeeded", "failed", "cancelled"] as const)(
+  "waitForOperation reads old %s runner and start operations outside the status window",
+  async (status) => {
+    const { store, service, interrupted } = await fixture();
+    try {
+      const { operation: start } = store.accept(
+        `${interrupted.id}:start`,
+        "start",
+        "environment.start",
+        { activityId: interrupted.id },
+      );
+      for (const operation of [interrupted, start])
+        store.put("operation", operation.id, {
+          ...operation,
+          status,
+          message: "Retained control outcome.",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        });
+      addRecentHistory(store);
+      expect(store.snapshot().operations.some(({ id }) => id === interrupted.id)).toBe(false);
+      expect(store.snapshot().operations.some(({ id }) => id === start.id)).toBe(false);
+      for (const operation of [interrupted, start]) {
+        const waiting = service["waitForOperation"](operation.id);
+        if (status === "succeeded") await expect(waiting).resolves.toBeUndefined();
+        else
+          await expect(waiting).rejects.toMatchObject({
+            code: "runner_control_failed",
+            message: "Retained control outcome.",
+          });
+      }
+    } finally {
+      await service.close();
+      store.close();
+    }
+  },
+);
