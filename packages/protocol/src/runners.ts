@@ -39,6 +39,26 @@ export interface RunnerBroker {
   runnerStatus(leaseId: string, signal: AbortSignal): Promise<RunnerStatus>;
 }
 
+export const PhaseName = Schema.Literals([
+  "queued_locally",
+  "vm_start",
+  "guest_ready",
+  "runner_install",
+  "runner_preinstalled",
+  "job_check",
+  "registration",
+  "waiting_for_job",
+  "job",
+  "cleanup",
+]);
+export type PhaseName = typeof PhaseName.Type;
+export const RunnerPhase = Schema.Struct({
+  name: PhaseName,
+  startedAt: Schema.String,
+  endedAt: Schema.optional(Schema.String),
+});
+export type RunnerPhase = typeof RunnerPhase.Type;
+
 export const RunnerProgress = Schema.Struct({
   bindingId: Identifier,
   environmentId: Identifier,
@@ -46,6 +66,7 @@ export const RunnerProgress = Schema.Struct({
   instanceId: Schema.optional(Identifier),
   leaseId: Schema.optional(Identifier),
   runnerId: Schema.optional(Schema.Int),
+  phases: Schema.optional(Schema.Array(RunnerPhase).check(Schema.isMaxLength(16))),
   diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(16384))),
   cause: Schema.optional(
     Schema.Struct({

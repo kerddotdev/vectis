@@ -27,6 +27,8 @@ vectis logs --lines 200 --json
 
 Displayed logs, stored operation details and retained runner and preparation diagnostics redact recognized credentials.
 
+For slow runners, inspect `result.phases` on the runner operation, either directly or inside `vectis activity get <activity-id> --json`. Compare `vm_start`, `guest_ready`, `runner_install` and `registration` to find startup costs; `cleanup` measures the stop and release attempt. Each duration is `endedAt - startedAt`. A missing end is still running or interrupted, and older records may omit phases. Job timing starts at the first GitHub busy observation, normally polled every 30 seconds, so short jobs can be missed. These local timings do not measure the full GitHub queue. See [Read phase timings](/docs/guides/runners#read-phase-timings) for the complete phase list, overlap and retention rules.
+
 The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means completion is unconfirmed; follow its `nextStep`. Runner cleanup may still be retried automatically.
 
 An operation that stays in **Needs you** after you have read it, usually because the service restarted before it finished, can be closed with **Dismiss** in the app or `vectis operation cancel <operation-id>`. It ends as `cancelled` and nothing else changes. Two cases keep their own way out instead: an interrupted runner is reconciled once its VM is confirmed stopped, and an image preparation is resumed or discarded.

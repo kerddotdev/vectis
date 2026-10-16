@@ -6,6 +6,8 @@ import { startService } from "./http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { Snapshot, VectisError } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
+import { activityFor } from "./activities.js";
+import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -27,6 +29,31 @@ test("an unpaired status snapshot decodes with a stable revision and no reposito
   expect(snapshot.revision).toBe(server.service.snapshot().revision);
   expect(snapshot).not.toHaveProperty("repositories");
   expect((await client.status()).revision).toBe(snapshot.revision);
+});
+
+test("snapshot, activity and operation reads preserve runner phase timestamps", async () => {
+  const { client, server } = await fixture();
+  const command = { type: "runner.run", bindingId: "binding" } as const;
+  const operation = server.store.accept(
+    "runner",
+    "runner",
+    command.type,
+    activityFor("runner", command),
+    "runner",
+  ).operation;
+  const result: RunnerProgress = {
+    bindingId: "binding",
+    environmentId: "linux",
+    leaseKey: operation.id,
+    stage: "finished",
+    phases: [{ name: "vm_start", startedAt: operation.createdAt, endedAt: operation.createdAt }],
+  };
+  server.store.update(operation, { status: "succeeded", result });
+  expect(
+    (await client.status()).operations.find((item) => item.id === operation.id)?.result,
+  ).toEqual(result);
+  expect((await client.operation(operation.id)).result).toEqual(result);
+  expect((await client.activity("runner")).operations[0]?.result).toEqual(result);
 });
 
 test("strict snapshot decoding accepts older services during an app update", async () => {

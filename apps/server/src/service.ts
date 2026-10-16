@@ -789,6 +789,7 @@ export class Service {
               environment,
               {
                 broker,
+                acceptedAt: operation.createdAt,
                 request: {
                   ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
                   ...(command.automatic ? { automatic: true } : {}),

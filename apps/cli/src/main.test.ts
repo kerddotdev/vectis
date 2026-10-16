@@ -4,6 +4,65 @@ import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { startService } from "../../server/src/http.js";
 import type { JobLogRequest, JobLogs } from "../../../packages/protocol/src/jobs.js";
+import { activityFor } from "../../server/src/activities.js";
+import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
+
+test("operation and activity inspection retain phases in pretty and compact JSON", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-cli-phases-"));
+  const server = await startService({ home });
+  const argv = process.argv;
+  const exitCode = process.exitCode;
+  const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  try {
+    const command = { type: "runner.run", bindingId: "binding" } as const;
+    const operation = server.store.accept(
+      "runner",
+      "runner",
+      command.type,
+      activityFor("runner", command),
+      "runner",
+    ).operation;
+    const result: RunnerProgress = {
+      bindingId: "binding",
+      environmentId: "linux",
+      leaseKey: operation.id,
+      stage: "finished",
+      phases: [{ name: "vm_start", startedAt: operation.createdAt, endedAt: operation.createdAt }],
+    };
+    server.store.update(operation, { status: "succeeded", result });
+    for (const command of ["operation", "activity"]) {
+      for (const flags of [[], ["--json"]]) {
+        output.mockClear();
+        vi.resetModules();
+        process.argv = [
+          process.execPath,
+          "vectis",
+          "--home",
+          home,
+          command,
+          "get",
+          "runner",
+          ...flags,
+        ];
+        await import("./main.js");
+        await vi.waitFor(() => expect(output).toHaveBeenCalledOnce());
+        const printed: unknown = JSON.parse(String(output.mock.calls[0]?.[0]));
+        expect(printed).toMatchObject(
+          command === "operation"
+            ? { result }
+            : { operations: [expect.objectContaining({ result })] },
+        );
+      }
+    }
+  } finally {
+    process.argv = argv;
+    process.exitCode = exitCode;
+    output.mockRestore();
+    vi.resetModules();
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("machine configure settles without --wait and status prints runner capacity", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-cli-capacity-"));

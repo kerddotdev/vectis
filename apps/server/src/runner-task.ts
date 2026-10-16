@@ -3,7 +3,12 @@ import {
   type Environment,
   type Instance,
 } from "../../../packages/protocol/src/index.js";
-import type { RunnerBroker, RunnerProgress } from "../../../packages/protocol/src/runners.js";
+import type {
+  PhaseName,
+  RunnerBroker,
+  RunnerPhase,
+  RunnerProgress,
+} from "../../../packages/protocol/src/runners.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import type { GuestConnection } from "../../../packages/runner/src/guest.js";
@@ -26,6 +31,7 @@ interface Controls {
   needed?: (signal: AbortSignal) => Promise<boolean>;
   request?: { jobId?: number; automatic?: boolean };
   now?: () => number;
+  acceptedAt?: string;
   pollIntervalMs?: number;
   idleTimeoutMs?: number;
   offlineTimeoutMs?: number;
@@ -42,11 +48,20 @@ export async function runRunnerTask(
   controls: Controls,
   signal: AbortSignal,
 ) {
+  const now = controls.now ?? Date.now;
+  const taskStartedAt = new Date(now()).toISOString();
   let progress: RunnerProgress = {
     bindingId,
     environmentId: environment.id,
     leaseKey: key,
     stage: "starting",
+    phases: [
+      {
+        name: "queued_locally",
+        startedAt: controls.acceptedAt ?? taskStartedAt,
+        endedAt: taskStartedAt,
+      },
+    ],
   };
   let started = false;
   let registrationUncertain = false;
@@ -58,37 +73,74 @@ export async function runRunnerTask(
     progress = { ...progress, ...patch };
     controls.progress(progress);
   };
+  const beginPhase = (name: PhaseName) => {
+    const phase: RunnerPhase = { name, startedAt: new Date(now()).toISOString() };
+    const phases = [...(progress.phases ?? [])];
+    if (phases.length >= 16) {
+      // Repeated idle-demand checks must not evict the startup timeline.
+      const oldestCheck = phases.findIndex((item) => item.name === "job_check" && item.endedAt);
+      if (oldestCheck < 0) throw new Error("Runner phase history is full.");
+      phases.splice(oldestCheck, 1);
+    }
+    update({ phases: [...phases, phase] });
+    return phase;
+  };
+  const endPhase = (phase: RunnerPhase) => {
+    const endedAt = new Date(now()).toISOString();
+    update({
+      phases: progress.phases?.map((item) => (item === phase ? { ...item, endedAt } : item)),
+    });
+  };
+  const timed = async <T>(name: PhaseName, work: () => Promise<T>) => {
+    const phase = beginPhase(name);
+    try {
+      return await work();
+    } finally {
+      endPhase(phase);
+    }
+  };
+  const needed = controls.needed;
+  const watchedControls = {
+    ...controls,
+    ...(needed
+      ? { needed: (signal: AbortSignal) => timed("job_check", () => needed(signal)) }
+      : {}),
+  };
   update({});
   try {
     signal.throwIfAborted();
-    if (controls.needed && !(await controls.needed(signal)))
+    if (watchedControls.needed && !(await watchedControls.needed(signal)))
       throw new VectisError(
         "job_not_queued",
         "The GitHub job no longer needs queued runner capacity.",
       );
     signal.throwIfAborted();
     started = true;
-    const instance = await controls.start();
+    const instance = await timed("vm_start", () => controls.start());
     update({ instanceId: instance.id, stage: "preparing_guest" });
     signal.throwIfAborted();
-    connection = await readyGuest(environment, instance, signal);
+    connection = await timed("guest_ready", () => readyGuest(environment, instance, signal));
     const shell = environment.os === "windows" ? "powershell" : "bash";
-    const installed = await executeGuest(connection, runnerInstallScript(environment.os), {
-      shell,
-      signal: AbortSignal.any([signal, AbortSignal.timeout(600000)]),
-    });
+    const guest = connection;
+    const installed = await timed("runner_install", () =>
+      executeGuest(guest, runnerInstallScript(environment.os), {
+        shell,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(600000)]),
+      }),
+    );
     if (installed.exitCode !== 0)
       throw new VectisError(
         "runner_install_failed",
         "The verified runner installation failed.",
         "Inspect the base image prerequisites before starting a fresh runner.",
       );
-    if (controls.needed && !(await controls.needed(signal)))
+    if (watchedControls.needed && !(await watchedControls.needed(signal)))
       throw new VectisError(
         "job_not_queued",
         "The GitHub job no longer needs queued runner capacity.",
       );
     update({ stage: "registering" });
+    const registration = beginPhase("registration");
     registrationUncertain = true;
     const grant = await controls.broker
       .prepareRunner(bindingId, key, signal, controls.request)
@@ -137,15 +189,27 @@ export async function runRunnerTask(
         "runner_policy_missing",
         "The runner grant has no repository assignment policy.",
       );
+    endPhase(registration);
     update({ runnerId: grant.runnerId, stage: "listening" });
+    const waiting = beginPhase("waiting_for_job");
+    let job: RunnerPhase | undefined;
+    let listenerExited = false;
     const listening = new AbortController();
     const listeningSignal = AbortSignal.any([signal, listening.signal]);
-    const watcher = watchIdleRunner(grant.id, controls, listening, listeningSignal);
+    const watcher = watchIdleRunner(grant.id, watchedControls, listening, listeningSignal, () => {
+      if (job || listenerExited) return;
+      endPhase(waiting);
+      job = beginPhase("job");
+    });
     const execution = await executeRunnerListener(
       connection,
       environment.os,
       runnerStartScript(environment.os, grant.encodedConfig, grant.access),
       listeningSignal,
+      () => {
+        listenerExited = true;
+        endPhase(job ?? waiting);
+      },
     )
       .catch((error: unknown) => {
         if (!signal.aborted && listening.signal.reason instanceof VectisError)
@@ -168,6 +232,7 @@ export async function runRunnerTask(
       );
     }
   } catch (error) {
+    for (const phase of progress.phases ?? []) if (!phase.endedAt) endPhase(phase);
     failure = error;
   }
   if (
@@ -184,7 +249,7 @@ export async function runRunnerTask(
         secrets: [secret],
       }).catch(() => undefined),
     });
-  {
+  const cleanupResult = await timed("cleanup", async () => {
     update({
       stage: "cleaning",
       ...(failure instanceof VectisError && failure.code === "runner_assignment_rejected"
@@ -225,42 +290,45 @@ export async function runRunnerTask(
         };
       }
     }
-  }
-  if (registrationUncertain) {
-    if (
-      failure instanceof VectisError &&
-      ["public_runner_approval_required", "private_runner_approval_required"].includes(failure.code)
-    )
-      return {
-        status: "action_required" as const,
-        progress,
-        message: failure.message,
-        code: failure.code,
-        nextStep: `${failure.nextStep} Then run vectis runner reconcile with this operation ID to close the stopped runner attempt.`,
-      };
-    try {
-      const lease = await controls.broker.reconcileRunner(
-        { bindingId, environmentId: environment.id, key },
-        AbortSignal.timeout(10000),
-      );
-      if (lease.bindingId !== bindingId || lease.environmentId !== environment.id)
-        throw new Error("Runner lease identity mismatch.");
-      update({ leaseId: lease.id });
-      if (lease.phase !== "released")
-        await controls.broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
-      failure = new VectisError(
-        "runner_registration_failed",
-        "Runner registration failed; cleanup is confirmed and the request can be retried.",
-      );
-    } catch {
-      return {
-        status: "action_required" as const,
-        progress,
-        message: "The VM is stopped. Reconcile the registration request before retrying.",
-        code: "runner_registration_uncertain",
-      };
+    if (registrationUncertain) {
+      if (
+        failure instanceof VectisError &&
+        ["public_runner_approval_required", "private_runner_approval_required"].includes(
+          failure.code,
+        )
+      )
+        return {
+          status: "action_required" as const,
+          progress,
+          message: failure.message,
+          code: failure.code,
+          nextStep: `${failure.nextStep} Then run vectis runner reconcile with this operation ID to close the stopped runner attempt.`,
+        };
+      try {
+        const lease = await controls.broker.reconcileRunner(
+          { bindingId, environmentId: environment.id, key },
+          AbortSignal.timeout(10000),
+        );
+        if (lease.bindingId !== bindingId || lease.environmentId !== environment.id)
+          throw new Error("Runner lease identity mismatch.");
+        update({ leaseId: lease.id });
+        if (lease.phase !== "released")
+          await controls.broker.releaseRunner(lease.id, AbortSignal.timeout(60000));
+        failure = new VectisError(
+          "runner_registration_failed",
+          "Runner registration failed; cleanup is confirmed and the request can be retried.",
+        );
+      } catch {
+        return {
+          status: "action_required" as const,
+          progress,
+          message: "The VM is stopped. Reconcile the registration request before retrying.",
+          code: "runner_registration_uncertain",
+        };
+      }
     }
-  }
+  });
+  if (cleanupResult) return { ...cleanupResult, progress };
   update({ stage: "finished" });
   if (failure instanceof VectisError && failure.code === "runner_idle")
     return { status: "cancelled" as const, progress, message: failure.message, code: failure.code };
@@ -317,6 +385,7 @@ async function executeRunnerListener(
   os: Environment["os"],
   script: string,
   signal: AbortSignal,
+  onExit: () => void,
 ) {
   const listening = new AbortController();
   const monitoring = new AbortController();
@@ -350,6 +419,7 @@ async function executeRunnerListener(
       (error: unknown) => ({ error }),
     )
     .finally(async () => {
+      onExit();
       clearInterval(timer);
       monitoring.abort();
       await checking;
@@ -369,6 +439,7 @@ async function watchIdleRunner(
   controls: Controls,
   listening: AbortController,
   signal: AbortSignal,
+  onBusy: () => void,
 ) {
   const now = controls.now ?? Date.now;
   const timeoutMs = controls.idleTimeoutMs ?? idleTimeoutMs;
@@ -414,6 +485,7 @@ async function watchIdleRunner(
     if (signal.aborted) return;
     if (!status) continue;
     if ("busy" in status && status.busy) {
+      onBusy();
       idleSince = now();
       offlineSince = undefined;
       continue;
@@ -436,6 +508,7 @@ async function watchIdleRunner(
     if (signal.aborted) return;
     if (!confirmed) continue;
     if ("busy" in confirmed && confirmed.busy) {
+      onBusy();
       idleSince = now();
       continue;
     }

@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
-import type { RunnerBroker } from "../../../packages/protocol/src/runners.js";
+import { RunnerProgress, type RunnerBroker } from "../../../packages/protocol/src/runners.js";
+import { Schema } from "effect";
 import { runRunnerTask } from "./runner-task.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
@@ -120,6 +121,130 @@ test("stops the VM before removing registration and never persists JIT configura
   expect(JSON.stringify(controls.progress.mock.calls)).not.toContain("c2VjcmV0");
   expect(result.message).toContain("Check GitHub");
 });
+
+test("phase history records ordered durations with the injected clock through job exit and cleanup", async () => {
+  vi.useFakeTimers();
+  const { controls, broker } = fixture();
+  const base = Date.parse("2026-10-16T00:00:00.000Z");
+  let clock = base + 5000;
+  const instance = await controls.start();
+  controls.start.mockClear();
+  controls.start.mockImplementation(async () => {
+    clock += 1200;
+    return instance;
+  });
+  const connection = await readyGuest(environment, instance, new AbortController().signal);
+  vi.mocked(readyGuest).mockClear();
+  vi.mocked(readyGuest).mockImplementation(async () => {
+    clock += 800;
+    return connection;
+  });
+  const grant = await broker.prepareRunner();
+  broker.prepareRunner.mockImplementation(async () => {
+    clock += 200;
+    return grant;
+  });
+  controls.stop.mockImplementation(async () => {
+    clock += 200;
+  });
+  broker.releaseRunner.mockImplementation(async () => {
+    clock += 300;
+  });
+  let finish = () => {};
+  vi.mocked(executeGuest)
+    .mockImplementationOnce(async () => {
+      clock += 900;
+      return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+    })
+    .mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+    });
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+  const result = runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      now: () => clock,
+      acceptedAt: new Date(base).toISOString(),
+      needed: async () => {
+        clock += 100;
+        return true;
+      },
+    },
+    new AbortController().signal,
+  );
+  await vi.advanceTimersByTimeAsync(0);
+  clock += 30000;
+  await vi.advanceTimersByTimeAsync(30000);
+  clock += 10000;
+  finish();
+  const completed = await result;
+  expect(completed.status).toBe("succeeded");
+  expect(
+    completed.progress.phases?.map((phase) => [
+      phase.name,
+      Date.parse(phase.endedAt ?? "") - Date.parse(phase.startedAt),
+    ]),
+  ).toEqual([
+    ["queued_locally", 5000],
+    ["job_check", 100],
+    ["vm_start", 1200],
+    ["guest_ready", 800],
+    ["runner_install", 900],
+    ["job_check", 100],
+    ["registration", 200],
+    ["waiting_for_job", 30000],
+    ["job", 10000],
+    ["cleanup", 500],
+  ]);
+  const snapshots = controls.progress.mock.calls.map(([value]) =>
+    Schema.decodeUnknownSync(RunnerProgress)(value),
+  );
+  expect(snapshots[0]?.phases).toHaveLength(1);
+  expect(snapshots.at(-1)).toEqual(completed.progress);
+  expect(
+    snapshots.some((snapshot) =>
+      snapshot.phases?.some((phase) => phase.name === "job" && !phase.endedAt),
+    ),
+  ).toBe(true);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("guest readiness failure closes the failed phase before timing cleanup", async () => {
+  const { controls } = fixture();
+  let clock = Date.parse("2026-10-16T00:00:00.000Z");
+  vi.mocked(readyGuest).mockImplementation(async () => {
+    clock += 8000;
+    throw new GuestUnavailableError("SSH timeout");
+  });
+  controls.stop.mockImplementation(async () => {
+    clock += 2000;
+  });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    { ...controls, now: () => clock },
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({ status: "failed", code: "guest_unavailable" });
+  expect(
+    result.progress.phases?.map((phase) => [
+      phase.name,
+      Date.parse(phase.endedAt ?? "") - Date.parse(phase.startedAt),
+    ]),
+  ).toEqual([
+    ["queued_locally", 0],
+    ["vm_start", 0],
+    ["guest_ready", 8000],
+    ["cleanup", 2000],
+  ]);
+});
 test("retains registration if VM termination is unconfirmed", async () => {
   const { controls, broker } = fixture();
   controls.stop.mockRejectedValue(new Error("exit unknown"));
@@ -131,6 +256,10 @@ test("retains registration if VM termination is unconfirmed", async () => {
     AbortSignal.timeout(1000),
   );
   expect(result.status).toBe("action_required");
+  expect(result.progress.phases?.at(-1)).toMatchObject({
+    name: "cleanup",
+    endedAt: expect.any(String),
+  });
   expect(broker.releaseRunner).not.toHaveBeenCalled();
 });
 test("a lost registration response requires reconciliation instead of a fresh retry", async () => {
@@ -330,18 +459,29 @@ async function listeningFixture(
 test.each([{ busy: false, status: "online" as const }])(
   "an idle runner with status %j drains only after five minutes and releases capacity",
   async (status) => {
-    const { broker, events, needed, done } = await listeningFixture();
+    let clock = Date.parse("2026-10-16T00:00:00.000Z");
+    const { broker, events, needed, done } = await listeningFixture(true, { now: () => clock });
     broker.runnerStatus.mockResolvedValue(status);
     needed.mockResolvedValue(false);
     await vi.advanceTimersByTimeAsync(5 * 60 * 1000 - 1);
     expect(events).toEqual([]);
     expect(needed).toHaveBeenCalledTimes(2);
+    clock += 5 * 60 * 1000;
     await vi.advanceTimersByTimeAsync(1);
-    expect(await done).toMatchObject({
+    const completed = await done;
+    expect(completed).toMatchObject({
       status: "cancelled",
       code: "runner_idle",
       progress: { stage: "finished" },
     });
+    const phases = completed.progress.phases;
+    expect(phases?.find((phase) => phase.name === "waiting_for_job")).toEqual({
+      name: "waiting_for_job",
+      startedAt: "2026-10-16T00:00:00.000Z",
+      endedAt: "2026-10-16T00:05:00.000Z",
+    });
+    expect(phases?.some((phase) => phase.name === "job")).toBe(false);
+    expect(phases?.every((phase) => phase.endedAt)).toBe(true);
     expect(events).toEqual(["stop", "release"]);
     expect(broker.releaseRunner).toHaveBeenCalledWith("lease", expect.any(AbortSignal));
     expect(collectRunnerDiagnostics).not.toHaveBeenCalled();
@@ -381,7 +521,25 @@ test("an idle runner whose requested job still needs queued capacity keeps liste
   expect(needed.mock.calls.length).toBeGreaterThan(2);
   expect(events).toEqual([]);
   complete();
-  expect(await done).toMatchObject({ status: "succeeded" });
+  const completed = await done;
+  expect(completed).toMatchObject({ status: "succeeded" });
+  const phases = completed.progress.phases;
+  expect(phases).toHaveLength(16);
+  expect(phases?.filter((phase) => phase.name === "job_check").length).toBeLessThan(
+    needed.mock.calls.length,
+  );
+  expect(phases?.map((phase) => phase.name)).toEqual(
+    expect.arrayContaining([
+      "queued_locally",
+      "vm_start",
+      "guest_ready",
+      "runner_install",
+      "registration",
+      "waiting_for_job",
+      "cleanup",
+    ]),
+  );
+  expect(phases?.every((phase) => phase.endedAt)).toBe(true);
 });
 
 test.each(["status", "job"] as const)(
