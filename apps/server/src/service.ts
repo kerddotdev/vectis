@@ -123,7 +123,14 @@ export class Service {
         ...environment,
         network: environmentNetwork(environment),
       })),
-      runnerCapacity: runnerCapacity(snapshot, { cpus: cpus().length, memoryBytes: totalmem() }),
+      runnerCapacity: runnerCapacity(
+        snapshot,
+        { cpus: cpus().length, memoryBytes: totalmem() },
+        {
+          start: (id) => this.runnerStart(id),
+          instance: (id) => this.store.instance(id),
+        },
+      ),
       ...(repositories === undefined ? {} : { repositories }),
     };
   }

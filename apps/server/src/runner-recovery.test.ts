@@ -266,27 +266,45 @@ test("restart never settles a runner whose VM might still be running", async () 
   }
 });
 
-test("restart leaves stopped runners pending when cloud release is unconfirmed", async () => {
-  const { store, service, broker, interrupted, runtime } = await fixture();
-  await service.close();
-  store.update(interrupted, { status: "running" });
-  broker.releaseRunner.mockRejectedValue(new Error("GitHub unavailable"));
-  const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
-    connected: () => true,
-  });
-  try {
-    await restarted.initialize();
-    await restarted.drain();
-    expect(store.get("operation", interrupted.id)).toMatchObject({
-      status: "action_required",
-      result: { code: "runner_recovery_pending", recovery: { attempts: 1 } },
+test.each([false, true])(
+  "restart leaves stopped runners pending outside status: %s",
+  async (outsideStatus) => {
+    const { store, service, broker, interrupted, runtime } = await fixture();
+    await service.close();
+    store.update(interrupted, { status: "running" });
+    store.put("instance", "instance", {
+      ...store.instance("instance"),
+      stoppedAt: new Date(Date.now() - 1000).toISOString(),
     });
-    expect(restarted.snapshot().runnerCapacity?.active).toBe(1);
-  } finally {
-    await restarted.close();
-    store.close();
-  }
-});
+    if (outsideStatus)
+      for (let index = 0; index < snapshotLimits.stoppedInstances; index++)
+        store.put("instance", `recent-instance-${index}`, {
+          id: `recent-instance-${index}`,
+          environmentId: "test",
+          status: "stopped",
+          pid: 0,
+          createdAt: new Date().toISOString(),
+        });
+    broker.releaseRunner.mockRejectedValue(new Error("GitHub unavailable"));
+    const restarted = new Service(store, runtime, () => broker, undefined, undefined, undefined, {
+      connected: () => true,
+    });
+    try {
+      await restarted.initialize();
+      await restarted.drain();
+      expect(store.get("operation", interrupted.id)).toMatchObject({
+        status: "action_required",
+        result: { code: "runner_recovery_pending", recovery: { attempts: 1 } },
+      });
+      expect(store.snapshot().instances.some(({ id }) => id === "instance")).toBe(!outsideStatus);
+      expect(broker.releaseRunner).toHaveBeenCalledOnce();
+      expect(restarted.snapshot().runnerCapacity?.active).toBe(0);
+    } finally {
+      await restarted.close();
+      store.close();
+    }
+  },
+);
 
 test("restart closes a request interrupted before startup without registering a runner", async () => {
   const { store, service, broker, runtime } = await fixture();
@@ -376,6 +394,7 @@ test.each(["stopped", "interrupted"] as const)(
       expect(store.snapshot().operations.some(({ id }) => id === start.id)).toBe(false);
       if (status === "stopped")
         expect(store.snapshot().instances.some(({ id }) => id === start.id)).toBe(false);
+      expect(restarted.snapshot().runnerCapacity?.active).toBe(status === "stopped" ? 0 : 1);
       await restarted.initialize();
       await restarted.drain();
       expect(store.instance(start.id)?.status).toBe("stopped");

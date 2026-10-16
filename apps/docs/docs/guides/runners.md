@@ -41,7 +41,7 @@ A locally listening runner that GitHub reports offline or missing for 2 consecut
 
 ## Read phase timings
 
-Inspect a runner with `vectis operation get <operation-id> --json`, or use `vectis activity get <activity-id> --json` to include its child operations. The runner operation's `result.phases` retains phase timestamps as `stage` changes. CLI output is always JSON; `--json` makes it compact. MCP `vectis_operation`, `vectis_activity` and `vectis_status` return the same data, locally and through remote inspection.
+Inspect a runner with `vectis operation get <operation-id> --json`, or use `vectis activity get <activity-id> --json` to include its child operations. The runner operation's `result.phases` retains phase timestamps as `stage` changes. CLI output is always JSON; `--json` makes it compact. MCP `vectis_operation` and `vectis_activity` return these details, locally and through remote inspection, including retained operations outside the status window. MCP `vectis_status` returns a compact summary without operation results or phase timestamps; use the detail tools to read timings.
 
 Each phase has a `name`, an ISO UTC `startedAt`, and an optional `endedAt`. Subtract the timestamps to get its duration: `00:00:00.000Z` to `00:00:12.300Z` is 12.3 seconds. A closed phase measures an attempt, including a failed or cancelled one; use the operation status to determine its outcome. A missing end means the phase is still running or was interrupted before its end was recorded. Older operations may have no phases.
 

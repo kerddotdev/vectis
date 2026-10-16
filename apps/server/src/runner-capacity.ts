@@ -4,6 +4,8 @@ import {
   type Environment,
   type Snapshot,
   type RunnerCapacity,
+  type Operation,
+  type Instance,
 } from "../../../packages/protocol/src/index.js";
 import { RunnerProgress } from "../../../packages/protocol/src/runners.js";
 import { Schema } from "effect";
@@ -34,7 +36,14 @@ export function instanceAdmissionError(
     return new VectisError("macos_limit", "The two-instance macOS limit has been reached.");
 }
 
-export function runnerCapacity(snapshot: Snapshot, host: Host): RunnerCapacity {
+export function runnerCapacity(
+  snapshot: Snapshot,
+  host: Host,
+  lookup?: {
+    start(id: string): Operation | undefined;
+    instance(id: string): Instance | undefined;
+  },
+): RunnerCapacity {
   const max = snapshot.machine.maxRunners ?? defaultMaxRunners;
   const runners = snapshot.operations
     .filter(
@@ -44,10 +53,15 @@ export function runnerCapacity(snapshot: Snapshot, host: Host): RunnerCapacity {
     )
     .map((operation) => {
       const progress = Schema.is(RunnerProgress)(operation.result) ? operation.result : undefined;
-      const start = snapshot.operations.find((item) => item.key === `${operation.id}:start`);
-      const instance = snapshot.instances.find(
-        (item) => item.id === (progress?.instanceId ?? start?.id),
-      );
+      const start =
+        lookup?.start(operation.id) ??
+        snapshot.operations.find((item) => item.key === `${operation.id}:start`);
+      const instanceId = progress?.instanceId ?? start?.id;
+      const instance =
+        instanceId === undefined
+          ? undefined
+          : (lookup?.instance(instanceId) ??
+            snapshot.instances.find((item) => item.id === instanceId));
       return { operation, progress, start, instance };
     })
     .filter(({ operation, progress, start, instance }) => {

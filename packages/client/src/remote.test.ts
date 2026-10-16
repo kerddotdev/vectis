@@ -2,6 +2,7 @@ import { expect, test, vi } from "vitest";
 import { ControllerClient } from "./controller.js";
 import { RemoteClient } from "./remote.js";
 import type { ActivityDetail } from "../../protocol/src/index.js";
+import type { RunnerProgress } from "../../protocol/src/runners.js";
 
 function fixture() {
   const controller = new ControllerClient(
@@ -29,11 +30,18 @@ const record = {
 
 test("remote detail and activity-list reads submit targeted inspections instead of status", async () => {
   const { request, client } = fixture();
+  const result: RunnerProgress = {
+    bindingId: "binding",
+    environmentId: "linux",
+    leaseKey: "local-operation",
+    stage: "finished",
+    phases: [{ name: "vm_start", startedAt: "2026-01-01", endedAt: "2026-01-01" }],
+  };
   const detail: ActivityDetail = {
     activity: {
       id: "activity",
       kind: "vectis",
-      subject: { type: "command", command: "job.scan" },
+      subject: { type: "command", command: "runner.run" },
       rootOperationId: "local-operation",
       createdAt: "2026-01-01",
       updatedAt: "2026-01-01",
@@ -44,7 +52,8 @@ test("remote detail and activity-list reads submit targeted inspections instead 
       {
         id: "local-operation",
         key: "local-key",
-        command: "job.scan",
+        command: "runner.run",
+        result,
         activityId: "activity",
         status: "succeeded",
         message: "Done",
