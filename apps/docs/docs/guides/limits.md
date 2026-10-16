@@ -30,20 +30,22 @@ Override them with `--cpu`, `--memory-mib` and `--disk-gib`. Minimum disk sizes 
 
 ## Cloud and automation
 
-| Limit                                             | Value                                             |
-| ------------------------------------------------- | ------------------------------------------------- |
-| Active runner leases per Mac                      | 100                                               |
-| Lifetime of a runner's just-in-time configuration | 15 minutes                                        |
-| Automatic runner attempts per job                 | 3                                                 |
-| Wait after a failed attempt                       | 60 seconds                                        |
-| Unclaimed automatic runner request, Mac offline   | Expires after 2 minutes                           |
-| Unclaimed automatic runner request, Mac online    | Expires after 10 minutes                          |
-| Scan for jobs Vectis missed                       | At most every 5 minutes per repository connection |
-| Jobs listed per repository connection             | The latest 100                                    |
-| Lines returned by one service log read            | At most 1000                                      |
-| Runner diagnostics                                | At most 16 KiB                                    |
-| Pairing requests                                  | Expire after 10 minutes                           |
-| Controller grants                                 | Expire after 90 days                              |
+| Limit                                              | Value                                             |
+| -------------------------------------------------- | ------------------------------------------------- |
+| Active runner leases per Mac                       | 100                                               |
+| Lifetime of a runner's just-in-time configuration  | 15 minutes                                        |
+| Automatic runner failures per job                  | 3                                                 |
+| Total automatic runner attempts per job            | 10                                                |
+| Wait after an action-required or missing operation | 10 minutes                                        |
+| Wait after a failed attempt                        | 60 seconds                                        |
+| Unclaimed automatic runner request, Mac offline    | Expires after 2 minutes                           |
+| Unclaimed automatic runner request, Mac online     | Expires after 10 minutes                          |
+| Scan for jobs Vectis missed                        | At most every 5 minutes per repository connection |
+| Jobs listed per repository connection              | The latest 100                                    |
+| Lines returned by one service log read             | At most 1000                                      |
+| Runner diagnostics                                 | At most 16 KiB                                    |
+| Pairing requests                                   | Expire after 10 minutes                           |
+| Controller grants                                  | Expire after 90 days                              |
 
 ## History and retention
 

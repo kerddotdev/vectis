@@ -173,12 +173,22 @@ export const CloudStatus = Schema.Struct({
   message: Schema.optional(Schema.String),
 });
 export type CloudStatus = typeof CloudStatus.Type;
+export const EnvironmentSlots = Schema.Struct({
+  environmentId: Identifier,
+  available: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type EnvironmentSlots = typeof EnvironmentSlots.Type;
+export const RunnerCapacity = Schema.Struct({
+  max: Schema.Int,
+  active: Schema.Int,
+  available: Schema.Int,
+  environments: Schema.optional(Schema.Array(EnvironmentSlots)),
+});
+export type RunnerCapacity = typeof RunnerCapacity.Type;
 export const Snapshot = Schema.Struct({
   revision: Schema.optional(Schema.String),
   preparationBusy: Schema.optional(Schema.Boolean),
-  runnerCapacity: Schema.optional(
-    Schema.Struct({ max: Schema.Int, active: Schema.Int, available: Schema.Int }),
-  ),
+  runnerCapacity: Schema.optional(RunnerCapacity),
   protocolVersion: Schema.Literal(1),
   version: Schema.optional(Schema.String),
   machine: Machine,

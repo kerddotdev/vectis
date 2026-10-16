@@ -36,7 +36,9 @@ test("machine configure settles without --wait and status prints runner capacity
     await import("./main.js");
     await vi.waitFor(() =>
       expect(output).toHaveBeenCalledWith(
-        expect.stringContaining('"runnerCapacity":{"max":3,"active":0,"available":0}'),
+        expect.stringContaining(
+          '"runnerCapacity":{"max":3,"active":0,"available":0,"environments":[]}',
+        ),
       ),
     );
   } finally {

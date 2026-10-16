@@ -146,6 +146,7 @@ export function startCloudRelay(
   let tokenRequest: Promise<string | null> | undefined;
   let lastHeartbeat = 0;
   let lastRunnerSlots: number | undefined;
+  let lastEnvironmentSlots: string | undefined;
   let rerun = false;
   let removed = false;
   let interval: ReturnType<typeof setInterval> | undefined;
@@ -213,11 +214,18 @@ export function startCloudRelay(
         "This credential belongs to another local machine.",
       );
     const runnerSlots = snapshot.runnerCapacity?.available;
-    if (Date.now() - lastHeartbeat >= 30000 || runnerSlots !== lastRunnerSlots) {
+    const environmentSlots = snapshot.runnerCapacity?.environments?.slice(0, 100);
+    const environmentSlotsKey = JSON.stringify(environmentSlots);
+    if (
+      Date.now() - lastHeartbeat >= 30000 ||
+      runnerSlots !== lastRunnerSlots ||
+      environmentSlotsKey !== lastEnvironmentSlots
+    ) {
       await interruptible(
         cloud.mutation(api.machines.heartbeat, {
           paused: snapshot.machine.paused,
           ...(runnerSlots === undefined ? {} : { runnerSlots }),
+          ...(environmentSlots === undefined ? {} : { environmentSlots }),
           runnerIdle:
             snapshot.preparationBusy !== true &&
             snapshot.instances.every((instance) => instance.status === "stopped") &&
@@ -255,6 +263,7 @@ export function startCloudRelay(
       );
       lastHeartbeat = Date.now();
       lastRunnerSlots = runnerSlots;
+      lastEnvironmentSlots = environmentSlotsKey;
     }
     const operations = await interruptible(cloud.query(api.operations.pending, {}), abort.signal);
     for (const operation of operations)

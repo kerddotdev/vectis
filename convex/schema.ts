@@ -176,6 +176,9 @@ export default defineSchema({
     lastSeenAt: v.number(),
     runnerIdle: v.optional(v.boolean()),
     runnerSlots: v.optional(v.number()),
+    environmentSlots: v.optional(
+      v.array(v.object({ environmentId: v.string(), available: v.number() })),
+    ),
   }).index("by_machine", ["machineId"]),
   runnerDemands: defineTable({
     installationId: v.number(),
@@ -185,6 +188,7 @@ export default defineSchema({
     bindingId: v.id("repositoryBindings"),
     operationId: v.id("operations"),
     attempt: v.number(),
+    failures: v.optional(v.number()),
     updatedAt: v.number(),
   })
     .index("by_job", ["installationId", "repositoryId", "jobId"])

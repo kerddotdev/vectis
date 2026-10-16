@@ -1,4 +1,6 @@
 import { expect, test } from "vitest";
+import { Schema } from "effect";
+import { Snapshot as SnapshotSchema } from "../../../packages/protocol/src/index.js";
 import type { Environment, Snapshot, Operation } from "../../../packages/protocol/src/index.js";
 import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
 
@@ -34,9 +36,9 @@ test("defaults to five runners and counts only unfinished runner operations", ()
   state.operations = (
     ["accepted", "running", "action_required", "succeeded", "failed", "cancelled"] as const
   ).map((status) => operation(status));
-  expect(runnerCapacity(state, host)).toEqual({ max: 5, active: 3, available: 2 });
+  expect(runnerCapacity(state, host)).toMatchObject({ max: 5, active: 2, available: 3 });
   state.machine.maxRunners = 2;
-  expect(runnerCapacity(state, host)).toEqual({ max: 2, active: 3, available: 0 });
+  expect(runnerCapacity(state, host)).toMatchObject({ max: 2, active: 2, available: 0 });
 });
 
 test("CPU budget accounts for running instances and their resource overrides", () => {
@@ -100,7 +102,7 @@ test("preparation flag, pause and missing ready environments report no available
   ).toBe(0);
 });
 
-test("largest ready environment is selected by CPU then memory", () => {
+test("scalar capacity is the maximum available across ready environments", () => {
   const state = snapshot();
   state.environments = [
     { ...environment, id: "small", cpu: 1, memoryMiB: 512 },
@@ -108,7 +110,14 @@ test("largest ready environment is selected by CPU then memory", () => {
     { ...environment, id: "large", memoryMiB: 24576 },
     { ...environment, id: "unready", cpu: 100, state: "action_required" },
   ];
-  expect(runnerCapacity(state, host).available).toBe(1);
+  expect(runnerCapacity(state, host)).toMatchObject({
+    available: 5,
+    environments: [
+      { environmentId: "small", available: 5 },
+      { environmentId: "linux", available: 2 },
+      { environmentId: "large", available: 1 },
+    ],
+  });
 });
 
 test.each([
@@ -136,9 +145,12 @@ test("accepted runners reserve their VM before it boots, so slots are not offere
   expect(runnerCapacity(state, host).available).toBe(0);
 });
 
-test("a starting VM holds its resources, and an interrupted one stops admission entirely", () => {
+test("starting and interrupted VMs hold only their own resources", () => {
   const state = snapshot();
-  state.operations = [operation("running")];
+  state.operations = [
+    operation("running"),
+    { ...operation("succeeded", "environment.start"), id: "instance", key: "running:start" },
+  ];
   state.instances = [{ ...running(), status: "starting" }];
   expect(runnerCapacity(state, host).available).toBe(1);
   state.instances = [
@@ -150,5 +162,90 @@ test("a starting VM holds its resources, and an interrupted one stops admission 
   });
   state.operations = [];
   state.instances = [{ ...running(), status: "interrupted" }];
+  expect(runnerCapacity(state, host).available).toBe(1);
+  state.instances = [{ ...running(), status: "interrupted", cpu: host.cpus }];
   expect(runnerCapacity(state, host).available).toBe(0);
+});
+
+test("macOS limits apply across macOS environments without blocking Linux or Windows", () => {
+  const small = { ...environment, cpu: 1, memoryMiB: 512 };
+  const mac: Environment = { ...small, id: "mac", os: "macos" };
+  const state = snapshot(small);
+  state.environments = [small, mac, { ...mac, id: "mac2" }, { ...small, id: "win", os: "windows" }];
+  state.instances = [running(mac), { ...running(mac), id: "other", status: "interrupted" }];
+  const capacity = runnerCapacity(state, host);
+  expect(capacity.environments).toEqual([
+    { environmentId: "linux", available: 5 },
+    { environmentId: "mac", available: 0 },
+    { environmentId: "mac2", available: 0 },
+    { environmentId: "win", available: 5 },
+  ]);
+  expect(
+    Schema.decodeUnknownSync(SnapshotSchema)({ ...state, runnerCapacity: capacity }).runnerCapacity,
+  ).toEqual(capacity);
+});
+
+test.each(["starting", "running", "interrupted", "stopped"] as const)(
+  "an action-required runner with a %s child VM holds capacity only until verified stopped",
+  (status) => {
+    const state = snapshot({ ...environment, cpu: 1, memoryMiB: 512 });
+    state.operations = [
+      operation("action_required"),
+      {
+        ...operation("succeeded", "environment.start"),
+        id: "instance",
+        key: "action_required:start",
+      },
+    ];
+    state.instances = [{ ...running(), cpu: 1, memoryMiB: 512, status }];
+    expect(runnerCapacity(state, host)).toMatchObject({
+      active: status === "stopped" ? 0 : 1,
+      available: status === "stopped" ? 5 : 4,
+    });
+  },
+);
+
+test("missing instance evidence after a start still holds a runner slot", () => {
+  const state = snapshot({ ...environment, cpu: 1, memoryMiB: 512 });
+  state.operations = [
+    operation("action_required"),
+    { ...operation("succeeded", "environment.start"), key: "action_required:start" },
+  ];
+  expect(runnerCapacity(state, host).active).toBe(1);
+});
+
+test("runner progress identifies boot reservations and a stopped VM without a retained child", () => {
+  const mac: Environment = { ...environment, id: "mac", os: "macos", cpu: 1, memoryMiB: 512 };
+  const state = snapshot(mac);
+  state.environments = [mac, { ...environment, cpu: 1, memoryMiB: 512 }];
+  state.instances = [running(mac)];
+  state.operations = [
+    {
+      ...operation("running"),
+      result: {
+        bindingId: "binding",
+        environmentId: "mac",
+        leaseKey: "running",
+        stage: "starting",
+      },
+    },
+  ];
+  expect(runnerCapacity(state, host).environments).toEqual([
+    { environmentId: "mac", available: 0 },
+    { environmentId: "linux", available: 4 },
+  ]);
+  state.instances = [{ ...running(mac), status: "stopped" }];
+  state.operations = [
+    {
+      ...operation("action_required"),
+      result: {
+        bindingId: "binding",
+        environmentId: "mac",
+        leaseKey: "running",
+        instanceId: "instance",
+        stage: "cleaning",
+      },
+    },
+  ];
+  expect(runnerCapacity(state, host)).toMatchObject({ active: 0, available: 5 });
 });
