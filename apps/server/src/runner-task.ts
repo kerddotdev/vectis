@@ -20,7 +20,8 @@ import {
 
 import {
   assignmentRejectedMarker,
-  assignmentRejectedScript,
+  jobStartedMarker,
+  runnerGateScript,
 } from "../../../packages/runner/src/runner-access.js";
 
 const idleTimeoutMs = 5 * 60 * 1000;
@@ -73,8 +74,8 @@ export async function runRunnerTask(
     progress = { ...progress, ...patch };
     controls.progress(progress);
   };
-  const beginPhase = (name: PhaseName) => {
-    const phase: RunnerPhase = { name, startedAt: new Date(now()).toISOString() };
+  const beginPhase = (name: PhaseName, at = now()) => {
+    const phase: RunnerPhase = { name, startedAt: new Date(at).toISOString() };
     const phases = [...(progress.phases ?? [])];
     if (phases.length >= 16) {
       // Repeated idle-demand checks must not evict the startup timeline.
@@ -85,8 +86,8 @@ export async function runRunnerTask(
     update({ phases: [...phases, phase] });
     return phase;
   };
-  const endPhase = (phase: RunnerPhase) => {
-    const endedAt = new Date(now()).toISOString();
+  const endPhase = (phase: RunnerPhase, at = now()) => {
+    const endedAt = new Date(at).toISOString();
     update({
       phases: progress.phases?.map((item) => (item === phase ? { ...item, endedAt } : item)),
     });
@@ -116,7 +117,10 @@ export async function runRunnerTask(
       );
     signal.throwIfAborted();
     started = true;
-    const instance = await timed("vm_start", () => controls.start());
+    const instance = await timed(
+      environment.x64 === "rosetta" ? "vm_start_and_guest_ready" : "vm_start",
+      () => controls.start(),
+    );
     update({ instanceId: instance.id, stage: "preparing_guest" });
     signal.throwIfAborted();
     connection = await timed("guest_ready", () => readyGuest(environment, instance, signal));
@@ -189,26 +193,58 @@ export async function runRunnerTask(
         "runner_policy_missing",
         "The runner grant has no repository assignment policy.",
       );
-    endPhase(registration);
+    const registeredAt = now();
+    endPhase(registration, registeredAt);
     update({ runnerId: grant.runnerId, stage: "listening" });
-    const waiting = beginPhase("waiting_for_job");
+    const waiting = beginPhase("waiting_for_job", registeredAt);
     let job: RunnerPhase | undefined;
-    let listenerExited = false;
+    let listenerExitedAt: number | undefined;
+    let guestStartObserved = false;
+    const jobStarted = (reportedAt?: number) => {
+      if (
+        guestStartObserved ||
+        (reportedAt === undefined && (job || listenerExitedAt !== undefined))
+      )
+        return;
+      guestStartObserved = reportedAt !== undefined;
+      const at = Math.max(registeredAt, Math.min(reportedAt ?? now(), listenerExitedAt ?? now()));
+      const startedAt = new Date(at).toISOString();
+      update({
+        phases: progress.phases?.map((phase) =>
+          phase.name === "waiting_for_job" ? { ...phase, endedAt: startedAt } : phase,
+        ),
+      });
+      if (job) {
+        job = {
+          ...job,
+          startedAt,
+          ...(listenerExitedAt !== undefined
+            ? { endedAt: new Date(listenerExitedAt).toISOString() }
+            : {}),
+        };
+        const corrected = job;
+        update({
+          phases: progress.phases?.map((phase) => (phase.name === "job" ? corrected : phase)),
+        });
+      } else {
+        job = beginPhase("job", at);
+        if (listenerExitedAt !== undefined) endPhase(job, listenerExitedAt);
+      }
+    };
     const listening = new AbortController();
     const listeningSignal = AbortSignal.any([signal, listening.signal]);
     const watcher = watchIdleRunner(grant.id, watchedControls, listening, listeningSignal, () => {
-      if (job || listenerExited) return;
-      endPhase(waiting);
-      job = beginPhase("job");
+      jobStarted();
     });
     const execution = await executeRunnerListener(
       connection,
       environment.os,
       runnerStartScript(environment.os, grant.encodedConfig, grant.access),
       listeningSignal,
+      jobStarted,
       () => {
-        listenerExited = true;
-        endPhase(job ?? waiting);
+        listenerExitedAt = now();
+        endPhase(job ?? waiting, listenerExitedAt);
       },
     )
       .catch((error: unknown) => {
@@ -380,11 +416,21 @@ function assignmentRejection(output: string) {
   );
 }
 
+function guestJobStartedAt(output: string) {
+  const lines = output.split(/\r?\n/);
+  const marker = lines.indexOf(jobStartedMarker);
+  const value = marker === -1 ? undefined : lines[marker + 1]?.trim();
+  if (!value || !/^\d+$/.test(value)) return undefined;
+  const timestamp = Number(value);
+  return Number.isSafeInteger(timestamp) ? timestamp : undefined;
+}
+
 async function executeRunnerListener(
   connection: GuestConnection,
   os: Environment["os"],
   script: string,
   signal: AbortSignal,
+  onJobStarted: (at: number) => void,
   onExit: () => void,
 ) {
   const listening = new AbortController();
@@ -394,12 +440,16 @@ async function executeRunnerListener(
   let checking: Promise<void> | undefined;
   const check = async (checkSignal: AbortSignal) => {
     try {
-      const result = await executeGuest(connection, assignmentRejectedScript(os), {
+      const result = await executeGuest(connection, runnerGateScript(os), {
         shell,
         signal: AbortSignal.any([checkSignal, AbortSignal.timeout(10000)]),
       });
       rejection ??= assignmentRejection(result.stdout);
       if (rejection) listening.abort();
+      else if (result.exitCode === 0) {
+        const startedAt = guestJobStartedAt(result.stdout);
+        if (startedAt !== undefined) onJobStarted(startedAt);
+      }
     } catch {
       // A transient guest connection failure is not evidence of policy rejection.
     }

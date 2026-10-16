@@ -5,11 +5,13 @@ import { GitHubIcon } from "@/components/github-icon";
 import { JobLog } from "@/components/job-log";
 import { Details, ExpandableRow, Mono } from "@/components/layout";
 import { OsTile } from "@/components/os-icon";
+import { RunnerPhases } from "@/components/runner-phases";
 import { JobStatus, OperationStatus, RunnerStage, StatusText } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { activityJob, activitySummary, activityTitle } from "@/lib/activities";
 import { formatDateTime, formatRelative } from "@/lib/format";
 import { isGeneratedStageMessage, activeRunnerStage } from "@/lib/runner-stage";
+import { runnerPhaseTimeline } from "@/lib/runner-phases";
 import { cancellableCommands, commandLabels } from "@/lib/operations";
 import { MigrationResult } from "@/views/migration-result";
 import { PreparationResult } from "@/views/preparation-result";
@@ -77,6 +79,13 @@ export function ActivityRow({
     typeof result.diagnostics === "string"
       ? result.diagnostics
       : undefined;
+  const timeline =
+    activity.subject.type === "runner" && deciding?.command === "runner.run"
+      ? runnerPhaseTimeline(result, {
+          active: running,
+          end: running ? Date.now() : Date.parse(activity.completedAt ?? activity.updatedAt),
+        })
+      : undefined;
   return (
     <ExpandableRow
       defaultOpen={defaultOpen}
@@ -128,6 +137,7 @@ export function ActivityRow({
           </pre>
         </div>
       )}
+      {timeline && <RunnerPhases timeline={timeline} />}
       {job && activity.bindingId && (
         <div className="flex flex-col gap-3">
           <div>

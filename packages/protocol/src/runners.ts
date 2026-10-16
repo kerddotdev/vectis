@@ -42,6 +42,7 @@ export interface RunnerBroker {
 export const PhaseName = Schema.Literals([
   "queued_locally",
   "vm_start",
+  "vm_start_and_guest_ready",
   "guest_ready",
   "runner_install",
   "runner_preinstalled",

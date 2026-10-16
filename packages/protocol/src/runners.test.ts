@@ -22,7 +22,11 @@ test("runner progress decodes older snapshots without phases", () => {
 test("runner progress retains completed, active and preinstalled phases", () => {
   const progress = {
     ...legacy,
-    phases: [phase, { name: "runner_preinstalled", startedAt: phase.endedAt }],
+    phases: [
+      phase,
+      { name: "runner_preinstalled", startedAt: phase.endedAt },
+      { ...phase, name: "vm_start_and_guest_ready" },
+    ],
   };
   expect(decode(progress)).toEqual(progress);
 });

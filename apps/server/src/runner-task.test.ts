@@ -6,6 +6,7 @@ import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
 import { VectisError, type Environment } from "../../../packages/protocol/src/index.js";
+import { jobStartedMarker } from "../../../packages/runner/src/runner-access.js";
 
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
 vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
@@ -214,6 +215,39 @@ test("phase history records ordered durations with the injected clock through jo
   ).toBe(true);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test.each([undefined, "rosetta"] as const)(
+  "%s startup attributes readiness inside environment.start to its startup phase",
+  async (x64) => {
+    const { controls } = fixture();
+    const instance = await controls.start();
+    controls.start.mockImplementation(async () => {
+      clock += 6000;
+      return instance;
+    });
+    let clock = Date.parse("2026-10-16T00:00:00.000Z");
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      { ...environment, ...(x64 ? { x64 } : {}) },
+      { ...controls, now: () => clock },
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(result.progress.phases?.slice(1, 3)).toEqual([
+      {
+        name: x64 ? "vm_start_and_guest_ready" : "vm_start",
+        startedAt: "2026-10-16T00:00:00.000Z",
+        endedAt: "2026-10-16T00:00:06.000Z",
+      },
+      {
+        name: "guest_ready",
+        startedAt: "2026-10-16T00:00:06.000Z",
+        endedAt: "2026-10-16T00:00:06.000Z",
+      },
+    ]);
+  },
+);
 
 test("guest readiness failure closes the failed phase before timing cleanup", async () => {
   const { controls } = fixture();
@@ -720,6 +754,164 @@ function heldListener() {
     });
   return state;
 }
+
+test.each([
+  {
+    name: "hook before any busy poll",
+    marker: "1234",
+    visibleAt: 0,
+    finishAt: 25000,
+    startAt: 1234,
+  },
+  {
+    name: "short job read at listener exit",
+    marker: "1234",
+    visibleAt: 0,
+    finishAt: 5000,
+    startAt: 1234,
+  },
+  {
+    name: "hook corrects an earlier busy observation",
+    marker: "1234",
+    visibleAt: 35000,
+    finishAt: 35000,
+    startAt: 1234,
+  },
+  {
+    name: "slow guest clock clamps to registration end",
+    marker: "-1000",
+    visibleAt: 0,
+    finishAt: 25000,
+    startAt: 0,
+  },
+  {
+    name: "fast guest clock clamps to observation time",
+    marker: "60000",
+    visibleAt: 0,
+    finishAt: 25000,
+    startAt: 10000,
+  },
+  ...[undefined, "invalid", "NaN", "Infinity", "1.5", "9007199254740992", "1234 trailing", ""].map(
+    (marker) => ({
+      name: `busy fallback for marker ${String(marker)}`,
+      marker,
+      visibleAt: 0,
+      finishAt: 35000,
+      startAt: 30000,
+    }),
+  ),
+])("job timing uses $name", async ({ marker, visibleAt, finishAt, startAt }) => {
+  vi.useFakeTimers();
+  const base = Date.parse("2026-10-16T00:00:00.000Z");
+  vi.setSystemTime(base);
+  const { controls, broker } = fixture();
+  const listener = heldListener();
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+  const value =
+    marker !== undefined && /^-?\d+$/.test(marker) && Number.isSafeInteger(Number(marker))
+      ? String(base + Number(marker))
+      : marker;
+  vi.mocked(executeGuest).mockImplementation(async () => ({
+    exitCode: 0,
+    stdout:
+      Date.now() - base >= visibleAt && value !== undefined
+        ? `${jobStartedMarker}\r\n${value}\r\n`
+        : "",
+    stderr: "",
+    truncated: false,
+  }));
+  const abort = new AbortController();
+  const done = runRunnerTask("binding", "key", environment, controls, abort.signal);
+  listeningTasks.push({ abort, done });
+  await vi.advanceTimersByTimeAsync(finishAt);
+  listener.finish?.();
+  const result = await done;
+  expect(result.status).toBe("succeeded");
+  expect(
+    result.progress.phases?.filter((phase) => ["waiting_for_job", "job"].includes(phase.name)),
+  ).toEqual([
+    {
+      name: "waiting_for_job",
+      startedAt: new Date(base).toISOString(),
+      endedAt: new Date(base + startAt).toISOString(),
+    },
+    {
+      name: "job",
+      startedAt: new Date(base + startAt).toISOString(),
+      endedAt: new Date(base + finishAt).toISOString(),
+    },
+  ]);
+  expect(executeGuest).toHaveBeenCalledTimes(3 + Math.floor(finishAt / 10000));
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s reads the job marker in the existing gate poll",
+  async (os) => {
+    vi.useFakeTimers();
+    const base = Date.parse("2026-10-16T00:00:00.000Z");
+    vi.setSystemTime(base);
+    const { controls, broker } = fixture(os);
+    const listener = heldListener();
+    vi.mocked(executeGuest).mockResolvedValue({
+      exitCode: 0,
+      stdout: `${jobStartedMarker}\n${base + 1500}\n`,
+      stderr: "",
+      truncated: false,
+    });
+    const abort = new AbortController();
+    const done = runRunnerTask("binding", "key", { ...environment, os }, controls, abort.signal);
+    listeningTasks.push({ abort, done });
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(broker.runnerStatus).not.toHaveBeenCalled();
+    expect(executeGuest).toHaveBeenCalledTimes(3);
+    expect(executeGuest).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.stringContaining("job-started"),
+      expect.objectContaining({ shell: os === "windows" ? "powershell" : "bash" }),
+    );
+    expect(controls.progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        phases: expect.arrayContaining([
+          { name: "job", startedAt: new Date(base + 1500).toISOString() },
+        ]),
+      }),
+    );
+    listener.finish?.();
+    expect(await done).toMatchObject({ status: "succeeded" });
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("a slow final gate read preserves listener exit time and clamps the guest start to it", async () => {
+  vi.useFakeTimers();
+  const base = Date.parse("2026-10-16T00:00:00.000Z");
+  vi.setSystemTime(base);
+  const { controls } = fixture();
+  const listener = heldListener();
+  vi.mocked(executeGuest).mockImplementationOnce(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    return {
+      exitCode: 0,
+      stdout: `${jobStartedMarker}\n${base + 7000}\n`,
+      stderr: "",
+      truncated: false,
+    };
+  });
+  const abort = new AbortController();
+  const done = runRunnerTask("binding", "key", environment, controls, abort.signal);
+  listeningTasks.push({ abort, done });
+  await vi.advanceTimersByTimeAsync(5000);
+  listener.finish?.();
+  await vi.advanceTimersByTimeAsync(4000);
+  const result = await done;
+  expect(result.progress.phases?.find((phase) => phase.name === "job")).toEqual({
+    name: "job",
+    startedAt: new Date(base + 5000).toISOString(),
+    endedAt: new Date(base + 5000).toISOString(),
+  });
+  expect(vi.getTimerCount()).toBe(0);
+});
 
 test.each(["linux", "macos", "windows"] as const)(
   "%s marker backstop aborts listening and stops the VM before releasing the runner",
