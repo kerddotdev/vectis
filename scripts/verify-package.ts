@@ -109,7 +109,9 @@ try {
     );
     const status = await mcp.callTool({ name: "vectis_status", arguments: {} });
     if (status.isError) throw new Error("Packaged MCP status failed.");
-    const result = Schema.decodeUnknownSync(Schema.Struct({ result: Snapshot }))(
+    const result = Schema.decodeUnknownSync(
+      Schema.Struct({ result: Schema.Struct({ machine: Snapshot.fields.machine }) }),
+    )(
       status.structuredContent,
     );
     if (result.result.machine.id !== initial.machine.id || !result.result.machine.paused)
