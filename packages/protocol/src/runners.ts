@@ -33,7 +33,7 @@ export interface RunnerBroker {
     bindingId: string,
     key: string,
     signal: AbortSignal,
-    request?: { jobId?: number; automatic?: boolean },
+    request?: { jobId?: number; automatic?: boolean; scaleSet?: { generation: number } },
   ): Promise<RunnerGrant>;
   releaseRunner(id: string, signal: AbortSignal): Promise<void>;
   runnerStatus(leaseId: string, signal: AbortSignal): Promise<RunnerStatus>;

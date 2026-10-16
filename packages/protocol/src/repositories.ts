@@ -10,6 +10,7 @@ export const MachineRepositories = Schema.Array(
     runsOn: Schema.optional(Schema.String),
     automatic: Schema.optional(Schema.Boolean),
     access: Schema.optional(RepositoryAccess),
+    capacityMode: Schema.optional(Schema.Literals(["demand", "scale_set"])),
   }),
 );
 export type MachineRepositories = typeof MachineRepositories.Type;
