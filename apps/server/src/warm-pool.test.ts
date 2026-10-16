@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import type { Environment, Instance } from "../../../packages/protocol/src/index.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { runnerCapacity, instanceAdmissionError } from "./runner-capacity.js";
-import { Store } from "./store.js";
+import { Store, type StoreOptions } from "./store.js";
 import { WarmPool } from "./warm-pool.js";
 
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
@@ -39,9 +39,11 @@ const probe = () => ({
   pressureKnown: true,
 });
 
-async function fixture(options: { max?: number; budget?: number; memory?: number } = {}) {
+async function fixture(
+  options: StoreOptions & { max?: number; budget?: number; memory?: number } = {},
+) {
   const home = await mkdtemp(join(tmpdir(), "vectis-warm-pool-"));
-  const store = new Store(join(home, "state.sqlite"));
+  const store = new Store(join(home, "state.sqlite"), options);
   store.put("machine", "self", {
     id: "self",
     name: "Test",
@@ -369,7 +371,8 @@ test("a disabled pool does not rebuild status on each retained history write", a
 });
 
 test("a running legacy runner does not block pool filling when its start leaves the status window", async () => {
-  const f = await fixture();
+  const snapshotLimits = { operations: 3, activities: 3, stoppedInstances: 2 };
+  const f = await fixture({ snapshotLimits });
   const runner = f.runner("legacy");
   const start = f.store.accept(`${runner.id}:start`, "start", "environment.start").operation;
   f.store.update(start, { status: "succeeded" });
@@ -381,11 +384,15 @@ test("a running legacy runner does not block pool filling when its start leaves 
     pid: 0,
     createdAt: new Date().toISOString(),
   });
-  for (let index = 0; index < 110; index++) {
+  for (let index = 0; index < snapshotLimits.operations; index++) {
     const operation = f.store.accept(`later-${index}`, `later-${index}`, "job.scan").operation;
     f.store.update(operation, { status: "succeeded" });
   }
-  expect(f.store.snapshot().operations.some((operation) => operation.id === start.id)).toBe(false);
+  const snapshot = f.store.snapshot();
+  expect(snapshot.operations).toHaveLength(snapshotLimits.operations + 1);
+  expect(snapshot.operations).toContainEqual(expect.objectContaining({ id: runner.id }));
+  expect(snapshot.operations.some((operation) => operation.id === start.id)).toBe(false);
+  expect(f.store.operationByKey(`${runner.id}:start`)).toMatchObject({ id: start.id });
   expect(f.pool.canFill(environment)).toBe(true);
 });
 

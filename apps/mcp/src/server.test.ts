@@ -389,9 +389,10 @@ test("MCP job logs forwards the byte cursor and rejects invalid requests", async
   }
 });
 
-test("MCP status stays compact with thousands of retained results and returns data only once", async () => {
+test("MCP status bounds retained history and returns data only once", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-mcp-bounded-"));
-  const service = await startService({ home });
+  const snapshotLimits = { operations: 21, activities: 21, stoppedInstances: 2 };
+  const service = await startService({ home, snapshotLimits });
   const api = new VectisClient(service.connection);
   const server = createMcpServer(async () => api);
   const client = new Client({ name: "bounded-status-test", version: "1" });
@@ -399,7 +400,7 @@ test("MCP status stays compact with thousands of retained results and returns da
   try {
     const command = { type: "job.scan", bindingId: "binding" } as const;
     service.store.db.exec("BEGIN IMMEDIATE");
-    for (let index = 0; index < 2000; index++) {
+    for (let index = 0; index < snapshotLimits.operations + 2; index++) {
       const id = `history-${index}`;
       const link = activityFor(id, command);
       service.store.put("activity", id, link?.create);
@@ -416,6 +417,7 @@ test("MCP status stays compact with thousands of retained results and returns da
       });
     }
     service.store.db.exec("COMMIT");
+    expect(Buffer.byteLength(JSON.stringify(await api.status()))).toBeGreaterThan(64 * 1024);
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const result = await client.callTool({ name: "vectis_status", arguments: {} });
@@ -427,11 +429,16 @@ test("MCP status stays compact with thousands of retained results and returns da
         result: {
           operations: expect.any(Array),
           activities: expect.any(Array),
-          counts: { operations: { byStatus: { action_required: 1 } } },
+          counts: {
+            operations: { total: 22, byStatus: { action_required: 1, succeeded: 21 } },
+            activities: { total: 22, byStatus: { action_required: 1, succeeded: 21 } },
+          },
           details: expect.stringContaining("vectis_operation"),
         },
       },
     });
+    expect(result).toHaveProperty("structuredContent.result.operations.length", 20);
+    expect(result).toHaveProperty("structuredContent.result.activities.length", 20);
     expect(JSON.stringify(result)).not.toContain("largeResult");
     const status = vi.spyOn(api, "status").mockRejectedValue(new Error("Unexpected status read"));
     const activities = await client.callTool({
