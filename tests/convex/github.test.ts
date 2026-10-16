@@ -172,14 +172,13 @@ test("job tracking ignores late state regressions and retains only bounded metad
   const jobs = await t.run(async (ctx) => ctx.db.query("githubJobs").collect());
   expect(jobs).toHaveLength(1);
   expect(jobs[0]).toMatchObject({ status: "completed", conclusion: "success", runnerId: 5 });
-  await expect(
-    t.mutation(internal.githubDeliveries.accept, {
-      ...common,
-      deliveryId: "oversized",
-      job: {
-        ...common.job,
-        labels: Array.from({ length: 101 }, () => "label"),
-      },
-    }),
-  ).rejects.toThrow();
+  await t.mutation(internal.githubDeliveries.accept, {
+    ...common,
+    deliveryId: "oversized",
+    job: {
+      ...common.job,
+      labels: Array.from({ length: 101 }, () => "label"),
+    },
+  });
+  expect(await t.run((ctx) => ctx.db.query("githubDeliveries").collect())).toHaveLength(3);
 });

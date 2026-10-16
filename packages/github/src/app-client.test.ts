@@ -8,7 +8,10 @@ const app = {
   privateKey: keys.privateKey.export({ format: "pem", type: "pkcs8" }).toString(),
 };
 const input = { owner: "test-owner", repo: "sandbox", repositoryId: 123, githubUserId: 7 };
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 test("App authentication signs a short JWT and narrows runner access to the verified repository", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
     const authorization = new Headers(init?.headers).get("Authorization") ?? "";
@@ -369,6 +372,7 @@ test("private fork policy is required and rechecked for runner admission", async
 });
 
 test("readiness reports transient admin lookup failures as unknown while still evaluating public policy", async () => {
+  vi.useFakeTimers();
   vi.stubGlobal("fetch", async (url: string) => {
     if (url.endsWith("/installation"))
       return Response.json({
@@ -384,7 +388,9 @@ test("readiness reports transient admin lookup failures as unknown while still e
     return Response.json({ id: 123, private: false, owner: { id: 99 } });
   });
   const client = new GitHubAppClient(app);
-  const checks = await client.repositoryReadiness({ ...input, githubLogin: "test-owner" });
+  const pending = client.repositoryReadiness({ ...input, githubLogin: "test-owner" });
+  await vi.runAllTimersAsync();
+  const checks = await pending;
   expect(checks).toContainEqual(
     expect.objectContaining({
       id: "github.admin",

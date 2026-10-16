@@ -1,4 +1,4 @@
-import { GitHubApiError } from "./app-client.js";
+import { GitHubApiError } from "./api-request.js";
 import type { JobLogs } from "../../protocol/src/jobs.js";
 
 export const jobLogWindowBytes = 4 * 1024 * 1024;

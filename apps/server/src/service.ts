@@ -623,7 +623,12 @@ export class Service {
                 result,
               });
             })
-            .catch(() => {
+            .catch((error: unknown) => {
+              const githubFailure =
+                error instanceof VectisError &&
+                ["github_unavailable", "github_rate_limited"].includes(error.code)
+                  ? error
+                  : undefined;
               this.store.update(operation, {
                 status: abort.signal.aborted ? "cancelled" : "failed",
                 message: abort.signal.aborted
@@ -632,8 +637,11 @@ export class Service {
                 result: {
                   bindingId: command.bindingId,
                   ...(command.type === "job.refresh" ? { jobId: command.jobId } : {}),
-                  code: abort.signal.aborted ? "refresh_cancelled" : "job_refresh_failed",
+                  code: abort.signal.aborted
+                    ? "refresh_cancelled"
+                    : (githubFailure?.code ?? "job_refresh_failed"),
                   nextStep:
+                    githubFailure?.nextStep ??
                     "Check repository access and retry the read; for large queues, refresh a known job ID directly.",
                 },
               });

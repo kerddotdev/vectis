@@ -48,6 +48,8 @@ function interruptible<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> 
                 "private_runner_approval_required",
                 "repository_admin_required",
                 "github_app_not_installed",
+                "github_unavailable",
+                "github_rate_limited",
                 "machine_revoked",
                 "cloud_unconfigured",
                 "cloud_unavailable",
@@ -428,7 +430,7 @@ export function startCloudRelay(
       return Schema.decodeUnknownSync(CloudRepositoryReadiness)(
         await interruptible(
           cloud.action(api.githubRepositories.readiness, { input }),
-          AbortSignal.any([abort.signal, AbortSignal.timeout(30000)]),
+          AbortSignal.any([abort.signal, AbortSignal.timeout(180000)]),
         ),
       );
     },
@@ -451,7 +453,7 @@ export function startCloudRelay(
             ? {}
             : { repositoryOwner: input.repositoryOwner }),
         }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       ).catch((error: unknown) => {
         if (error instanceof VectisError) throw error;
         throw new VectisError(
@@ -509,7 +511,7 @@ export function startCloudRelay(
       requireConnection();
       const result = await interruptible(
         cloud.action(api.githubJobs.refresh, { bindingId, jobId }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
       return Schema.decodeUnknownSync(JobRefresh)(result);
     },
@@ -598,7 +600,7 @@ export function startCloudRelay(
       requireConnection();
       const value = await interruptible(
         cloud.action(api.githubRunners.prepare, { bindingId, key, ...request }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
       return Schema.decodeUnknownSync(RunnerGrant)(value);
     },
@@ -607,7 +609,7 @@ export function startCloudRelay(
       requireConnection();
       const value = await interruptible(
         cloud.action(api.githubRunners.status, { id: leaseId }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
       return Schema.decodeUnknownSync(RunnerStatus)(value);
     },
@@ -616,7 +618,7 @@ export function startCloudRelay(
       requireConnection();
       await interruptible(
         cloud.action(api.githubRunners.release, { id }),
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(60000)]),
+        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(180000)]),
       );
     },
     async repositories() {

@@ -16,6 +16,8 @@ Start with `vectis repository readiness --binding <binding-id> --json` (MCP `vec
 7. **Can the GitHub App reach the repository?** The App must be installed on the owner with access to the repository. Link GitHub again on the connect page to refresh what Vectis sees.
 8. **Did Vectis miss the job?** Run `vectis job scan <binding-id> --wait`.
 
+Jobs with more than 100 labels or a label longer than 100 characters are recorded but cannot match Vectis runners. Unknown GitHub job statuses are retained as waiting until a scan or refresh supplies a known status.
+
 ## An operation failed or needs you
 
 Every operation ends with a status, a message and, when you need to act, a `nextStep`:
@@ -28,6 +30,8 @@ vectis logs --lines 200 --json
 Displayed logs, stored operation details and retained runner and preparation diagnostics redact recognized credentials.
 
 The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means completion is unconfirmed; follow its `nextStep`. Runner cleanup may still be retried automatically.
+
+GitHub reads, runner deletion and installation token creation retry transient failures up to four attempts within a 45-second budget per request. Retries respect GitHub rate limit headers. `github_unavailable` means GitHub remained unavailable; `github_rate_limited` means the rate limit could not be cleared within that budget. Wait and retry. Side-effecting POST requests are never automatically retried; an ambiguous run command keeps `run_command_unconfirmed`, and an ambiguous runner registration still requires reconciliation.
 
 An operation that stays in **Needs you** after you have read it, usually because the service restarted before it finished, can be closed with **Dismiss** in the app or `vectis operation cancel <operation-id>`. It ends as `cancelled` and nothing else changes. Two cases keep their own way out instead: an interrupted runner is reconciled once its VM is confirmed stopped, and an image preparation is resumed or discarded.
 
