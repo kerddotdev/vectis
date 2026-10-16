@@ -5,6 +5,7 @@ const labels = {
   queued_locally: "Queued locally",
   job_check: "Job check",
   vm_start: "VM start",
+  warm_takeover: "Warm takeover",
   vm_start_and_guest_ready: "VM start and guest ready",
   guest_ready: "Guest ready",
   runner_install: "Runner install",

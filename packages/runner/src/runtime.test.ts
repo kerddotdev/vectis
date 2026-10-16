@@ -4,9 +4,13 @@ import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { VmRuntime } from "./runtime.js";
 import { readyGuest } from "./guest-ready.js";
+import { availableHostMemory } from "./memory.js";
 vi.mock("./guest-ready.js", () => ({ readyGuest: vi.fn() }));
 
-vi.mock("./memory.js", () => ({ availableHostMemory: async () => 8 * 1024 ** 3 }));
+vi.mock("./memory.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./memory.js")>()),
+  availableHostMemory: vi.fn(async () => 8 * 1024 ** 3),
+}));
 
 const failedRemovals = vi.hoisted(() => new Set<string>());
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -54,6 +58,25 @@ async function fixture(script: string) {
   };
   return { home, runtime, environment };
 }
+hostTest(
+  "startup checks the estimate instead of the ceiling and still refuses insufficient memory",
+  async () => {
+    const { runtime, environment } = await fixture(
+      'process.stdout.write(\'{"event":"vm.running"}\\n\'); setInterval(() => {}, 1000);',
+    );
+    vi.spyOn(runtime, "validate").mockResolvedValue();
+    const generous = { ...environment, memoryMiB: 12288 };
+    vi.mocked(availableHostMemory).mockResolvedValue(3 * 1024 ** 3);
+    const instance = await runtime.start("estimate", generous, () => {});
+    await runtime.stop(instance.id);
+    vi.mocked(availableHostMemory).mockResolvedValue(1024 ** 3);
+    await expect(runtime.start("insufficient", generous, () => {})).rejects.toMatchObject({
+      code: "insufficient_memory",
+    });
+    expect(await runtime.hasWorkDirectory("insufficient")).toBe(false);
+  },
+);
+
 hostTest("natural VM exit removes its disposable disk and preserves the base", async () => {
   const { home, runtime, environment } = await fixture(
     'process.stdout.write(\'{"event":"vm.running"}\\n\'); setTimeout(() => process.exit(0), 100);',

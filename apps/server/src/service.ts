@@ -57,6 +57,7 @@ import {
   VectisError,
   Operation,
   type Snapshot,
+  type Instance,
 } from "../../../packages/protocol/src/index.js";
 import { previewMigration } from "../../../packages/migration/src/index.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
@@ -65,6 +66,7 @@ import { activityFor, decidingMember, type ActivityLink } from "./activities.js"
 import { retainActivities } from "./activity-retention.js";
 import { observeRunnerJobs, watchRunnerJobs } from "./runner-job-observations.js";
 import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
+import { WarmPool } from "./warm-pool.js";
 
 import type { RepositoryAccess } from "../../../packages/protocol/src/repository-access.js";
 import { jobAccess, restrictiveAccess } from "../../../packages/github/src/access-policy.js";
@@ -80,6 +82,8 @@ export class Service {
   private cleanupAbort = new AbortController();
   private retentionTimer: ReturnType<typeof setInterval> | undefined;
   private stopWatchingJobs: () => void;
+  private readonly warmPool: WarmPool;
+  private warmStarts = new Map<string, AbortSignal>();
   constructor(
     readonly store: Store,
     readonly runtime: VmRuntime,
@@ -107,6 +111,64 @@ export class Service {
   ) {
     store.recover();
     this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
+    const host = { cpus: cpus().length, memoryBytes: totalmem() };
+    this.warmPool = new WarmPool(store, {
+      start: (environment, key, signal) => this.startWarm(environment, key, signal),
+      stop: async (instance) => {
+        const current = this.store.snapshot().instances.find((item) => item.id === instance.id);
+        if (!current || current.status === "stopped") return;
+        await this.runtime.stop(instance.id);
+        if (
+          this.store.snapshot().instances.find((item) => item.id === instance.id)?.status !==
+          "stopped"
+        )
+          throw new VectisError("reconciliation_required", "Warm VM cleanup is unconfirmed.");
+      },
+      admission: (snapshot, environment, count) =>
+        instanceAdmissionError(snapshot, environment, host, count),
+      capacity: (snapshot) =>
+        runnerCapacity(snapshot, host, {
+          lookup: {
+            start: (id) => this.runnerStart(id),
+            instance: (id) => this.store.instance(id),
+          },
+        }),
+      onError: (error) => console.error("Warm pool maintenance failed:", redact(inspect(error))),
+    });
+  }
+  private async startWarm(
+    environment: Environment,
+    key: string,
+    signal: AbortSignal,
+  ): Promise<Instance> {
+    signal.throwIfAborted();
+    const operation = this.submit(key, { type: "environment.start", id: environment.id });
+    this.warmStarts.set(operation.id, signal);
+    const cancel = () => this.tasks.get(operation.id)?.abort.abort();
+    signal.addEventListener("abort", cancel, { once: true });
+    try {
+      await this.waitForOperation(operation.id);
+      const instance = this.store.snapshot().instances.find((item) => item.id === operation.id);
+      if (!instance || instance.status !== "running")
+        throw new VectisError("warm_vm_missing", "The warm VM did not start.");
+      return instance;
+    } catch (error) {
+      const task = this.tasks.get(operation.id);
+      task?.abort.abort();
+      try {
+        await task?.done;
+        const instance = this.store.snapshot().instances.find((item) => item.id === operation.id);
+        if (instance?.status === "running") await this.runtime.stop(instance.id);
+      } finally {
+        const remaining = this.store.snapshot().instances.find((item) => item.id === operation.id);
+        if (remaining && remaining.status !== "stopped")
+          this.store.put("instance", remaining.id, { ...remaining, role: undefined });
+      }
+      throw error;
+    } finally {
+      signal.removeEventListener("abort", cancel);
+      this.warmStarts.delete(operation.id);
+    }
   }
   async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
     return this.runnerConnection().jobLogs(input, signal);
@@ -127,8 +189,10 @@ export class Service {
         snapshot,
         { cpus: cpus().length, memoryBytes: totalmem() },
         {
-          start: (id) => this.runnerStart(id),
-          instance: (id) => this.store.instance(id),
+          lookup: {
+            start: (id) => this.runnerStart(id),
+            instance: (id) => this.store.instance(id),
+          },
         },
       ),
       ...(repositories === undefined ? {} : { repositories }),
@@ -202,6 +266,7 @@ export class Service {
       }, this.runnerCleanup.intervalMs ?? 60000);
       this.cleanupTimer.unref();
     }
+    if (!this.closing) this.warmPool.start();
   }
   private async retryRunnerCleanup(restarted = false) {
     const metadata = Schema.Struct({
@@ -451,8 +516,17 @@ export class Service {
     try {
       let result: unknown;
       const snapshot = this.store.snapshot();
+      const poolOnly =
+        command.type === "environment.configure" &&
+        command.warmPool !== undefined &&
+        command.cpu === undefined &&
+        command.memoryMiB === undefined &&
+        command.storagePath === undefined &&
+        command.x64 === undefined &&
+        command.egress === undefined;
       if (
         (this.preparing || snapshot.preparationBusy) &&
+        !poolOnly &&
         [
           "environment.register",
           "environment.configure",
@@ -799,6 +873,7 @@ export class Service {
                 "Prepare this repository's environment first.",
               );
             let startId: string | undefined;
+            let warmStartId: string | undefined;
             const demandJobId = command.jobId;
             if (demandJobId === undefined && restrictiveAccess(binding.access))
               throw new VectisError(
@@ -861,12 +936,15 @@ export class Service {
                         return true;
                       },
                     }),
-                start: async () => {
+                start: async (onStarting) => {
+                  await this.warmPool.yieldForJob(environment);
+                  abort.signal.throwIfAborted();
                   const started = this.submitChild(operation.id, `${operation.id}:start`, {
                     type: "environment.start",
                     id: environment.id,
                   });
                   startId = started.id;
+                  onStarting?.(started.id);
                   const cancelStart = () => {
                     if (this.closing) this.tasks.get(started.id)?.abort.abort();
                     else
@@ -887,11 +965,18 @@ export class Service {
                     throw new VectisError("runner_vm_missing", "The runner VM did not start.");
                   return instance;
                 },
+                claimWarm: () => {
+                  const claimed = this.warmPool.claim(environment.id, operation);
+                  if (claimed) startId = warmStartId = claimed.instance.id;
+                  return claimed;
+                },
                 stop: async () => {
                   if (!startId) return;
                   const current = this.store.instance(startId);
                   if (!current || current.status === "stopped") return;
-                  const stopped = this.submitChild(operation.id, `${operation.id}:stop`, {
+                  const stopKey =
+                    startId === warmStartId ? `${operation.id}:stop:warm` : `${operation.id}:stop`;
+                  const stopped = this.submitChild(operation.id, stopKey, {
                     type: "instance.stop",
                     id: startId,
                   });
@@ -1008,13 +1093,30 @@ export class Service {
           break;
         }
         case "machine.configure":
+          if (command.maxRunners === undefined && command.memoryBudgetMiB === undefined)
+            throw new VectisError("invalid_resources", "Specify a runner limit or memory budget.");
+          if (
+            command.memoryBudgetMiB !== undefined &&
+            (!Number.isSafeInteger(command.memoryBudgetMiB) ||
+              command.memoryBudgetMiB < 2048 ||
+              command.memoryBudgetMiB * 1024 ** 2 > totalmem())
+          )
+            throw new VectisError(
+              "invalid_resources",
+              "The VM memory budget must be a whole number between 2048 MiB and total host memory.",
+              "Choose a memory budget between 2048 MiB and total host memory.",
+            );
           this.store.put("machine", "self", {
             ...snapshot.machine,
-            maxRunners: command.maxRunners,
+            ...(command.maxRunners !== undefined ? { maxRunners: command.maxRunners } : {}),
+            ...(command.memoryBudgetMiB !== undefined
+              ? { memoryBudgetMiB: command.memoryBudgetMiB }
+              : {}),
           });
           break;
         case "machine.pause":
           this.store.put("machine", "self", { ...snapshot.machine, paused: command.paused });
+          if (command.paused) await this.warmPool.drainEnvironment();
           break;
         case "environment.register":
           await this.runtime.validate(command.environment);
@@ -1049,11 +1151,20 @@ export class Service {
             command.memoryMiB === undefined &&
             command.storagePath === undefined &&
             command.x64 === undefined &&
-            command.egress === undefined
+            command.egress === undefined &&
+            command.warmPool === undefined
           )
             throw new VectisError(
               "invalid_request",
-              "Provide CPU, memory, a storage path, x64 or egress.",
+              "Provide CPU, memory, a storage path, x64, egress or a warm pool size.",
+            );
+          if (
+            command.warmPool !== undefined &&
+            (!Number.isInteger(command.warmPool) || command.warmPool < 0 || command.warmPool > 4)
+          )
+            throw new VectisError(
+              "invalid_request",
+              "Warm pool size must be a whole number from 0 to 4.",
             );
           if (command.x64 === "rosetta" && current.os !== "linux")
             throw new VectisError(
@@ -1081,9 +1192,11 @@ export class Service {
             ...(command.cpu !== undefined ? { cpu: command.cpu } : {}),
             ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
+            ...(command.warmPool !== undefined ? { warmPool: command.warmPool } : {}),
           };
           await this.runtime.validate(environment);
           this.store.put("environment", command.id, environment);
+          await this.warmPool.drainEnvironment(command.id);
           result = { environment, appliesTo: "future_instances" };
           break;
         }
@@ -1101,6 +1214,8 @@ export class Service {
           break;
         case "environment.start": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          const warmSignal = this.warmStarts.get(operation.id);
+          warmSignal?.throwIfAborted();
           if (
             this.store
               .list("preparation")
@@ -1121,6 +1236,8 @@ export class Service {
             ...(command.memoryMiB !== undefined ? { memoryMiB: command.memoryMiB } : {}),
             ...(command.storagePath !== undefined ? { storagePath: command.storagePath } : {}),
           };
+          if (warmSignal && !this.warmPool.canFill(environment))
+            throw new VectisError("warm_pool_yielded", "Warm pool startup yielded to real work.");
           this.runtime.validateResources(environment);
           const admissionError = instanceAdmissionError(snapshot, environment, {
             cpus: cpus().length,
@@ -1137,9 +1254,13 @@ export class Service {
             status: "starting" as const,
             pid: 0,
             createdAt: operation.createdAt,
+            ...(warmSignal ? { role: "warming" as const } : {}),
           };
           this.store.put("instance", id, record);
           const abort = new AbortController();
+          const cancelWarm = () => abort.abort();
+          warmSignal?.addEventListener("abort", cancelWarm, { once: true });
+          if (warmSignal?.aborted) cancelWarm();
           const done = (async () => {
             try {
               const instance = await this.runtime.start(
@@ -1191,6 +1312,7 @@ export class Service {
               else this.failOperation(operation, error);
             }
           })().finally(() => {
+            warmSignal?.removeEventListener("abort", cancelWarm);
             this.tasks.delete(operation.id);
           });
           this.tasks.set(operation.id, { abort, done });
@@ -1331,6 +1453,7 @@ export class Service {
   }
   async close() {
     this.closing = true;
+    const poolClosed = this.warmPool.close().catch((error: unknown) => ({ error }));
     this.stopWatchingJobs();
     if (this.retentionTimer) clearInterval(this.retentionTimer);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
@@ -1338,6 +1461,8 @@ export class Service {
     for (const task of this.tasks.values()) task.abort.abort();
     await Promise.all([this.queue, this.cleanupSweep]);
     await Promise.all([...this.tasks.values()].map((task) => task.done));
+    const poolResult = await poolClosed;
     await this.runtime.close();
+    if (poolResult) throw poolResult.error;
   }
 }

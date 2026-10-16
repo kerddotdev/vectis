@@ -37,7 +37,8 @@ interface Controls {
   idleTimeoutMs?: number;
   offlineTimeoutMs?: number;
   statusFailureTimeoutMs?: number;
-  start(): Promise<Instance>;
+  start(onStarting?: (instanceId: string) => void): Promise<Instance>;
+  claimWarm?(): { instance: Instance; connection: GuestConnection } | undefined;
   stop(): Promise<void>;
   progress(value: RunnerProgress): void;
 }
@@ -117,14 +118,36 @@ export async function runRunnerTask(
       );
     signal.throwIfAborted();
     started = true;
-    const instance = await timed(
-      environment.x64 === "rosetta" ? "vm_start_and_guest_ready" : "vm_start",
-      () => controls.start(),
-    );
+    const takeoverAt = now();
+    const warm = controls.claimWarm?.();
+    if (warm) endPhase(beginPhase("warm_takeover", takeoverAt));
+    const start = () =>
+      timed(environment.x64 === "rosetta" ? "vm_start_and_guest_ready" : "vm_start", () =>
+        controls.start((instanceId) => update({ instanceId })),
+      );
+    let instance = warm?.instance ?? (await start());
     update({ instanceId: instance.id, stage: "preparing_guest" });
     signal.throwIfAborted();
-    connection = await timed("guest_ready", () => readyGuest(environment, instance, signal));
     const shell = environment.os === "windows" ? "powershell" : "bash";
+    if (warm) {
+      try {
+        await timed("guest_ready", async () => {
+          const health = await executeGuest(warm.connection, "exit 0", {
+            shell,
+            signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+          });
+          if (health.exitCode !== 0)
+            throw new VectisError("guest_unavailable", "The warm VM failed its SSH health check.");
+          connection = warm.connection;
+        });
+      } catch {
+        signal.throwIfAborted();
+        await controls.stop();
+        instance = await start();
+        update({ instanceId: instance.id });
+      }
+    }
+    connection ??= await timed("guest_ready", () => readyGuest(environment, instance, signal));
     const guest = connection;
     const installed = await timed("runner_install", () =>
       executeGuest(guest, runnerInstallScript(environment.os), {

@@ -63,6 +63,7 @@ export const Preparation = Schema.Struct({
   ]),
 });
 export type Preparation = typeof Preparation.Type;
+const WarmPoolSize = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4 }));
 export const Environment = Schema.Struct({
   id: Identifier,
   name: Schema.NonEmptyString,
@@ -71,6 +72,7 @@ export const Environment = Schema.Struct({
   storagePath: Schema.optional(Schema.NonEmptyString),
   cpu: Schema.Int,
   memoryMiB: Schema.Int,
+  warmPool: Schema.optional(WarmPoolSize),
   state: Schema.Literals(["ready", "action_required"]),
   sshHost: Schema.optional(Schema.String),
   sshPort: Schema.optional(Schema.Int),
@@ -152,11 +154,13 @@ export const ActivityDetail = Schema.Struct({
 export type ActivityDetail = typeof ActivityDetail.Type;
 export const defaultMaxRunners = 5;
 const MaxRunners = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 16 }));
+const MemoryBudgetMiB = Schema.Int.check(Schema.isGreaterThanOrEqualTo(2048));
 export const Machine = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   paused: Schema.Boolean,
   maxRunners: Schema.optional(MaxRunners),
+  memoryBudgetMiB: Schema.optional(MemoryBudgetMiB),
 });
 export const Instance = Schema.Struct({
   id: Identifier,
@@ -165,6 +169,7 @@ export const Instance = Schema.Struct({
   cpu: Schema.optional(Schema.Int),
   memoryMiB: Schema.optional(Schema.Int),
   status: Schema.Literals(["starting", "running", "stopped", "interrupted"]),
+  role: Schema.optional(Schema.Literals(["warming", "warm"])),
   pid: Schema.Int,
   macAddress: Schema.optional(Schema.String),
   sshHost: Schema.optional(Schema.String),
@@ -189,6 +194,15 @@ export const RunnerCapacity = Schema.Struct({
   active: Schema.Int,
   available: Schema.Int,
   environments: Schema.optional(Schema.Array(EnvironmentSlots)),
+  budget: Schema.optional(
+    Schema.Struct({
+      memoryBudgetMiB: Schema.Number,
+      memoryCommittedMiB: Schema.Number,
+      hostMemoryMiB: Schema.Number,
+      pressure: Schema.Literals(["normal", "warning", "critical"]),
+      pressureKnown: Schema.optional(Schema.Boolean),
+    }),
+  ),
 });
 export type RunnerCapacity = typeof RunnerCapacity.Type;
 export const Snapshot = Schema.Struct({
@@ -271,12 +285,17 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("operation.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("activity.cancel"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("machine.pause"), paused: Schema.Boolean }),
-  Schema.Struct({ type: Schema.Literal("machine.configure"), maxRunners: MaxRunners }),
+  Schema.Struct({
+    type: Schema.Literal("machine.configure"),
+    maxRunners: Schema.optional(MaxRunners),
+    memoryBudgetMiB: Schema.optional(MemoryBudgetMiB),
+  }),
   Schema.Struct({ type: Schema.Literal("environment.register"), environment: Environment }),
   Schema.Struct({ type: Schema.Literal("environment.remove"), id: Identifier }),
   Schema.Struct({
     type: Schema.Literal("environment.configure"),
     id: Identifier,
+    warmPool: Schema.optional(WarmPoolSize),
     x64: Schema.optional(Schema.Literals(["rosetta", "off"])),
     egress: Schema.optional(Egress),
     cpu: Schema.optional(Schema.Int),
@@ -537,7 +556,7 @@ export const capabilities = [
     name: "machine.configure",
     kind: "command",
     activity: "setting",
-    description: "Set the maximum number of concurrent runners on this machine (1-16, default 5).",
+    description: "Set concurrent runners (1-16, default 5) and the shared VM memory budget in MiB.",
   },
   {
     name: "machine.pause",
@@ -562,7 +581,7 @@ export const capabilities = [
     kind: "command",
     activity: "setting",
     description:
-      "Set CPU, memory, an absolute VM storage directory, egress or opt-in Rosetta x86_64 support for future instances. Internet-only egress is supported only on Windows; open allows host and local network access. Rosetta is Linux-only and does not change ARM64 runner labels.",
+      "Set CPU, memory, an absolute VM storage directory, egress, opt-in Rosetta x86_64 support or an opt-in warm pool (0-4 SSH-ready VMs, default 0). Warm VMs use RAM but hold no job credentials. Internet-only egress is supported only on Windows; open allows host and local network access. Rosetta is Linux-only and does not change ARM64 runner labels.",
   },
   {
     name: "environment.start",

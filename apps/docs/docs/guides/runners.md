@@ -3,7 +3,22 @@ title: Runners and jobs
 description: Automatic and manual runners, reading job results, cancelling and recovering.
 ---
 
-Every job runs on its own runner in its own VM. Vectis boots a copy of the environment, registers a GitHub runner that accepts exactly one job, runs it, then deletes the VM and the registration.
+Every job runs on its own runner in its own VM. Vectis boots a copy of the environment or takes over an unused warm VM, registers a GitHub runner that accepts exactly one job, runs it, then deletes the VM and the registration.
+
+## Optional warm pool
+
+Keep up to four pre-booted, SSH-ready VMs per environment to skip cloning, booting and waiting for SSH when a job arrives. The pool is opt-in and defaults to zero on Linux, macOS and Windows:
+
+```sh
+vectis environment configure <environment-id> --warm-pool 1 --wait
+vectis environment configure <environment-id> --warm-pool 0 --wait
+```
+
+Warm VMs use real host RAM and disk space while idle. They follow the shared memory budget, normal-pressure gate and macOS two-VM limit. Vectis leaves a runner slot and another startup estimate free, and does not fill the pool while a runner is waiting for a VM or preparation is busy. The requested size is an upper bound, not a capacity guarantee. With a one-runner limit, no warm VM is kept.
+
+Idle warm VMs have no runner registration, JIT configuration or job credentials. Registration happens only after a runner atomically takes over the VM and checks SSH. Unhealthy VMs are stopped before falling back to a cold start; used job VMs never return to the pool. `status` and MCP snapshots distinguish idle pool instances with `role: "warm"` and background startup with `role: "warming"`, separately from the VM's lifecycle status. They are not running jobs. Reported runner capacity treats owned pool VMs as reclaimable while the budget still reports their RAM usage.
+
+Idle warm VMs are stopped and replaced after 30 minutes. A real job can reclaim warm VMs belonging to other environments when it needs memory or a macOS slot. Pausing, disabling the pool or shutting down the service drains idle VMs; changing environment defaults replaces them. After a crash, pool VMs require the same confirmed-exit reconciliation as other interrupted instances.
 
 ## Automatic runners
 
@@ -16,7 +31,13 @@ vectis repository disable-auto <binding-id>
 
 With automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts runners when it is connected and not paused, one per queued job, and a new job also starts one right away instead of waiting for the next heartbeat.
 
-A Mac runs up to five runners at once by default; change it in **Settings** or with `vectis machine configure --max-runners <N>` (1 to 16). The Mac also never starts more than its CPU and memory allow: all running and starting VMs together get at most every CPU core and 75 percent of the memory, and at most two macOS VMs run at a time. Capacity is calculated separately for each ready environment, including resources reserved for runners that have not booted yet. With a 6 CPU environment on a 14 core Mac, at most two such VMs fit, whatever the runner limit says. `vectis status --json` includes each environment's available slots; the overall available count is their maximum, not their sum. Interrupted VMs reserve their CPU, memory and macOS slot until verified stopped. An action-required runner whose VM is verified stopped releases its local slot while cleanup remains unresolved. Give an environment fewer CPUs or less memory with `vectis environment configure` to run more.
+A Mac runs up to five runners at once by default; change it in **Settings** or with `vectis machine configure --max-runners <N>` (1 to 16). CPU and memory settings on an environment are per-VM ceilings. CPU ceilings may add up to more than the host's cores; each VM must still fit the host's core count. Memory admission uses a shared budget, defaulting to 75 percent of host RAM, rather than adding up the ceilings. Set it with `vectis machine configure --memory-budget-mib <N>` (2048 MiB to total host RAM).
+
+Each non-stopped VM commits the larger of its measured process RSS and a startup floor: 2048 MiB for Linux, 4096 MiB for macOS or Windows, capped by that VM's memory ceiling. Measurements are cached for five seconds. An unavailable footprint measurement uses the configured ceiling; a fresh VM without a PID reserves its startup estimate. Accepted runners reserve the estimate before boot, conservatively using the largest ready estimate until their environment is known. Starting another VM must fit that estimate into the remaining budget, and host memory pressure must be normal. Warning or critical pressure returns `memory_pressure`; a full budget returns `memory_budget_exceeded`. Unknown pressure is treated as normal and reported with `pressureKnown: false`.
+
+Capacity is calculated separately for each ready environment. `vectis status --json` includes `runnerCapacity.environments` and `runnerCapacity.budget` with the effective budget, committed memory, host RAM and pressure. The overall available count is the maximum environment count, not their sum. macOS retains its shared two-VM limit. Interrupted VMs hold memory until verified stopped. An action-required runner whose VM is verified stopped releases its local slot while cleanup remains unresolved. Existing VMs continue running when pressure rises or the budget is lowered; the budget gates new starts rather than enforcing a hard runtime memory cap.
+
+Generous ceilings let a build grow when resources are available: for example Linux with 8 vCPUs / 12288 MiB, Windows with 8 / 16384 MiB, or macOS with 6 / 12288 MiB, when the host supports them. Unused guest memory is allocated lazily, so a ceiling is not an immediate reservation. Touched memory can remain allocated until the disposable VM exits. These are recommendations, not changes to preparation defaults.
 
 Before booting a VM, and again before registering the runner, Vectis checks with GitHub that the job is still queued. GitHub may hand the runner a different job with the same labels. If the original job is still queued after a runner succeeded, Vectis can request another runner without consuming the failure budget. Automatic admission stops after three failures or ten total attempts per job. Failures include failed operations, requests that expire before claim, and action-required operations. Failed and expired requests wait 60 seconds before retrying; action-required operations wait ten minutes. A deleted previous operation can retry after ten minutes without inventing a failure. A person's cancellation stays final unless GitHub queues the job again after an approval or concurrency wait.
 
@@ -50,6 +71,7 @@ Each phase has a `name`, an ISO UTC `startedAt`, and an optional `endedAt`. Subt
 | `queued_locally`           | Local operation acceptance to lifecycle task start, including local admission checks. This excludes waiting in GitHub or the cloud.                            |
 | `job_check`                | One check that the requested job still needs capacity, before startup, before registration, or while idle.                                                     |
 | `vm_start`                 | The `environment.start` child, including validation, cloning and spawning, until it confirms the VM is running.                                                |
+| `warm_takeover`            | Claim an idle pool VM; followed by a `guest_ready` SSH health check.                                                                                           |
 | `vm_start_and_guest_ready` | Rosetta startup, including guest address discovery, pinned SSH readiness, clock and architecture checks, and Rosetta verification inside `environment.start`.  |
 | `guest_ready`              | Guest readiness and the pinned SSH connection. After `vm_start_and_guest_ready`, this is a readiness recheck; the initial wait is already included in startup. |
 | `runner_install`           | Downloading, verifying and extracting the runner.                                                                                                              |

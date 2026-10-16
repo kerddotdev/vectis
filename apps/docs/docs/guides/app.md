@@ -39,3 +39,9 @@ After signing in under **Connections > Other Macs**, the machine switcher at the
 ## Updates
 
 The app updates itself from GitHub Releases and restarts the service only when it is idle. See [Updates](/docs/get-started/install#updates).
+
+## Machine resource settings
+
+**Settings** controls the concurrent runner limit (1 to 16, default 5). The shared VM memory budget is also configurable through `vectis machine configure --memory-budget-mib <N>`, independently or alongside `--max-runners <N>`. It defaults to 75 percent of host RAM and accepts 2048 MiB to total host RAM. Lowering it gates future starts without stopping current VMs.
+
+Environment CPU and memory values are per-VM ceilings. CPU overcommit is allowed; memory admission uses measured VM usage with startup floors, and warning or critical host memory pressure blocks new VMs. `vectis status --json` exposes `runnerCapacity.budget` for the effective budget, committed memory, host RAM and pressure, plus `pressureKnown` to distinguish unknown pressure. See [VM storage and resources](/docs/guides/storage#shared-memory-budget) for accounting and recommended ceilings.

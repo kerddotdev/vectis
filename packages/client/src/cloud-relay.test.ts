@@ -542,6 +542,42 @@ test("relay shutdown interrupts runner status polling", async () => {
   await rejected;
 });
 
+test.each([
+  { type: "machine.configure", maxRunners: 8, memoryBudgetMiB: 24576 },
+  { type: "environment.configure", id: "linux", warmPool: 2 },
+])("remote $type configuration replays settings unchanged", async (command) => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  const submit = vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-settings",
+    key: "remote:settings",
+    command: command.type,
+    status: "succeeded",
+    message: "Applied",
+    createdAt: "",
+    updatedAt: "",
+  });
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [{ _id: "settings", phase: "running", commandJson: JSON.stringify(command) }];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(submit).toHaveBeenCalledWith(command, "remote:settings", expect.any(AbortSignal));
+  expect(
+    transport.mutation.mock.calls.some(
+      ([mutation, args]) =>
+        getFunctionName(mutation) === "operations:acknowledge" &&
+        args.id === "settings" &&
+        args.phase === "succeeded",
+    ),
+  ).toBe(true);
+});
+
 test("remote acknowledgements redact older hosts' task errors before truncating or sending", async () => {
   vi.useFakeTimers();
   const { store, local } = await fixture();
