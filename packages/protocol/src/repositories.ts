@@ -1,10 +1,13 @@
 import { Schema } from "effect";
 import { RepositoryAccess } from "./repository-access.js";
+import { CacheVolume } from "./cache-volume.js";
 import { Identifier } from "./identifier.js";
 export const MachineRepositories = Schema.Array(
   Schema.Struct({
     id: Schema.NonEmptyString,
     repositoryId: Schema.Int,
+    installationId: Schema.optional(Schema.Int),
+    cacheVolume: Schema.optional(CacheVolume),
     repositoryName: Schema.NonEmptyString,
     environmentId: Identifier,
     runsOn: Schema.optional(Schema.String),

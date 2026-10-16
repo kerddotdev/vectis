@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { RerunFailed, CancelRun, DispatchWorkflow } from "./runs.js";
+import { CacheSizeGiB } from "./cache-volume.js";
 import { RepositoryAccess } from "./repository-access.js";
 import { Identifier } from "./identifier.js";
 import { MachineRepositories, RepositoryConnection } from "./repositories.js";
@@ -266,6 +267,13 @@ export const Command = Schema.Union([
     ...RepositoryAccess.fields,
   }),
   Schema.Struct({
+    type: Schema.Literal("repository.cache"),
+    bindingId: Identifier,
+    enabled: Schema.Boolean,
+    sizeGiB: Schema.optional(CacheSizeGiB),
+  }),
+  Schema.Struct({ type: Schema.Literal("cache.clear"), bindingId: Identifier }),
+  Schema.Struct({
     type: Schema.Literal("repository.automatic"),
     bindingId: Identifier,
     enabled: Schema.Boolean,
@@ -469,6 +477,18 @@ export const capabilities = [
     activity: "setting",
     description:
       "Set which numeric GitHub actor IDs may use this binding and whether manual host approval is required.",
+  },
+  {
+    name: "repository.cache",
+    kind: "command",
+    activity: "setting",
+    description: "Enable or disable a repository cache block device and set its size cap.",
+  },
+  {
+    name: "cache.clear",
+    kind: "command",
+    activity: "setting",
+    description: "Delete a repository cache volume when no job uses it.",
   },
   {
     name: "repository.automatic",

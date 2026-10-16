@@ -629,3 +629,39 @@ for (const os of ["linux", "macos", "windows"] as const) {
     },
   );
 }
+
+test.each(["5", "6"])(
+  "automatic cache writer fences workflow run %s before any job step",
+  async (runId) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cache-hook-"));
+    try {
+      await mkdir(join(home, "vectis-actions-runner/_vectis"), { recursive: true });
+      const path = join(home, "job-started.sh");
+      await writeFile(
+        join(home, "policy"),
+        renderRunnerPolicy({
+          repositoryId: 2,
+          actors: "any",
+          approval: "automatic",
+          cacheRun: { runId: 5, runAttempt: 1 },
+        }),
+      );
+      await writeFile(path, bashJobStartedHook());
+      const result = await runHook("bash", path, {
+        ...process.env,
+        HOME: home,
+        ...env,
+        GITHUB_RUN_ID: runId,
+      });
+      if (runId === "5") expect(result.status).toBe(0);
+      else {
+        expect(result.stdout).toContain(assignmentRejectedMarker);
+        expect(await readFile(join(home, assignmentRejectedPath), "utf8")).toBe(
+          "cache run mismatch\n",
+        );
+      }
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

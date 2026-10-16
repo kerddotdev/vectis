@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { Schema } from "effect";
-import type {
+import {
   Environment,
-  Instance,
-  Operation,
-  RunnerCapacity,
-  Snapshot,
+  type Instance,
+  type Operation,
+  type RunnerCapacity,
+  type Snapshot,
   VectisError,
 } from "../../../packages/protocol/src/index.js";
 import { RunnerProgress } from "../../../packages/protocol/src/runners.js";
@@ -55,11 +55,16 @@ export class WarmPool {
       if (operation.command !== "runner.run" || !["accepted", "running"].includes(operation.status))
         return false;
       const progress = Schema.is(RunnerProgress)(operation.result) ? operation.result : undefined;
-      const start = snapshot.operations.find((item) => item.key === `${operation.id}:start`);
-      return !snapshot.instances.some(
-        (instance) =>
-          instance.id === (progress?.instanceId ?? start?.id) && instance.status !== "stopped",
-      );
+      let instanceId = progress?.instanceId;
+      if (instanceId === undefined) {
+        try {
+          instanceId = this.store.operationByKey(`${operation.id}:start`).id;
+        } catch (error) {
+          if (!(error instanceof VectisError) || error.code !== "operation_missing") throw error;
+        }
+      }
+      const instance = instanceId === undefined ? undefined : this.store.instance(instanceId);
+      return !instance || instance.status === "stopped";
     });
   }
 
@@ -97,8 +102,10 @@ export class WarmPool {
 
   refresh() {
     if (this.closed) return;
-    const snapshot = this.store.snapshot();
-    if (snapshot.environments.some((environment) => (environment.warmPool ?? 0) > 0)) {
+    const configured = this.store
+      .list("environment")
+      .some((value) => (Schema.decodeUnknownSync(Environment)(value).warmPool ?? 0) > 0);
+    if (configured) {
       if (!this.timer) {
         this.timer = setInterval(() => this.refresh(), 5000);
         this.timer.unref();
@@ -107,6 +114,8 @@ export class WarmPool {
       clearInterval(this.timer);
       this.timer = undefined;
     }
+    if (!configured && this.ready.size === 0 && !this.pending) return;
+    const snapshot = this.store.snapshot();
     if (this.pending) {
       const current = snapshot.environments.find(
         (item) => item.id === this.pending?.environment.id,
@@ -234,11 +243,7 @@ export class WarmPool {
     await this.sweep;
     for (const instance of this.store.snapshot().instances) {
       if (!this.controls.admission(this.store.snapshot(), environment)) break;
-      if (
-        instance.environmentId !== environment.id &&
-        (this.ready.has(instance.id) || this.stopping.has(instance.id))
-      )
-        await this.stop(instance);
+      if (this.ready.has(instance.id) || this.stopping.has(instance.id)) await this.stop(instance);
     }
   }
 

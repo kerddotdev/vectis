@@ -82,8 +82,22 @@ export const authorize = internalQuery({
     const authority = await bindingAuthority(ctx, args.bindingId, args.preparing);
     const app = await ctx.db.query("githubApps").first();
     if (!app) throw new ConvexError({ code: "github_app_unavailable" });
+    const requestedJobId = args.jobId;
+    const cacheJob =
+      args.preparing && requestedJobId !== undefined && authority.binding.cacheVolume?.enabled
+        ? await ctx.db
+            .query("githubJobs")
+            .withIndex("by_job", (q) =>
+              q
+                .eq("installationId", authority.binding.installationId)
+                .eq("repositoryId", authority.binding.repositoryId)
+                .eq("jobId", requestedJobId),
+            )
+            .unique()
+        : null;
     return {
       ...authority,
+      cacheJob: cacheJob ? { runId: cacheJob.runId, runAttempt: cacheJob.runAttempt } : null,
       ...(args.preparing ? { access: await runnerAdmission(ctx, args.bindingId, args) } : {}),
       app: { appId: app.appId, clientId: app.clientId, privateKey: app.privateKey },
     };
@@ -149,7 +163,13 @@ export const claim = internalMutation({
   },
 });
 export const ready = internalMutation({
-  args: { id: v.id("runnerLeases"), runnerId: v.number(), encodedConfig: v.string() },
+  args: {
+    id: v.id("runnerLeases"),
+    runnerId: v.number(),
+    encodedConfig: v.string(),
+    cacheWrite: v.optional(v.boolean()),
+    cacheRun: v.optional(v.object({ runId: v.number(), runAttempt: v.number() })),
+  },
   handler: async (ctx, args) => {
     const target = await machine(ctx);
     const lease = await ctx.db.get("runnerLeases", args.id);
@@ -179,6 +199,8 @@ export const ready = internalMutation({
       phase: "ready",
       runnerId: args.runnerId,
       encodedConfig: args.encodedConfig,
+      cacheWrite: args.cacheWrite === true && args.cacheRun !== undefined,
+      ...(args.cacheRun ? { cacheRun: args.cacheRun } : {}),
       configExpiresAt: Date.now() + configLifetime,
       updatedAt: Date.now(),
     });

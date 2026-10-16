@@ -550,3 +550,90 @@ test("a busy runner retains its lease until a later release succeeds", async () 
   });
   expect(await device.query(api.runnerLeases.list, {})).toEqual([]);
 });
+
+test.each([
+  ["push", "main", 600, true],
+  ["schedule", "main", 600, true],
+  ["workflow_dispatch", "main", 600, true],
+  ["pull_request", "main", 600, false],
+  ["pull_request_target", "main", 600, false],
+  ["push", "main", 601, false],
+  ["push", "feature", 600, false],
+  ["unreadable", "main", 600, false],
+] as const)(
+  "prepare cache grant: %s %s head repository %s",
+  async (event, branch, headRepository, expected) => {
+    const { t, device, bindingId, fetch } = await fixture();
+    await t.run(async (ctx) => {
+      await ctx.db.patch("repositoryBindings", bindingId, {
+        cacheVolume: { enabled: true, sizeGiB: 20 },
+      });
+      await ctx.db.insert("githubJobs", {
+        installationId: 81,
+        repositoryId: 600,
+        jobId: 900,
+        runId: 800,
+        runAttempt: 1,
+        name: "Cache job",
+        status: "queued",
+        conclusion: null,
+        labels: ["vectis-mac"],
+        runnerId: 0,
+        runnerName: null,
+        updatedAt: 1,
+      });
+    });
+    const original = fetch.getMockImplementation();
+    fetch.mockImplementation(async (url, init) => {
+      if (url.endsWith("/actions/runs/800"))
+        return event === "unreadable"
+          ? new Response(null, { status: 404 })
+          : Response.json({
+              id: 800,
+              run_attempt: 1,
+              event,
+              head_branch: branch,
+              repository: { id: 600 },
+              head_repository: { id: headRepository },
+            });
+      const response = await original?.(url, init);
+      if (!response) throw new Error("Missing test response");
+      if (url === "https://api.github.com/repos/owner/sandbox")
+        return Response.json({ ...(await response.json()), default_branch: "main" });
+      return response;
+    });
+    const grant = await device.action(api.githubRunners.prepare, {
+      bindingId,
+      key: "cache",
+      jobId: 900,
+    });
+    expect(grant).toMatchObject({ state: "ready", cacheWrite: expected });
+    if (grant.state !== "ready") throw new Error("Expected ready grant");
+    expect(grant.access?.cacheRun).toEqual(expected ? { runId: 800, runAttempt: 1 } : undefined);
+    expect(
+      await device.action(api.githubRunners.prepare, { bindingId, key: "cache", jobId: 900 }),
+    ).toEqual(grant);
+  },
+);
+
+test("cache settings are machine owned, validated, and returned by binding discovery", async () => {
+  const { device, owner, bindingId } = await fixture();
+  await expect(
+    owner.mutation(api.repositoryBindings.setCacheVolume, { bindingId, enabled: true }),
+  ).rejects.toThrow();
+  await expect(
+    device.mutation(api.repositoryBindings.setCacheVolume, {
+      bindingId,
+      enabled: true,
+      sizeGiB: 0,
+    }),
+  ).rejects.toThrow();
+  await device.mutation(api.repositoryBindings.setCacheVolume, { bindingId, enabled: true });
+  expect(await device.query(api.repositoryBindings.forMachine, {})).toEqual([
+    expect.objectContaining({ installationId: 81, cacheVolume: { enabled: true, sizeGiB: 20 } }),
+  ]);
+  await device.mutation(api.repositoryBindings.setCacheVolume, { bindingId, enabled: false });
+  expect(await device.query(api.repositoryBindings.forMachine, {})).toEqual([
+    expect.objectContaining({ cacheVolume: { enabled: false, sizeGiB: 20 } }),
+  ]);
+});

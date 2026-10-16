@@ -47,6 +47,8 @@ actors=${access.actors === "any" ? "any" : [...new Set(access.actors.ids)].join(
 approval=${access.approval}
 runId=${access.approvedRun?.runId ?? ""}
 runAttempt=${access.approvedRun?.runAttempt ?? ""}
+cacheRunId=${access.cacheRun?.runId ?? ""}
+cacheRunAttempt=${access.cacheRun?.runAttempt ?? ""}
 `;
 }
 
@@ -101,6 +103,9 @@ set -eu
 policy_dir="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
 source "$policy_dir/policy"
 [[ "\${GITHUB_REPOSITORY_ID:-}" == "$repositoryId" ]] || refuse "repository id mismatch"
+if [[ -n "$cacheRunId" ]]; then
+  [[ "\${GITHUB_RUN_ID:-}" == "$cacheRunId" && "\${GITHUB_RUN_ATTEMPT:-}" == "$cacheRunAttempt" ]] || refuse "cache run mismatch"
+fi
 if [[ "$approval" == required ]]; then
   [[ -n "$runId" && -n "$runAttempt" && "\${GITHUB_RUN_ID:-}" == "$runId" && "\${GITHUB_RUN_ATTEMPT:-}" == "$runAttempt" ]] || refuse "run approval mismatch"
 fi
@@ -179,6 +184,9 @@ function Refuse([string]$reason) {
 try {
   $policy = ConvertFrom-StringData (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'policy') -Raw)
   if ($env:GITHUB_REPOSITORY_ID -cne $policy.repositoryId) { Refuse 'repository id mismatch' }
+  if ($policy.cacheRunId) {
+    if ($env:GITHUB_RUN_ID -cne $policy.cacheRunId -or $env:GITHUB_RUN_ATTEMPT -cne $policy.cacheRunAttempt) { Refuse 'cache run mismatch' }
+  }
   if ($policy.approval -eq 'required') {
     if (!$policy.runId -or !$policy.runAttempt -or $env:GITHUB_RUN_ID -cne $policy.runId -or $env:GITHUB_RUN_ATTEMPT -cne $policy.runAttempt) { Refuse 'run approval mismatch' }
   }

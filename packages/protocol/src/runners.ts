@@ -8,6 +8,7 @@ export const RunnerGrant = Schema.Union([
     id: Schema.NonEmptyString,
     runnerId: Schema.Int,
     encodedConfig: Schema.NonEmptyString,
+    cacheWrite: Schema.Boolean,
     environmentId: Identifier,
     os: GuestOS,
     access: Schema.optional(RunnerAccess),

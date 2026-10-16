@@ -6,6 +6,7 @@ export function windowsVmArguments(input: {
   cpu: number;
   memoryMiB: number;
   egress?: Egress;
+  cacheDiskPath?: string;
 }) {
   return [
     "-machine",
@@ -26,6 +27,14 @@ export function windowsVmArguments(input: {
     "file=disk.qcow2,if=none,id=system,format=qcow2",
     "-device",
     "nvme,drive=system,serial=vectis-system,bootindex=0",
+    ...(input.cacheDiskPath
+      ? [
+          "-drive",
+          `file=${resolve(input.cacheDiskPath).replaceAll(",", ",,")},if=none,id=cache,format=raw,cache=unsafe`,
+          "-device",
+          "nvme,drive=cache,serial=VECTISCACHE",
+        ]
+      : []),
     "-device",
     "ramfb",
     "-device",

@@ -64,6 +64,7 @@ async function main() {
       input: { type: "string", multiple: true },
       actors: { type: "string" },
       approval: { type: "string" },
+      "size-gib": { type: "string" },
       account: { type: "string" },
       binding: { type: "string" },
       owner: { type: "string" },
@@ -160,6 +161,8 @@ Repositories and jobs
   repository disconnect <id>    Stop future runners without interrupting running jobs
   runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
   runner reconcile <operation-id>  Clean up an interrupted runner after verifying its VM stopped
+  repository cache enable|disable|clear <binding-id> [--size-gib N]
+                               Configure or clear an opt-in repository cache disk (default 20 GiB)
   repository access <binding-id> --actors any|<id,id,...> --approval automatic|required
                                Actor IDs are numeric GitHub user IDs: gh api users/<login> --jq .id
   job list <binding-id>         Read recent GitHub job states for a connected repository
@@ -246,7 +249,7 @@ Options
   -h, --help                    Show this help
 
 Exit codes: 0 success, 1 failure or cancellation, 3 action required or still pending.
-Setting commands always wait: pause/resume, repository enable-auto/disable-auto,
+Setting commands always wait: pause/resume, repository enable-auto/disable-auto, repository cache,
 environment register/configure/remove, instance stop/reconcile, operation cancel, and activity cancel.
 Their wait timeout reports wait_cancelled with exit code 3; the operation may still be running.
 Errors are JSON: {"error":{"code","message","nextStep"}}.
@@ -628,7 +631,23 @@ Documentation: https://vectis.kerd.dev/docs
       bindingId: id,
       enabled: subcommand === "enable-auto",
     });
-  else if (command === "repository" && subcommand === "access" && id) {
+  else if (command === "repository" && subcommand === "cache" && positionals[3]) {
+    const bindingId = positionals[3];
+    if (id === "clear" && values["size-gib"] === undefined)
+      request = decodeCommand({ type: "cache.clear", bindingId });
+    else if (id === "enable" || (id === "disable" && values["size-gib"] === undefined))
+      request = decodeCommand({
+        type: "repository.cache",
+        bindingId,
+        enabled: id === "enable",
+        ...(values["size-gib"] === undefined ? {} : { sizeGiB: Number(values["size-gib"]) }),
+      });
+    else
+      throw new VectisError(
+        "invalid_cache_command",
+        "Use repository cache enable|disable|clear <binding-id>; --size-gib is only valid with enable.",
+      );
+  } else if (command === "repository" && subcommand === "access" && id) {
     if (
       !values.actors ||
       (values.actors !== "any" && !/^[1-9][0-9]*(,[1-9][0-9]*)*$/.test(values.actors))

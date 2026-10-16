@@ -16,6 +16,7 @@ export type RepositoryAccess = typeof RepositoryAccess.Type;
 export const RunnerAccess = Schema.Struct({
   repositoryId: GitHubId,
   ...RepositoryAccess.fields,
+  cacheRun: Schema.optional(Schema.Struct({ runId: GitHubId, runAttempt: GitHubId })),
   approvedRun: Schema.optional(Schema.Struct({ runId: GitHubId, runAttempt: GitHubId })),
 });
 export type RunnerAccess = typeof RunnerAccess.Type;

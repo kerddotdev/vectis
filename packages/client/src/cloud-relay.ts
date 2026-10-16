@@ -495,6 +495,13 @@ export function startCloudRelay(
       );
       return Schema.decodeUnknownSync(RunControlOutcome)(result);
     },
+    async setCacheVolume(bindingId: string, cacheVolume: { enabled: boolean; sizeGiB?: number }) {
+      requireConnection();
+      await interruptible(
+        cloud.mutation(api.repositoryBindings.setCacheVolume, { bindingId, ...cacheVolume }),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
     async setAccess(bindingId: string, access: RepositoryAccess) {
       requireConnection();
       await interruptible(

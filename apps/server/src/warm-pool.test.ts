@@ -52,7 +52,8 @@ async function fixture(options: { max?: number; budget?: number; memory?: number
   store.put("environment", environment.id, { ...environment, memoryMiB: options.memory ?? 512 });
   let now = Date.now();
   let pressure: "normal" | "warning" | "critical" = "normal";
-  const resources = () => ({ ...probe(), pressure });
+  const footprintsMiB = new Map<string, number>();
+  const resources = () => ({ ...probe(), footprintsMiB, pressure });
   const start = vi.fn(
     async (env: Environment, key: string, signal: AbortSignal): Promise<Instance> => {
       signal.throwIfAborted();
@@ -117,6 +118,7 @@ async function fixture(options: { max?: number; budget?: number; memory?: number
       now = value;
     },
     now: () => now,
+    setFootprint: (id: string, memoryMiB: number) => footprintsMiB.set(id, memoryMiB),
     setPressure: (value: typeof pressure) => {
       pressure = value;
     },
@@ -329,4 +331,60 @@ test("disabled pools stay dormant and still react to later configuration changes
   } finally {
     vi.useRealTimers();
   }
+});
+
+test("cold jobs can reclaim their own environment's warm VMs when measured memory no longer fits", async () => {
+  const f = await fixture({ budget: 2048 });
+  f.pool.start();
+  await vi.waitFor(() => expect(f.warm()).toHaveLength(2));
+  for (const instance of f.warm()) f.setFootprint(instance.id, 900);
+  f.runner("cache-cold");
+  await f.pool.yieldForJob(environment);
+  expect(f.stop).toHaveBeenCalledOnce();
+  expect(f.warm()).toHaveLength(1);
+});
+
+test("a disabled pool does not rebuild status on each retained history write", async () => {
+  const f = await fixture();
+  f.store.put("environment", environment.id, { ...environment, warmPool: 0 });
+  const snapshot = vi.spyOn(f.store, "snapshot");
+  try {
+    f.pool.start();
+    for (let index = 0; index < 20; index++) {
+      f.store.put("operation", `history-${index}`, {
+        id: `history-${index}`,
+        key: `history-${index}`,
+        command: "job.scan",
+        status: "succeeded",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        message: "Completed.",
+      });
+    }
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(f.start).not.toHaveBeenCalled();
+  } finally {
+    snapshot.mockRestore();
+  }
+});
+
+test("a running legacy runner does not block pool filling when its start leaves the status window", async () => {
+  const f = await fixture();
+  const runner = f.runner("legacy");
+  const start = f.store.accept(`${runner.id}:start`, "start", "environment.start").operation;
+  f.store.update(start, { status: "succeeded" });
+  f.store.put("instance", start.id, {
+    id: start.id,
+    environmentId: environment.id,
+    status: "running",
+    memoryMiB: 512,
+    pid: 0,
+    createdAt: new Date().toISOString(),
+  });
+  for (let index = 0; index < 110; index++) {
+    const operation = f.store.accept(`later-${index}`, `later-${index}`, "job.scan").operation;
+    f.store.update(operation, { status: "succeeded" });
+  }
+  expect(f.store.snapshot().operations.some((operation) => operation.id === start.id)).toBe(false);
+  expect(f.pool.canFill(environment)).toBe(true);
 });

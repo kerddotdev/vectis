@@ -13,6 +13,7 @@ export const repositoryAccess = v.object({
 export const runnerAccess = v.object({
   repositoryId: v.number(),
   ...repositoryAccess.fields,
+  cacheRun: v.optional(v.object({ runId: v.number(), runAttempt: v.number() })),
   approvedRun: v.optional(v.object({ runId: v.number(), runAttempt: v.number() })),
 });
 

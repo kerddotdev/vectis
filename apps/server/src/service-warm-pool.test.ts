@@ -33,6 +33,7 @@ async function fixture(
     recover?: Instance;
     reconciled?: boolean;
     pendingStart?: boolean;
+    cache?: boolean;
   } = {},
 ) {
   const home = await mkdtemp(join(tmpdir(), "vectis-service-warm-"));
@@ -96,10 +97,18 @@ async function fixture(
   const reconcile = vi.spyOn(runtime, "reconcile").mockResolvedValue(options.reconciled ?? true);
   const broker = {
     repositories: vi.fn(async () => [
-      { id: "binding", environmentId: "linux", repositoryId: 1, repositoryName: "test/repo" },
+      {
+        id: "binding",
+        environmentId: "linux",
+        installationId: 1,
+        repositoryId: 1,
+        repositoryName: "test/repo",
+        ...(options.cache ? { cacheVolume: { enabled: true, sizeGiB: 1 } } : {}),
+      },
     ]),
     prepareRunner: vi.fn(async () => ({
       state: "ready" as const,
+      cacheWrite: false,
       id: "lease",
       runnerId: 1,
       environmentId: "linux",
@@ -300,3 +309,29 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
     expect(f.store.snapshot().instances.find((item) => item.id === id)?.status).toBe("stopped");
   },
 );
+
+test("a cache runner boots with its private disk while a generic warm VM remains unclaimed", async () => {
+  const f = await fixture({ cache: true });
+  await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+  const warmId = f.warm()[0]!.id;
+  vi.mocked(executeGuest).mockResolvedValueOnce(ok);
+  f.listening();
+  const run = f.service.submit("cache-cold", { type: "runner.run", bindingId: "binding" });
+  await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce());
+  expect(f.start).toHaveBeenCalledTimes(2);
+  const coldId = f.start.mock.calls[1]?.[0];
+  expect(coldId).not.toBe(warmId);
+  expect(f.start.mock.calls[1]?.[4]).toMatchObject({
+    sourcePath: join(f.home, "instances", "cache", "linux", "1-1", "cache.img"),
+  });
+  expect(f.store.operation(run.id).result).toMatchObject({
+    instanceId: coldId,
+    stage: "listening",
+  });
+  expect(f.warm().map((instance) => instance.id)).toEqual([warmId]);
+  f.service.submit("cancel-cache", { type: "operation.cancel", id: run.id });
+  await vi.waitFor(() => expect(f.broker.releaseRunner).toHaveBeenCalledOnce());
+  expect(f.stop).toHaveBeenCalledWith(coldId);
+  expect(f.stop).not.toHaveBeenCalledWith(warmId);
+  expect(f.store.list("cacheUse")).toEqual([]);
+});
