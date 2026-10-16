@@ -437,7 +437,7 @@ hostTest.each(["linux", "macos"] as const)(
   "%s attaches a private writable cache fork and finalizes it before deleting the instance",
   async (os) => {
     const { home, runtime, environment } = await fixture(
-      `require("node:fs").writeFileSync(require("node:path").join(__dirname, "args.json"), JSON.stringify(process.argv.slice(2))); process.stdout.write('{"event":"vm.running"}\\n'); setInterval(() => {}, 1000);`,
+      `const fs = require("node:fs"); const path = require("node:path"); fs.writeFileSync(path.join(__dirname, "args.json"), JSON.stringify(process.argv.slice(2))); process.on("SIGTERM", () => { fs.writeFileSync(path.join(__dirname, "instances/cache/cache.img"), "flushed-cache"); process.exit(0); }); process.stdout.write('{"event":"vm.running"}\\n'); setInterval(() => {}, 1000);`,
     );
     let basePath = environment.basePath;
     if (os === "macos") {
@@ -448,7 +448,8 @@ hostTest.each(["linux", "macos"] as const)(
     const sourcePath = join(home, "cache.img");
     await writeFile(sourcePath, "repository-cache");
     const stopped = vi.fn(async (path: string) => {
-      expect(await readFile(path, "utf8")).toBe("job-cache");
+      expect(instance.process.exitCode !== null || instance.process.signalCode !== null).toBe(true);
+      expect(await readFile(path, "utf8")).toBe("flushed-cache");
       expect(await runtime.hasWorkDirectory("cache")).toBe(true);
     });
     const instance = await runtime.start(

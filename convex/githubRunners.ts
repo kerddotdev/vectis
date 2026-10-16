@@ -59,6 +59,7 @@ export const prepare = action({
           runnerId: lease.runnerId,
           encodedConfig: lease.encodedConfig,
           cacheWrite: lease.cacheWrite ?? false,
+          ...(lease.cacheWriteReason ? { cacheWriteReason: lease.cacheWriteReason } : {}),
           environmentId: lease.environmentId,
           os: lease.os,
           ...(lease.access
@@ -76,15 +77,39 @@ export const prepare = action({
       await ctx.runMutation(internal.runnerLeases.attention, { id: lease._id });
       return { state: "action_required", id: lease._id };
     }
+    const cacheJob = authority.cacheJob;
     const cache =
-      !args.scaleSet && authority.cacheJob
-        ? await readCacheWrite(
-            (path) => client.request(access.token, access.path + path),
-            authority.binding.repositoryId,
-            authority.cacheJob.runId,
-            authority.cacheJob.runAttempt,
-          )
-        : { cacheWrite: false };
+      !args.scaleSet && cacheJob
+        ? await (async () => {
+            try {
+              const jobs = await repositoryAccess(client, {
+                owner: authority.binding.repositoryOwner ?? authority.account.login,
+                repo: authority.binding.repositoryName,
+                repositoryId: authority.binding.repositoryId,
+                githubUserId: authority.account.githubId,
+                githubLogin: authority.account.login,
+                purpose: "jobs",
+              });
+              if (jobs.installationId !== access.installationId)
+                return { cacheWrite: false, cacheWriteReason: "installation_changed" };
+              return await readCacheWrite(
+                (path) => client.request(jobs.token, jobs.path + path),
+                authority.binding.repositoryId,
+                cacheJob.runId,
+                cacheJob.runAttempt,
+              );
+            } catch {
+              return { cacheWrite: false, cacheWriteReason: "metadata_unavailable" };
+            }
+          })()
+        : {
+            cacheWrite: false,
+            cacheWriteReason: args.scaleSet
+              ? "scale_set_run_unknown"
+              : authority.binding.cacheVolume?.enabled
+                ? "job_unknown"
+                : "cache_disabled",
+          };
     let runnerId: number | undefined;
     try {
       const scaleSetRegistration = args.scaleSet
@@ -138,6 +163,7 @@ export const prepare = action({
         runnerId,
         encodedConfig: registration.encoded_jit_config,
         cacheWrite: cache.cacheWrite,
+        ...(cache.cacheWriteReason ? { cacheWriteReason: cache.cacheWriteReason } : {}),
         environmentId: lease.environmentId,
         os: lease.os,
         ...(lease.access

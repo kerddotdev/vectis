@@ -1112,7 +1112,8 @@ export class Service {
                   ? {
                       cache: {
                         sizeGiB: binding.cacheVolume?.sizeGiB ?? defaultCacheSizeGiB,
-                        complete: cache.authorizeWrite,
+                        authorizeWrite: cache.authorizeWrite,
+                        outcome: cache.outcome,
                         checked: (allowed: boolean) =>
                           recordCacheGuestPrivilege(this.store, environment, allowed),
                       },

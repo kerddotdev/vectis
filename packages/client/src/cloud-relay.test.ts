@@ -995,3 +995,38 @@ test("remote replay carries capacity mode through the same idempotent local comm
       .map((call) => call[1]),
   ).toMatchObject([{ id: "remote-operation", phase: "succeeded" }]);
 });
+
+test.each([true, false])(
+  "runner grants preserve cache authority and denial reasons: %s",
+  async (cacheWrite) => {
+    const { relay } = await fixture();
+    transport.auth.changed?.(true);
+    const grant = {
+      state: "ready",
+      id: "lease1",
+      runnerId: 3,
+      encodedConfig: "c2VjcmV0",
+      environmentId: "linux",
+      os: "linux",
+      cacheWrite,
+      ...(cacheWrite ? {} : { cacheWriteReason: "metadata_access_denied" }),
+      access: {
+        repositoryId: 1,
+        actors: "any",
+        approval: "automatic",
+        ...(cacheWrite ? { cacheRun: { runId: 5, runAttempt: 1 } } : {}),
+      },
+    };
+    transport.action.mockResolvedValueOnce(grant);
+    expect(
+      await relay.prepareRunner("binding1", "cache-job", new AbortController().signal, {
+        jobId: 9,
+      }),
+    ).toEqual(grant);
+    expect(transport.action.mock.calls.at(-1)?.[1]).toEqual({
+      bindingId: "binding1",
+      key: "cache-job",
+      jobId: 9,
+    });
+  },
+);

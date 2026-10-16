@@ -2,6 +2,8 @@ import { Schema } from "effect";
 import { RunnerAccess } from "./repository-access.js";
 import { GuestOS, Identifier } from "./index.js";
 
+const CacheReason = Schema.String.check(Schema.isMaxLength(256));
+
 export const RunnerGrant = Schema.Union([
   Schema.Struct({
     state: Schema.Literal("ready"),
@@ -9,6 +11,7 @@ export const RunnerGrant = Schema.Union([
     runnerId: Schema.Int,
     encodedConfig: Schema.NonEmptyString,
     cacheWrite: Schema.Boolean,
+    cacheWriteReason: Schema.optional(CacheReason),
     environmentId: Identifier,
     os: GuestOS,
     access: Schema.optional(RunnerAccess),
@@ -70,6 +73,14 @@ export const RunnerProgress = Schema.Struct({
   leaseId: Schema.optional(Identifier),
   runnerId: Schema.optional(Schema.Int),
   phases: Schema.optional(Schema.Array(RunnerPhase).check(Schema.isMaxLength(16))),
+  cache: Schema.optional(
+    Schema.Struct({
+      attached: Schema.Boolean,
+      writeBack: Schema.Literals(["granted", "denied"]),
+      reason: Schema.optional(CacheReason),
+      promoted: Schema.optional(Schema.Boolean),
+    }),
+  ),
   diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(16384))),
   cause: Schema.optional(
     Schema.Struct({

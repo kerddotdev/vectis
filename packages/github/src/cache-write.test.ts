@@ -39,8 +39,9 @@ test("unreadable run and unknown default branch fail closed", async () => {
       2,
       10,
     ),
-  ).toEqual({ cacheWrite: false });
+  ).toMatchObject({ cacheWrite: false, cacheWriteReason: "metadata_unavailable" });
   expect(await readCacheWrite(async (path) => (path ? run : { id: 2 }), 2, 10)).toEqual({
     cacheWrite: false,
+    cacheWriteReason: "metadata_unavailable",
   });
 });

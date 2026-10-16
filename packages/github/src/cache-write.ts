@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { GitHubApiError } from "./api-request.js";
 import { GitHubId } from "../../protocol/src/repository-access.js";
 
 const Repository = Schema.Struct({ id: GitHubId, default_branch: Schema.NonEmptyString });
@@ -24,19 +25,24 @@ export async function readCacheWrite(
     ]);
     const repository = Schema.decodeUnknownSync(Repository)(repositoryValue);
     const run = Schema.decodeUnknownSync(Run)(runValue);
-    const cacheWrite =
-      repository.id === repositoryId &&
-      run.id === runId &&
-      run.repository.id === repositoryId &&
-      run.head_repository.id === repositoryId &&
-      run.head_branch === repository.default_branch &&
-      (runAttempt === undefined || run.run_attempt === runAttempt) &&
-      ["push", "schedule", "workflow_dispatch"].includes(run.event);
+    if (repository.id !== repositoryId || run.repository.id !== repositoryId)
+      return { cacheWrite: false, cacheWriteReason: "repository_mismatch" };
+    if (run.id !== runId || (runAttempt !== undefined && run.run_attempt !== runAttempt))
+      return { cacheWrite: false, cacheWriteReason: "run_attempt_mismatch" };
+    if (run.head_repository.id !== repositoryId)
+      return { cacheWrite: false, cacheWriteReason: "fork" };
+    if (run.head_branch !== repository.default_branch)
+      return { cacheWrite: false, cacheWriteReason: "non_default_branch" };
+    if (!["push", "schedule", "workflow_dispatch"].includes(run.event))
+      return { cacheWrite: false, cacheWriteReason: "event_not_allowed" };
+    return { cacheWrite: true, cacheRun: { runId, runAttempt: run.run_attempt } };
+  } catch (error) {
     return {
-      cacheWrite,
-      ...(cacheWrite ? { cacheRun: { runId, runAttempt: run.run_attempt } } : {}),
+      cacheWrite: false,
+      cacheWriteReason:
+        error instanceof GitHubApiError && error.status === 403
+          ? "metadata_access_denied"
+          : "metadata_unavailable",
     };
-  } catch {
-    return { cacheWrite: false };
   }
 }

@@ -38,3 +38,13 @@ test("runner phase history is bounded and rejects unknown phase names", () => {
   expect(() => decode({ ...legacy, phases: Array.from({ length: 17 }, () => phase) })).toThrow();
   expect(() => decode({ ...legacy, phases: [{ ...phase, name: "unknown" }] })).toThrow();
 });
+
+test("runner cache outcomes survive decoding and reject unbounded reasons", () => {
+  const cache = { attached: true, writeBack: "granted", promoted: true };
+  expect(decode({ ...legacy, cache }).cache).toEqual(cache);
+  expect(
+    decode({ ...legacy, cache: { ...cache, reason: "x".repeat(256) } }).cache?.reason,
+  ).toHaveLength(256);
+  expect(() => decode({ ...legacy, cache: { ...cache, reason: "x".repeat(257) } })).toThrow();
+  expect(() => decode({ ...legacy, cache: { ...cache, writeBack: "maybe" } })).toThrow();
+});

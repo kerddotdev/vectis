@@ -64,10 +64,13 @@ hostTest(
     ]);
     expect(await bytes(first.disk.sourcePath)).toBe("\0".repeat(8));
     await untrusted.disk.stopped(c);
+    expect(untrusted.outcome()).toEqual({ promoted: false });
     expect(await bytes(first.disk.sourcePath)).toBe("\0".repeat(8));
     first.authorizeWrite();
     second.authorizeWrite();
     await Promise.all([first.disk.stopped(a), second.disk.stopped(b)]);
+    expect(first.outcome()).toEqual({ promoted: true });
+    expect(second.outcome()).toEqual({ promoted: true });
     expect(await bytes(first.disk.sourcePath)).toBe("last-job");
     expect(await bytes(join(first.directory, "cache.previous.img"))).toBe("firstjob");
     expect((await readdir(first.directory)).sort()).toEqual(["cache.img", "cache.previous.img"]);
@@ -93,6 +96,7 @@ hostTest(
     first.authorizeWrite();
     await volumes.disconnect(first.directory);
     await first.disk.stopped(path);
+    expect(first.outcome()).toEqual({ promoted: false, reason: "binding_disconnected" });
     await expect(stat(first.disk.sourcePath)).rejects.toMatchObject({ code: "ENOENT" });
     first.release();
   },
@@ -139,3 +143,15 @@ hostTest(
     recovered.release();
   },
 );
+
+test("a rejected cache fork reports promotion failure without replacing the saved generation", async () => {
+  const { home, first } = await fixture();
+  const path = join(home, "invalid.img");
+  await writeFile(path, "wrong-size");
+  first.authorizeWrite();
+  await expect(first.disk.stopped(path)).rejects.toMatchObject({ code: "cache_size_changed" });
+  expect(first.outcome()).toEqual({ promoted: false, reason: "promotion_failed" });
+  expect((await stat(first.disk.sourcePath)).size).toBe(1024 ** 3);
+  expect(await bytes(first.disk.sourcePath)).toBe("\0".repeat(8));
+  first.release();
+});

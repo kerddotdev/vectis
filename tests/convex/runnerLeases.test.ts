@@ -560,6 +560,9 @@ test.each([
   ["push", "main", 601, false],
   ["push", "feature", 600, false],
   ["unreadable", "main", 600, false],
+  ["access_denied", "main", 600, false],
+  ["malformed", "main", 600, false],
+  ["default_unknown", "main", 600, false],
 ] as const)(
   "prepare cache grant: %s %s head repository %s",
   async (event, branch, headRepository, expected) => {
@@ -585,21 +588,37 @@ test.each([
     });
     const original = fetch.getMockImplementation();
     fetch.mockImplementation(async (url, init) => {
+      if (url.endsWith("/access_tokens")) {
+        const body = JSON.parse(String(init?.body));
+        return Response.json({
+          token: body.permissions.actions === "read" ? "jobs-token" : "runner-token",
+        });
+      }
+      if (url.endsWith("/generate-jitconfig"))
+        expect(init?.headers).toMatchObject({ Authorization: "Bearer runner-token" });
+      if (
+        url.endsWith("/actions/runs/800") &&
+        !JSON.stringify(init?.headers).includes("Bearer jobs-token")
+      )
+        return new Response(null, { status: 403 });
       if (url.endsWith("/actions/runs/800"))
-        return event === "unreadable"
-          ? new Response(null, { status: 404 })
+        return event === "unreadable" || event === "access_denied"
+          ? new Response(null, { status: event === "access_denied" ? 403 : 404 })
           : Response.json({
               id: 800,
               run_attempt: 1,
               event,
               head_branch: branch,
               repository: { id: 600 },
-              head_repository: { id: headRepository },
+              head_repository: event === "malformed" ? null : { id: headRepository },
             });
       const response = await original?.(url, init);
       if (!response) throw new Error("Missing test response");
       if (url === "https://api.github.com/repos/owner/sandbox")
-        return Response.json({ ...(await response.json()), default_branch: "main" });
+        return Response.json({
+          ...(await response.json()),
+          ...(event === "default_unknown" ? {} : { default_branch: "main" }),
+        });
       return response;
     });
     const grant = await device.action(api.githubRunners.prepare, {
@@ -610,6 +629,18 @@ test.each([
     expect(grant).toMatchObject({ state: "ready", cacheWrite: expected });
     if (grant.state !== "ready") throw new Error("Expected ready grant");
     expect(grant.access?.cacheRun).toEqual(expected ? { runId: 800, runAttempt: 1 } : undefined);
+    const reason = expected
+      ? undefined
+      : event === "access_denied"
+        ? "metadata_access_denied"
+        : ["unreadable", "malformed", "default_unknown"].includes(event)
+          ? "metadata_unavailable"
+          : headRepository !== 600
+            ? "fork"
+            : branch !== "main"
+              ? "non_default_branch"
+              : "event_not_allowed";
+    expect(grant.cacheWriteReason).toBe(reason);
     expect(
       await device.action(api.githubRunners.prepare, { bindingId, key: "cache", jobId: 900 }),
     ).toEqual(grant);

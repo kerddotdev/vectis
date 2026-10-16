@@ -5,6 +5,11 @@ import { CacheSizeGiB } from "../../protocol/src/cache-volume.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
 import { runProcess } from "./process.js";
 
+export interface CacheOutcome {
+  promoted: boolean;
+  reason?: string;
+}
+
 export interface CacheDisk {
   sourcePath: string;
   stopped(path: string): Promise<void>;
@@ -127,8 +132,10 @@ export class CacheVolumes {
       throw error;
     }
     let write = false;
+    let outcome: CacheOutcome = { promoted: false };
     return {
       directory,
+      outcome: () => outcome,
       authorizeWrite: (allowed = true) => {
         write = allowed;
       },
@@ -137,8 +144,11 @@ export class CacheVolumes {
         sourcePath,
         stopped: (path: string) =>
           this.serial(directory, async () => {
-            if (!write || (await stat(join(directory, "disconnected")).catch(() => undefined)))
+            if (!write) return;
+            if (await stat(join(directory, "disconnected")).catch(() => undefined)) {
+              outcome = { promoted: false, reason: "binding_disconnected" };
               return;
+            }
             const fork = await stat(path);
             if (!fork.isFile() || fork.size !== sizeBytes)
               throw new VectisError(
@@ -157,6 +167,7 @@ export class CacheVolumes {
               await runProcess("/bin/cp", ["-c", sourcePath, backup]);
               await rename(backup, join(directory, "cache.previous.img"));
               await rename(path, sourcePath);
+              outcome = { promoted: true };
               const folder = await open(directory, "r");
               try {
                 await folder.sync();
@@ -166,6 +177,9 @@ export class CacheVolumes {
             } finally {
               await rm(backup, { force: true });
             }
+          }).catch((error: unknown) => {
+            outcome = { ...outcome, reason: "promotion_failed" };
+            throw error;
           }),
       } satisfies CacheDisk,
     };

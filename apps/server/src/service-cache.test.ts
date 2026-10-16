@@ -253,6 +253,12 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
           "succeeded",
         ),
       );
+      expect(store.operation(run.id).result).toMatchObject({
+        cache: { attached: true, writeBack: "granted", promoted: true },
+      });
+      const instance = store.snapshot().instances.find((item) => item.status === "stopped");
+      if (!instance?.directory) throw new Error("Missing stopped instance directory");
+      await expect(stat(instance.directory)).rejects.toMatchObject({ code: "ENOENT" });
       const file = await open(join(cacheDirectory, "cache.img"), "r");
       const data = Buffer.alloc(9);
       try {
@@ -261,6 +267,28 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
         await file.close();
       }
       expect(data.toString()).toBe("job-cache");
+      let reused = "";
+      vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
+        if (script.includes("--jitconfig")) {
+          const current = store.snapshot().instances.find((item) => item.status === "running");
+          if (!current?.directory) throw new Error("Missing second instance directory");
+          const fork = await open(join(current.directory, "cache.img"), "r");
+          try {
+            const data = Buffer.alloc(9);
+            await fork.read(data, 0, data.length, 0);
+            reused = data.toString();
+          } finally {
+            await fork.close();
+          }
+        }
+        return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+      });
+      const second = service.submit("run-again", { type: "runner.run", bindingId: "binding" });
+      await vi.waitFor(() => expect(store.operation(second.id).status).toBe("succeeded"));
+      expect(reused).toBe("job-cache");
+      expect(store.operation(second.id).result).toMatchObject({
+        cache: { attached: true, writeBack: "granted", promoted: true },
+      });
       expect(store.list("cacheUse")).toEqual([]);
     } finally {
       release();
@@ -278,6 +306,7 @@ test("cache acquisition leaves commands responsive and cancellation releases the
   const handle = {
     directory: f.cacheDirectory,
     authorizeWrite: vi.fn(),
+    outcome: () => ({ promoted: false }),
     release: vi.fn(),
     disk: { sourcePath: join(f.cacheDirectory, "cache.img"), stopped: vi.fn(async () => {}) },
   };

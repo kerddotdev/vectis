@@ -50,6 +50,7 @@ test("snapshot, activity and operation reads preserve runner phase timestamps", 
     environmentId: "linux",
     leaseKey: operation.id,
     stage: "finished",
+    cache: { attached: true, writeBack: "granted", promoted: true },
     phases: [{ name: "vm_start", startedAt: operation.createdAt, endedAt: operation.createdAt }],
   };
   server.store.update(operation, { status: "succeeded", result });

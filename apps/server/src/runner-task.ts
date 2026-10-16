@@ -14,6 +14,7 @@ import {
   cachePrivilegeScript,
   cacheUnmountScript,
 } from "../../../packages/runner/src/cache-guest.js";
+import type { CacheOutcome } from "../../../packages/runner/src/cache-volume.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import type { GuestConnection } from "../../../packages/runner/src/guest.js";
@@ -34,7 +35,12 @@ const idleTimeoutMs = 5 * 60 * 1000;
 const pollIntervalMs = 30000;
 
 interface Controls {
-  cache?: { sizeGiB: number; complete(): void; checked?(allowed: boolean): void };
+  cache?: {
+    sizeGiB: number;
+    authorizeWrite(): void;
+    outcome(): CacheOutcome;
+    checked?(allowed: boolean): void;
+  };
   broker: RunnerBroker;
   needed?: ((signal: AbortSignal) => Promise<boolean>) | undefined;
   request?: Parameters<RunnerBroker["prepareRunner"]>[3];
@@ -64,6 +70,16 @@ export async function runRunnerTask(
     environmentId: environment.id,
     leaseKey: key,
     stage: "starting",
+    ...(controls.cache
+      ? {
+          cache: {
+            attached: false,
+            writeBack: "denied" as const,
+            reason: "grant_pending",
+            promoted: false,
+          },
+        }
+      : {}),
     phases: [
       {
         name: "queued_locally",
@@ -152,6 +168,7 @@ export async function runRunnerTask(
         update({ instanceId: instance.id });
       }
     }
+    if (progress.cache) update({ cache: { ...progress.cache, attached: true } });
     connection ??= await timed("guest_ready", () => readyGuest(environment, instance, signal));
     const guest = connection;
     if (controls.cache) {
@@ -224,6 +241,14 @@ export async function runRunnerTask(
         "runner_registration_incomplete",
         "Runner registration needs reconciliation.",
       );
+    if (progress.cache)
+      update({
+        cache: {
+          ...progress.cache,
+          writeBack: grant.cacheWrite ? "granted" : "denied",
+          reason: grant.cacheWrite ? undefined : (grant.cacheWriteReason ?? "policy_denied"),
+        },
+      });
     if (grant.environmentId !== environment.id || grant.os !== environment.os)
       throw new VectisError(
         "runner_identity_mismatch",
@@ -327,7 +352,7 @@ export async function runRunnerTask(
           "The cache could not be cleanly unmounted; its changes were discarded.",
         );
       signal.throwIfAborted();
-      if (grant.cacheWrite) controls.cache.complete();
+      if (grant.cacheWrite) controls.cache.authorizeWrite();
     }
   } catch (error) {
     for (const phase of progress.phases ?? []) if (!phase.endedAt) endPhase(phase);
@@ -355,10 +380,23 @@ export async function runRunnerTask(
         ? { cause: { code: failure.code, message: failure.message } }
         : {}),
     });
+    const updateCacheOutcome = () => {
+      if (!controls.cache || !progress.cache) return;
+      const outcome = controls.cache.outcome();
+      let reason = outcome.reason ?? progress.cache.reason;
+      if (!outcome.promoted && (!reason || reason === "grant_pending"))
+        reason = signal.aborted
+          ? "cancelled"
+          : failure instanceof VectisError
+            ? failure.code.slice(0, 256)
+            : "lifecycle_incomplete";
+      update({ cache: { ...progress.cache, promoted: outcome.promoted, reason } });
+    };
     if (started) {
       try {
         await controls.stop();
       } catch {
+        updateCacheOutcome();
         return {
           status: "action_required" as const,
           progress,
@@ -372,6 +410,7 @@ export async function runRunnerTask(
         };
       }
     }
+    updateCacheOutcome();
     if (progress.leaseId) {
       try {
         await controls.broker.releaseRunner(progress.leaseId, AbortSignal.timeout(60000));

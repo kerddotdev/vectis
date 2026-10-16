@@ -174,6 +174,7 @@ export default defineSchema({
     runnerId: v.optional(v.number()),
     encodedConfig: v.optional(v.string()),
     cacheWrite: v.optional(v.boolean()),
+    cacheWriteReason: v.optional(v.string()),
     cacheRun: v.optional(v.object({ runId: v.number(), runAttempt: v.number() })),
     configExpiresAt: v.optional(v.number()),
     access: v.optional(runnerAccess),

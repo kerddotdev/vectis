@@ -105,7 +105,7 @@ test.each(["linux", "macos", "windows"] as const)(
   "%s cache privilege failure stops before installation and registration and discards the fork",
   async (os) => {
     const { controls, broker } = fixture(os);
-    const complete = vi.fn();
+    const authorizeWrite = vi.fn();
     const checked = vi.fn();
     vi.mocked(executeGuest).mockResolvedValueOnce({
       exitCode: 1,
@@ -119,7 +119,7 @@ test.each(["linux", "macos", "windows"] as const)(
       { ...environment, os },
       {
         ...controls,
-        cache: { sizeGiB: 1, complete, checked },
+        cache: { sizeGiB: 1, outcome: () => ({ promoted: false }), authorizeWrite, checked },
       },
       new AbortController().signal,
     );
@@ -141,7 +141,7 @@ test.each(["linux", "macos", "windows"] as const)(
     expect(broker.releaseRunner).not.toHaveBeenCalled();
     expect(broker.reconcileRunner).not.toHaveBeenCalled();
     expect(controls.stop).toHaveBeenCalledOnce();
-    expect(complete).not.toHaveBeenCalled();
+    expect(authorizeWrite).not.toHaveBeenCalled();
   },
 );
 
@@ -155,7 +155,7 @@ test("an unavailable privilege probe does not record missing sudo", async () => 
     environment,
     {
       ...controls,
-      cache: { sizeGiB: 1, complete: vi.fn(), checked },
+      cache: { sizeGiB: 1, outcome: () => ({ promoted: false }), authorizeWrite: vi.fn(), checked },
     },
     new AbortController().signal,
   );
@@ -1539,8 +1539,17 @@ test.each([true, false])(
         },
       };
     });
-    const complete = vi.fn(() => {
-      events.push("promote");
+    let promoted = false;
+    const authorizeWrite = vi.fn(() => {
+      events.push("authorize");
+      expect(promoted).toBe(false);
+    });
+    controls.stop.mockImplementation(async () => {
+      events.push("stop");
+      if (authorizeWrite.mock.calls.length) {
+        events.push("promote");
+        promoted = true;
+      }
     });
     vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
       if (script.includes("sudo -n umount /vectis-cache")) events.push("unmount");
@@ -1553,13 +1562,21 @@ test.each([true, false])(
       {
         ...controls,
         broker: { ...broker, prepareRunner },
-        cache: { sizeGiB: 20, complete, checked },
+        cache: { sizeGiB: 20, outcome: () => ({ promoted }), authorizeWrite, checked },
       },
       new AbortController().signal,
     );
     expect(result.status).toBe("succeeded");
+    expect(result.progress.cache).toEqual({
+      attached: true,
+      writeBack: cacheWrite ? "granted" : "denied",
+      promoted: cacheWrite,
+      reason: cacheWrite ? undefined : "policy_denied",
+    });
     expect(events).toEqual(
-      cacheWrite ? ["unmount", "promote", "stop", "release"] : ["unmount", "stop", "release"],
+      cacheWrite
+        ? ["unmount", "authorize", "stop", "promote", "release"]
+        : ["unmount", "stop", "release"],
     );
   },
 );
@@ -1567,7 +1584,7 @@ test.each([true, false])(
 test("a failed cache unmount discards even a trusted writer", async () => {
   const { controls, broker } = fixture();
   const grant = await broker.prepareRunner();
-  const complete = vi.fn();
+  const authorizeWrite = vi.fn();
   vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
     exitCode: script.includes("sudo -n umount /vectis-cache") ? 1 : 0,
     stdout: "",
@@ -1588,12 +1605,23 @@ test("a failed cache unmount discards even a trusted writer", async () => {
           access: { ...grant.access, cacheRun: { runId: 5, runAttempt: 1 } },
         }),
       },
-      cache: { sizeGiB: 20, complete },
+      cache: { sizeGiB: 20, outcome: () => ({ promoted: false }), authorizeWrite },
     },
     new AbortController().signal,
   );
-  expect(result).toMatchObject({ status: "failed", code: "cache_unmount_failed" });
-  expect(complete).not.toHaveBeenCalled();
+  expect(result).toMatchObject({
+    status: "failed",
+    code: "cache_unmount_failed",
+    progress: {
+      cache: {
+        attached: true,
+        writeBack: "granted",
+        promoted: false,
+        reason: "cache_unmount_failed",
+      },
+    },
+  });
+  expect(authorizeWrite).not.toHaveBeenCalled();
   expect(controls.stop).toHaveBeenCalledOnce();
 });
 
@@ -1620,7 +1648,7 @@ test.each(["linux", "macos", "windows"] as const)(
         claimWarm,
         needed,
         request,
-        cache: { sizeGiB: 1, complete: vi.fn() },
+        cache: { sizeGiB: 1, outcome: () => ({ promoted: false }), authorizeWrite: vi.fn() },
       },
       signal,
     );
@@ -1660,7 +1688,7 @@ test("cache jobs boot with their attached disk instead of claiming a generic war
     {
       ...controls,
       claimWarm,
-      cache: { sizeGiB: 1, complete: vi.fn() },
+      cache: { sizeGiB: 1, outcome: () => ({ promoted: false }), authorizeWrite: vi.fn() },
     },
     new AbortController().signal,
   );
@@ -1699,4 +1727,72 @@ test("a scale set runner drains after five idle minutes even if a supplied deman
   await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
   expect(await done).toMatchObject({ status: "cancelled", code: "runner_idle" });
   expect(needed).not.toHaveBeenCalled();
+});
+
+test("cache promotion failures remain visible when VM cleanup requires reconciliation", async () => {
+  const { controls, broker } = fixture();
+  const grant = await broker.prepareRunner();
+  controls.stop.mockRejectedValue(new Error("Synthetic promotion failure"));
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      broker: {
+        ...broker,
+        prepareRunner: async () => ({
+          ...grant,
+          cacheWrite: true,
+          access: { ...grant.access, cacheRun: { runId: 5, runAttempt: 1 } },
+        }),
+      },
+      cache: {
+        sizeGiB: 1,
+        authorizeWrite: vi.fn(),
+        outcome: () => ({ promoted: false, reason: "promotion_failed" }),
+      },
+    },
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({
+    status: "action_required",
+    code: "runner_cleanup_required",
+    progress: {
+      cache: { attached: true, writeBack: "granted", promoted: false, reason: "promotion_failed" },
+    },
+  });
+  expect(broker.releaseRunner).not.toHaveBeenCalled();
+});
+
+test("cache denial reasons from the cloud survive a successful runner lifecycle", async () => {
+  const { controls, broker } = fixture();
+  const grant = await broker.prepareRunner();
+  const authorizeWrite = vi.fn();
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      broker: {
+        ...broker,
+        prepareRunner: async () => ({ ...grant, cacheWriteReason: "metadata_access_denied" }),
+      },
+      cache: { sizeGiB: 1, authorizeWrite, outcome: () => ({ promoted: false }) },
+    },
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({
+    status: "succeeded",
+    progress: {
+      cache: {
+        attached: true,
+        writeBack: "denied",
+        promoted: false,
+        reason: "metadata_access_denied",
+      },
+    },
+  });
+  expect(authorizeWrite).not.toHaveBeenCalled();
 });

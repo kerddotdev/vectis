@@ -190,6 +190,7 @@ export const ready = internalMutation({
     runnerId: v.number(),
     encodedConfig: v.string(),
     cacheWrite: v.optional(v.boolean()),
+    cacheWriteReason: v.optional(v.string()),
     cacheRun: v.optional(v.object({ runId: v.number(), runAttempt: v.number() })),
   },
   handler: async (ctx, args) => {
@@ -223,6 +224,7 @@ export const ready = internalMutation({
       runnerId: args.runnerId,
       encodedConfig: args.encodedConfig,
       cacheWrite: args.cacheWrite === true && args.cacheRun !== undefined,
+      ...(args.cacheWriteReason ? { cacheWriteReason: args.cacheWriteReason.slice(0, 256) } : {}),
       ...(args.cacheRun ? { cacheRun: args.cacheRun } : {}),
       configExpiresAt: Date.now() + configLifetime,
       updatedAt: Date.now(),

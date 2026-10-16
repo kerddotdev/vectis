@@ -35,6 +35,7 @@ test("remote detail and activity-list reads submit targeted inspections instead 
     environmentId: "linux",
     leaseKey: "local-operation",
     stage: "finished",
+    cache: { attached: true, writeBack: "granted", promoted: true },
     phases: [{ name: "vm_start", startedAt: "2026-01-01", endedAt: "2026-01-01" }],
   };
   const detail: ActivityDetail = {
