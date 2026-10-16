@@ -1,5 +1,12 @@
 "use node";
-import { createHash, createPrivateKey, createPublicKey, randomBytes, sign } from "node:crypto";
+import {
+  createHash,
+  createPrivateKey,
+  createPublicKey,
+  randomBytes,
+  randomUUID,
+  sign,
+} from "node:crypto";
 import { v } from "convex/values";
 import { action, internalAction } from "./_generated/server.js";
 import { internal } from "./_generated/api.js";
@@ -53,6 +60,7 @@ export const signToken = internalAction({
       aud: "vectis-machine",
       sub: args.machineId,
       credentialVersion: args.credentialVersion,
+      jti: randomUUID(),
       iat: now - 5,
       exp: now + 300,
     });

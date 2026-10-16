@@ -34,36 +34,60 @@ export function machineTokenFetcher(
   const endpoint = machineEndpoint(connection.deploymentUrl);
   const account = credentialAccount(connection);
   let cached: typeof Token.Type | undefined;
+  let previousToken: string | undefined;
   return async ({ forceRefreshToken }: { forceRefreshToken: boolean }) => {
     signal.throwIfAborted();
     if (!forceRefreshToken && cached && cached.expiresAt > Date.now() + 30000) return cached.token;
     cached = undefined;
     const secret = await credentials.get(account, signal);
     if (!secret) return null;
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ machineId: connection.machineId, secret }),
-      redirect: "error",
-      signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
-    });
-    if (response.status === 401)
-      throw new VectisError(
-        "machine_rejected",
-        "This machine is no longer connected to the account.",
-        "Run vectis cloud disconnect on this Mac, then pair it again.",
-      );
-    if (!response.ok)
-      throw new VectisError(
-        "cloud_unavailable",
-        "Machine authentication is temporarily unavailable.",
-      );
-    cached = Schema.decodeUnknownSync(Token)(await response.json());
-    if (cached.expiresAt <= Date.now())
-      throw new VectisError(
-        "invalid_machine_token",
-        "Machine authentication returned an expired token.",
-      );
+    const request = async () => {
+      signal.throwIfAborted();
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ machineId: connection.machineId, secret }),
+        redirect: "error",
+        signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+      });
+      if (response.status === 401)
+        throw new VectisError(
+          "machine_rejected",
+          "This machine is no longer connected to the account.",
+          "Run vectis cloud disconnect on this Mac, then pair it again.",
+        );
+      if (!response.ok)
+        throw new VectisError(
+          "cloud_unavailable",
+          "Machine authentication is temporarily unavailable.",
+        );
+      const token = Schema.decodeUnknownSync(Token)(await response.json());
+      if (token.expiresAt <= Date.now())
+        throw new VectisError(
+          "invalid_machine_token",
+          "Machine authentication returned an expired token.",
+        );
+      return token;
+    };
+    let token = await request();
+    if (forceRefreshToken && token.token === previousToken) {
+      // Convex stops scheduling refreshes when it receives the same token again.
+      await new Promise<void>((resolve, reject) => {
+        signal.throwIfAborted();
+        const onAbort = () => {
+          clearTimeout(timer);
+          reject(signal.reason);
+        };
+        const timer = setTimeout(() => {
+          signal.removeEventListener("abort", onAbort);
+          resolve();
+        }, 1100);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+      token = await request();
+    }
+    cached = token;
+    previousToken = token.token;
     return cached.token;
   };
 }

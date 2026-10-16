@@ -2,6 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
+import type { AuthTokenFetcher } from "convex/browser";
 import { getFunctionName, type FunctionReference } from "convex/server";
 import { ConvexError } from "convex/values";
 import { afterEach, expect, test, vi } from "vitest";
@@ -20,7 +21,7 @@ type Subscription = {
 };
 const transport = vi.hoisted(() => {
   const subscriptions: Subscription[] = [];
-  const auth: { changed?: (authenticated: boolean) => void } = {};
+  const auth: { changed?: (authenticated: boolean) => void; fetchToken?: AuthTokenFetcher } = {};
   return {
     subscriptions,
     auth,
@@ -63,7 +64,8 @@ vi.mock("convex/browser", () => ({
       connectionState: transport.connectionState,
       subscribeToConnectionState: () => transport.disconnect,
     };
-    setAuth(_fetchToken: unknown, changed: (authenticated: boolean) => void) {
+    setAuth(fetchToken: AuthTokenFetcher, changed: (authenticated: boolean) => void) {
+      transport.auth.fetchToken = fetchToken;
       transport.auth.changed = changed;
     }
   },
@@ -75,12 +77,14 @@ afterEach(async () => {
   cleanup.length = 0;
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
   transport.subscriptions.length = 0;
   delete transport.auth.changed;
+  delete transport.auth.fetchToken;
 });
 
-async function fixture() {
+async function fixture(get = async (): Promise<string | null> => null) {
   const home = await mkdtemp(join(tmpdir(), "vectis-relay-"));
   cleanup.push(() => rm(home, { recursive: true, force: true }));
   const store = new Store(join(home, "state.sqlite"));
@@ -100,7 +104,7 @@ async function fixture() {
       localId: store.snapshot().machine.id,
     },
     local,
-    { get: async () => null },
+    { get },
     vi.fn(),
     () => store.touch(),
     onJobObservations,
@@ -141,6 +145,24 @@ const job = {
   runnerName: null,
   updatedAt: 1,
 };
+
+test("relay auth callback returns a distinct token on immediate forced refresh", async () => {
+  vi.useFakeTimers();
+  await fixture(async () => "secret");
+  const request = vi
+    .fn()
+    .mockResolvedValueOnce(Response.json({ token: "original", expiresAt: Date.now() + 300000 }))
+    .mockResolvedValueOnce(Response.json({ token: "original", expiresAt: Date.now() + 300000 }))
+    .mockResolvedValueOnce(Response.json({ token: "fresh", expiresAt: Date.now() + 300000 }));
+  vi.stubGlobal("fetch", request);
+  const fetchToken = transport.auth.fetchToken;
+  if (!fetchToken) throw new Error("Missing auth callback.");
+  expect(await fetchToken({ forceRefreshToken: false })).toBe("original");
+  const refreshed = fetchToken({ forceRefreshToken: true });
+  await vi.advanceTimersByTimeAsync(1100);
+  expect(await refreshed).toBe("fresh");
+  expect(request).toHaveBeenCalledTimes(3);
+});
 
 test("repository and job changes invalidate snapshots without repeating identical updates", async () => {
   const { relay, store, repositories, subscription } = await fixture();
