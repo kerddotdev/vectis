@@ -1,3 +1,4 @@
+import type { CacheDisk } from "./cache-volume.js";
 import { validateEnvironmentEgress } from "./environment-network.js";
 import { windowsVmArguments } from "./windows-arguments.js";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -114,6 +115,7 @@ export class VmRuntime {
     environment: Environment,
     onExit: (cleaned: boolean) => void,
     signal?: AbortSignal,
+    cacheDisk?: CacheDisk | string,
   ): Promise<OwnedInstance> {
     signal?.throwIfAborted();
     await this.validate(environment);
@@ -165,6 +167,13 @@ export class VmRuntime {
     let launched = false;
     try {
       signal?.throwIfAborted();
+      const cachePath = cacheDisk ? join(directory, "cache.img") : undefined;
+      if (cacheDisk && cachePath)
+        await runProcess(
+          "/bin/cp",
+          ["-c", typeof cacheDisk === "string" ? cacheDisk : cacheDisk.sourcePath, cachePath],
+          signal,
+        );
       let args: string[];
       let knownHostsPath: string | undefined;
       if (environment.os === "windows") {
@@ -199,6 +208,7 @@ export class VmRuntime {
         );
         args = windowsVmArguments({
           firmwarePath: environment.firmwarePath,
+          ...(cachePath ? { cacheDiskPath: cachePath } : {}),
           ...(environment.egress !== undefined ? { egress: environment.egress } : {}),
           cpu: environment.cpu,
           memoryMiB: environment.memoryMiB,
@@ -221,6 +231,7 @@ export class VmRuntime {
           join(directory, "efi.bin"),
           ...(seedPath ? [resolve(seedPath)] : []),
           ...(environment.x64 === "rosetta" ? ["--rosetta"] : []),
+          ...(cachePath ? ["--cache-disk", cachePath] : []),
         ];
       }
       await writeFile(
@@ -259,6 +270,8 @@ export class VmRuntime {
       const settled = closed.then(async () => {
         let cleaned = false;
         try {
+          if (cachePath && cacheDisk && typeof cacheDisk !== "string")
+            await cacheDisk.stopped(cachePath);
           await removeInstanceDirectory(
             directory,
             child.pid ? { instanceId: id, pid: child.pid } : undefined,

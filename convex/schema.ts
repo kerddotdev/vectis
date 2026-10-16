@@ -113,6 +113,7 @@ export default defineSchema({
     enabled: v.boolean(),
     automatic: v.optional(v.boolean()),
     access: v.optional(repositoryAccess),
+    cacheVolume: v.optional(v.object({ enabled: v.boolean(), sizeGiB: v.number() })),
     // Legacy; jobScans holds scan times so scans do not rewrite the binding.
     lastJobScanAt: v.optional(v.number()),
     verifiedAt: v.number(),
@@ -145,6 +146,8 @@ export default defineSchema({
     updatedAt: v.number(),
     runnerId: v.optional(v.number()),
     encodedConfig: v.optional(v.string()),
+    cacheWrite: v.optional(v.boolean()),
+    cacheRun: v.optional(v.object({ runId: v.number(), runAttempt: v.number() })),
     configExpiresAt: v.optional(v.number()),
     access: v.optional(runnerAccess),
     jobId: v.optional(v.number()),

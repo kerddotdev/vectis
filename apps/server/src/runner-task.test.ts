@@ -47,6 +47,7 @@ function fixture(os: Environment["os"] = "linux") {
       id: "lease",
       runnerId: 12,
       encodedConfig: "c2VjcmV0",
+      cacheWrite: false,
       environmentId: "test",
       access: { repositoryId: 2, actors: "any" as const, approval: "automatic" as const },
       os,
@@ -703,3 +704,67 @@ test.each(["stop", "release"] as const)(
     if (step === "stop") expect(broker.releaseRunner).not.toHaveBeenCalled();
   },
 );
+
+test.each([true, false])(
+  "cache promotion requires cacheWrite=%s and a clean unmount before VM stop",
+  async (cacheWrite) => {
+    const { controls, broker, events } = fixture();
+    const grant = await broker.prepareRunner();
+    const prepareRunner = vi.fn(async () => ({
+      ...grant,
+      cacheWrite,
+      access: { ...grant.access, ...(cacheWrite ? { cacheRun: { runId: 5, runAttempt: 1 } } : {}) },
+    }));
+    const complete = vi.fn(() => {
+      events.push("promote");
+    });
+    vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
+      if (script.includes("sudo -n umount /vectis-cache")) events.push("unmount");
+      return { exitCode: 0, stdout: "", stderr: "", truncated: false };
+    });
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      environment,
+      { ...controls, broker: { ...broker, prepareRunner }, cache: { sizeGiB: 20, complete } },
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(events).toEqual(
+      cacheWrite ? ["unmount", "promote", "stop", "release"] : ["unmount", "stop", "release"],
+    );
+  },
+);
+
+test("a failed cache unmount discards even a trusted writer", async () => {
+  const { controls, broker } = fixture();
+  const grant = await broker.prepareRunner();
+  const complete = vi.fn();
+  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
+    exitCode: script.includes("sudo -n umount /vectis-cache") ? 1 : 0,
+    stdout: "",
+    stderr: "",
+    truncated: false,
+  }));
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      broker: {
+        ...broker,
+        prepareRunner: async () => ({
+          ...grant,
+          cacheWrite: true,
+          access: { ...grant.access, cacheRun: { runId: 5, runAttempt: 1 } },
+        }),
+      },
+      cache: { sizeGiB: 20, complete },
+    },
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({ status: "failed", code: "cache_unmount_failed" });
+  expect(complete).not.toHaveBeenCalled();
+  expect(controls.stop).toHaveBeenCalledOnce();
+});

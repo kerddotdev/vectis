@@ -1,4 +1,5 @@
 "use node";
+import { readCacheWrite } from "../packages/github/src/cache-write.js";
 import { runnerRequest } from "./runnerLeases.js";
 import { repositoryAccess } from "./githubAccess.js";
 import { runnerLabels } from "../packages/github/src/runner-labels.js";
@@ -55,9 +56,17 @@ export const prepare = action({
           id: lease._id,
           runnerId: lease.runnerId,
           encodedConfig: lease.encodedConfig,
+          cacheWrite: lease.cacheWrite ?? false,
           environmentId: lease.environmentId,
           os: lease.os,
-          ...(lease.access ? { access: lease.access } : {}),
+          ...(lease.access
+            ? {
+                access: {
+                  ...lease.access,
+                  ...(lease.cacheRun ? { cacheRun: lease.cacheRun } : {}),
+                },
+              }
+            : {}),
         };
       if (lease.phase === "released") return { state: "released", id: lease._id };
       if (lease.phase === "preparing" && Date.now() - lease.updatedAt < 60000)
@@ -65,6 +74,14 @@ export const prepare = action({
       await ctx.runMutation(internal.runnerLeases.attention, { id: lease._id });
       return { state: "action_required", id: lease._id };
     }
+    const cache = authority.cacheJob
+      ? await readCacheWrite(
+          (path) => client.request(access.token, access.path + path),
+          authority.binding.repositoryId,
+          authority.cacheJob.runId,
+          authority.cacheJob.runAttempt,
+        )
+      : { cacheWrite: false };
     let runnerId: number | undefined;
     try {
       const registration = Schema.decodeUnknownSync(Registration)(
@@ -82,15 +99,19 @@ export const prepare = action({
         id: lease._id,
         runnerId,
         encodedConfig: registration.encoded_jit_config,
+        ...cache,
       });
       return {
         state: "ready",
         id: lease._id,
         runnerId,
         encodedConfig: registration.encoded_jit_config,
+        cacheWrite: cache.cacheWrite,
         environmentId: lease.environmentId,
         os: lease.os,
-        ...(lease.access ? { access: lease.access } : {}),
+        ...(lease.access
+          ? { access: { ...lease.access, ...(cache.cacheRun ? { cacheRun: cache.cacheRun } : {}) } }
+          : {}),
       };
     } catch {
       await ctx.runMutation(internal.runnerLeases.attention, {

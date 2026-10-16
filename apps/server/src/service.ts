@@ -58,6 +58,8 @@ import {
   type Snapshot,
 } from "../../../packages/protocol/src/index.js";
 import { previewMigration } from "../../../packages/migration/src/index.js";
+import { CacheVolumes, type CacheDisk } from "../../../packages/runner/src/cache-volume.js";
+import { defaultCacheSizeGiB } from "../../../packages/protocol/src/cache-volume.js";
 import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { Store } from "./store.js";
 import { activityFor, decidingMember, type ActivityLink } from "./activities.js";
@@ -68,7 +70,12 @@ import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
 import type { RepositoryAccess } from "../../../packages/protocol/src/repository-access.js";
 import { jobAccess, restrictiveAccess } from "../../../packages/github/src/access-policy.js";
 
+const CacheRecord = Schema.Struct({ bindingId: Schema.String, directory: Schema.String });
+const CacheUse = Schema.Struct({ bindingId: Schema.String, instanceId: Schema.String });
+
 export class Service {
+  private readonly cacheVolumes: CacheVolumes;
+  private readonly cacheDisks = new Map<string, CacheDisk>();
   private queue: Promise<void> = Promise.resolve();
   private closing = false;
   private preparing: string | undefined;
@@ -89,6 +96,10 @@ export class Service {
         connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
         disconnectRepository(bindingId: string): Promise<void>;
         setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+        setCacheVolume?(
+          bindingId: string,
+          settings: { enabled: boolean; sizeGiB?: number },
+        ): Promise<void>;
         jobLogs(input: JobLogRequest, signal?: AbortSignal): Promise<JobLogs>;
         setAccess(bindingId: string, access: RepositoryAccess): Promise<void>;
         scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
@@ -103,8 +114,41 @@ export class Service {
       connected: () => false,
     },
   ) {
+    this.cacheVolumes = new CacheVolumes(runtime.options.home);
     store.recover();
     this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
+  }
+  private rememberCache(binding: MachineRepositories[number]) {
+    const environment = this.store
+      .snapshot()
+      .environments.find((item) => item.id === binding.environmentId);
+    if (!environment || binding.installationId === undefined) return;
+    const directory = this.cacheVolumes.directory(environment, binding);
+    const id = createHash("sha256").update(directory).digest("hex");
+    this.store.put("cacheVolume", id, { bindingId: binding.id, directory });
+  }
+  private cacheDirectories(bindingId: string) {
+    return this.store
+      .list("cacheVolume")
+      .map((value) => Schema.decodeUnknownSync(CacheRecord)(value))
+      .filter((record) => record.bindingId === bindingId)
+      .map((record) => record.directory);
+  }
+  repositoriesChanged() {
+    this.queue = this.queue
+      .then(async () => {
+        if (this.closing) return;
+        const repositories = this.repositorySnapshot();
+        if (repositories === undefined) return;
+        const ids = new Set(repositories.map((binding) => binding.id));
+        for (const value of this.store.list("cacheVolume")) {
+          const record = Schema.decodeUnknownSync(CacheRecord)(value);
+          if (!ids.has(record.bindingId)) await this.cacheVolumes.disconnect(record.directory);
+        }
+      })
+      .catch((error: unknown) => {
+        console.error("Repository cache cleanup failed:", redact(inspect(error)));
+      });
   }
   async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
     return this.runnerConnection().jobLogs(input, signal);
@@ -546,8 +590,66 @@ export class Service {
           return;
         }
         case "repository.disconnect": {
-          await this.runnerConnection().disconnectRepository(command.bindingId);
+          const broker = this.runnerConnection();
+          const binding = (await broker.repositories()).find(
+            (item) => item.id === command.bindingId,
+          );
+          if (binding) this.rememberCache(binding);
+          await broker.disconnectRepository(command.bindingId);
+          for (const directory of this.cacheDirectories(command.bindingId))
+            await this.cacheVolumes.disconnect(directory);
           result = { bindingId: command.bindingId, connected: false };
+          break;
+        }
+        case "repository.cache":
+        case "cache.clear": {
+          const broker = this.runnerConnection();
+          const binding = (await broker.repositories()).find(
+            (item) => item.id === command.bindingId,
+          );
+          if (!binding)
+            throw new VectisError("repository_missing", "This repository binding is unavailable.");
+          this.rememberCache(binding);
+          if (command.type === "cache.clear") {
+            const uses = this.store
+              .list("cacheUse")
+              .map((value) => Schema.decodeUnknownSync(CacheUse)(value));
+            const instances = this.store.snapshot().instances;
+            if (
+              uses.some(
+                (use) =>
+                  use.bindingId === binding.id &&
+                  instances.some(
+                    (instance) => instance.id === use.instanceId && instance.status !== "stopped",
+                  ),
+              )
+            )
+              throw new VectisError(
+                "cache_in_use",
+                "Stop or reconcile this binding's cache jobs before clearing its volume.",
+              );
+            for (const directory of this.cacheDirectories(binding.id))
+              await this.cacheVolumes.clear(directory);
+            result = { bindingId: binding.id, cleared: true };
+          } else {
+            if (!broker.setCacheVolume)
+              throw new VectisError(
+                "unsupported",
+                "The cloud connection does not support cache settings.",
+              );
+            const settings = {
+              enabled: command.enabled,
+              ...(command.sizeGiB === undefined ? {} : { sizeGiB: command.sizeGiB }),
+            };
+            await broker.setCacheVolume(binding.id, settings);
+            result = {
+              bindingId: binding.id,
+              cacheVolume: {
+                enabled: command.enabled,
+                sizeGiB: command.sizeGiB ?? binding.cacheVolume?.sizeGiB ?? defaultCacheSizeGiB,
+              },
+            };
+          }
           break;
         }
         case "repository.access": {
@@ -671,12 +773,26 @@ export class Service {
               "job_required",
               "Start a specific job under this repository access policy.",
             );
+          const cache = binding.cacheVolume?.enabled
+            ? await this.cacheVolumes.acquire(environment, binding, binding.cacheVolume.sizeGiB)
+            : undefined;
+          if (cache) this.rememberCache(binding);
+          const revokeCacheWrite = () => cache?.authorizeWrite(false);
+          abort.signal.addEventListener("abort", revokeCacheWrite, { once: true });
           const done = runRunnerTask(
             command.bindingId,
             operation.id,
             environment,
             {
               broker,
+              ...(cache
+                ? {
+                    cache: {
+                      sizeGiB: binding.cacheVolume?.sizeGiB ?? defaultCacheSizeGiB,
+                      complete: cache.authorizeWrite,
+                    },
+                  }
+                : {}),
               request: {
                 ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
                 ...(command.automatic ? { automatic: true } : {}),
@@ -731,6 +847,19 @@ export class Service {
                   id: environment.id,
                 });
                 startId = started.id;
+                if (cache) {
+                  this.cacheDisks.set(started.id, {
+                    sourcePath: cache.disk.sourcePath,
+                    stopped: async (path) => {
+                      if (abort.signal.aborted || this.closing) cache.authorizeWrite(false);
+                      await cache.disk.stopped(path);
+                    },
+                  });
+                  this.store.put("cacheUse", started.id, {
+                    bindingId: binding.id,
+                    instanceId: started.id,
+                  });
+                }
                 const cancelStart = () => {
                   if (this.closing) this.tasks.get(started.id)?.abort.abort();
                   else
@@ -813,6 +942,9 @@ export class Service {
               });
             })
             .finally(() => {
+              abort.signal.removeEventListener("abort", revokeCacheWrite);
+              cache?.release();
+              if (startId) this.cacheDisks.delete(startId);
               this.tasks.delete(operation.id);
             });
           this.tasks.set(operation.id, { abort, done });
@@ -1007,8 +1139,10 @@ export class Service {
                     status: cleaned ? "stopped" : "interrupted",
                     pid: 0,
                   });
+                  if (cleaned) this.store.remove("cacheUse", id);
                 },
                 abort.signal,
+                this.cacheDisks.get(id),
               );
               this.store.put("instance", id, {
                 ...record,

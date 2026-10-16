@@ -418,3 +418,27 @@ test("remote readiness preserves the original failure when capability discovery 
     message: "The original inspection failed.",
   });
 });
+
+test.each([
+  { type: "repository.cache", bindingId: "binding", enabled: true, sizeGiB: 30 },
+  { type: "repository.cache", bindingId: "binding", enabled: false },
+  { type: "cache.clear", bindingId: "binding" },
+] as const)(
+  "remote $type preserves the binding settings and local operation contract",
+  async (command) => {
+    const { request, client } = fixture();
+    request
+      .mockResolvedValueOnce({ operationId: "remote1" })
+      .mockResolvedValueOnce({ ...record, commandJson: JSON.stringify(command) });
+    expect(await client.submit(command, "cache")).toMatchObject({
+      status: "accepted",
+      command: command.type,
+    });
+    expect(request.mock.calls[0]?.[0]).toEqual({
+      type: "operation.submit",
+      machineId: "machine1",
+      key: "cache",
+      command,
+    });
+  },
+);

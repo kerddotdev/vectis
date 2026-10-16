@@ -30,12 +30,25 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
     var stopping = false
 
     func start(arguments: [String]) async throws {
-        let rosetta = arguments.dropFirst(7).contains("--rosetta")
-        let arguments = Array(arguments.prefix(7)) + arguments.dropFirst(7).filter { $0 != "--rosetta" }
+        var positional = Array(arguments.prefix(7))
+        var rosetta = false
+        var cachePath: String?
+        var extra = Array(arguments.dropFirst(7))[...]
+        while let option = extra.popFirst() {
+            if option == "--rosetta" && !rosetta { rosetta = true }
+            else if option == "--cache-disk" && cachePath == nil {
+                guard let path = extra.popFirst(), path.hasPrefix("/") else {
+                    throw HelperError(message: "--cache-disk requires an absolute disk image path.")
+                }
+                cachePath = path
+            } else if !option.hasPrefix("--") || option == "--console" { positional.append(option) }
+            else { throw HelperError(message: "Unknown or duplicate VM option: \(option)") }
+        }
+        let arguments = positional
         guard (7...8).contains(arguments.count), arguments[1] == "run",
               let cpu = Int(arguments[4]), let memory = UInt64(arguments[5]),
               cpu > 0, memory >= 512, memory <= UInt64.max / 1048576 else {
-            throw HelperError(message: "Usage: vectis-vm run linux|macos image cpu memoryMiB efiPath [seedPath|--console] [--rosetta]")
+            throw HelperError(message: "Usage: vectis-vm run linux|macos image cpu memoryMiB efiPath [seedPath|--console] [--rosetta] [--cache-disk path]")
         }
         let os = arguments[2]
         if rosetta && os != "linux" {
@@ -98,6 +111,14 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
             guard os == "linux" else { throw HelperError(message: "A setup seed is supported only for Linux.") }
             let seed = try VZDiskImageStorageDeviceAttachment(url: URL(fileURLWithPath: arguments[7]), readOnly: true)
             configuration.storageDevices.append(VZVirtioBlockDeviceConfiguration(attachment: seed))
+        }
+        if let cachePath {
+            let cacheURL = URL(fileURLWithPath: cachePath).standardizedFileURL
+            guard cacheURL != disk.standardizedFileURL else { throw HelperError(message: "The cache disk must differ from the boot disk.") }
+            let cacheAttachment = try VZDiskImageStorageDeviceAttachment(url: cacheURL, readOnly: false)
+            let cache = VZVirtioBlockDeviceConfiguration(attachment: cacheAttachment)
+            cache.blockDeviceIdentifier = "VECTISCACHE"
+            configuration.storageDevices.append(cache)
         }
         let network = VZVirtioNetworkDeviceConfiguration()
         network.macAddress = VZMACAddress.randomLocallyAdministered()
@@ -169,7 +190,7 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
     }
 }
 
-let showConsole = CommandLine.arguments.last == "--console"
+let showConsole = CommandLine.arguments.dropFirst(7).contains("--console")
 if showConsole { NSApplication.shared.setActivationPolicy(.regular) }
 let controller = Controller()
 Task { @MainActor in

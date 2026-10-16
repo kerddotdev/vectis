@@ -725,3 +725,23 @@ test("runner release preserves the busy code and guidance as a VectisError", asy
   await expect(failure).rejects.toBeInstanceOf(VectisError);
   await expect(failure).rejects.toMatchObject(data);
 });
+
+test("cache settings use the authenticated binding mutation and discovery preserves the setting", async () => {
+  const { relay, repositories } = await fixture();
+  transport.auth.changed?.(true);
+  const value = {
+    ...binding("binding1"),
+    installationId: 12,
+    cacheVolume: { enabled: true, sizeGiB: 30 },
+  };
+  repositories.deliver([value]);
+  expect(relay.repositorySnapshot).toEqual([value]);
+  await relay.setCacheVolume("binding1", { enabled: true, sizeGiB: 30 });
+  expect(
+    transport.mutation.mock.calls.some(
+      ([mutation, args]) =>
+        getFunctionName(mutation) === "repositoryBindings:setCacheVolume" &&
+        isDeepStrictEqual(args, { bindingId: "binding1", enabled: true, sizeGiB: 30 }),
+    ),
+  ).toBe(true);
+});

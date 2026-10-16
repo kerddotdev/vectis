@@ -577,3 +577,53 @@ test.each([
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each([
+  {
+    action: "enable",
+    extra: ["--size-gib", "30"],
+    expected: { type: "repository.cache", bindingId: "binding", enabled: true, sizeGiB: 30 },
+  },
+  {
+    action: "disable",
+    extra: [],
+    expected: { type: "repository.cache", bindingId: "binding", enabled: false },
+  },
+  { action: "clear", extra: [], expected: { type: "cache.clear", bindingId: "binding" } },
+])("repository cache $action submits the shared command", async ({ action, extra, expected }) => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-cli-cache-"));
+  const server = await startService({ home });
+  const submit = vi.spyOn(server.service, "submit");
+  const argv = process.argv;
+  const exitCode = process.exitCode;
+  const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  try {
+    vi.resetModules();
+    process.argv = [
+      process.execPath,
+      "vectis",
+      "--home",
+      home,
+      "repository",
+      "cache",
+      action,
+      "binding",
+      ...extra,
+      "--key",
+      "cache",
+      "--json",
+    ];
+    await import("./main.js");
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledWith("cache", expected));
+    await vi.waitFor(() =>
+      expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"failed"')),
+    );
+  } finally {
+    process.argv = argv;
+    process.exitCode = exitCode;
+    output.mockRestore();
+    submit.mockRestore();
+    await server.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});

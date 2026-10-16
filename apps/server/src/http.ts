@@ -145,10 +145,16 @@ export async function startService(
           if (!isDeepStrictEqual(cloud, value)) store.touch();
           cloud = value;
         },
-        () => store.touch(),
+        () => {
+          store.touch();
+          service.repositoriesChanged();
+        },
         (entries) => service.observeJobs(entries),
       );
-      if (relay) store.touch();
+      if (relay) {
+        store.touch();
+        service.repositoriesChanged();
+      }
     });
     relayUpdate = current.catch(() => {});
     return current;

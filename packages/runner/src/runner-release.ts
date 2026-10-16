@@ -1,3 +1,4 @@
+import { cacheSetupScript } from "./cache-guest.js";
 import type { RunnerAccess } from "../../protocol/src/repository-access.js";
 import {
   assignmentRejectedMarker,
@@ -61,16 +62,22 @@ rm runner.tar.gz
 `;
 }
 
-export function runnerStartScript(os: Environment["os"], jitConfig: string, access: RunnerAccess) {
+export function runnerStartScript(
+  os: Environment["os"],
+  jitConfig: string,
+  access: RunnerAccess,
+  cacheSizeGiB?: number,
+) {
   if (!/^[A-Za-z0-9+/=]{1,60000}$/.test(jitConfig))
     throw new VectisError(
       "invalid_runner_configuration",
       "The JIT runner configuration is invalid.",
     );
   const policy = renderRunnerPolicy(access);
+  const cache = cacheSizeGiB === undefined ? "" : cacheSetupScript(os, cacheSizeGiB);
   if (os === "windows")
     return `$ErrorActionPreference = 'Stop'
-$gate = Join-Path $env:USERPROFILE 'vectis-actions-runner/_vectis'
+${cache}$gate = Join-Path $env:USERPROFILE 'vectis-actions-runner/_vectis'
 New-Item -ItemType Directory -Path $gate -Force | Out-Null
 @'
 ${policy}'@ | Set-Content -LiteralPath (Join-Path $gate 'policy') -Encoding utf8
@@ -86,7 +93,7 @@ if (Test-Path -LiteralPath $rejected) { Write-Output '${assignmentRejectedMarker
 exit $runnerExit
 `;
   return `set -eu
-job_umask=$(umask)
+${cache}job_umask=$(umask)
 umask 077
 gate="$HOME/vectis-actions-runner/_vectis"
 mkdir -p "$gate"

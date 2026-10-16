@@ -291,3 +291,39 @@ hostTest(
     expect(await runtime.hasWorkDirectory("unprepared")).toBe(false);
   },
 );
+
+hostTest.each(["linux", "macos"] as const)(
+  "%s attaches a private writable cache fork and finalizes it before deleting the instance",
+  async (os) => {
+    const { home, runtime, environment } = await fixture(
+      `require("node:fs").writeFileSync(require("node:path").join(__dirname, "args.json"), JSON.stringify(process.argv.slice(2))); process.stdout.write('{"event":"vm.running"}\\n'); setInterval(() => {}, 1000);`,
+    );
+    let basePath = environment.basePath;
+    if (os === "macos") {
+      basePath = join(home, "base-bundle");
+      await mkdir(basePath);
+      await writeFile(join(basePath, "disk.img"), "boot");
+    }
+    const sourcePath = join(home, "cache.img");
+    await writeFile(sourcePath, "repository-cache");
+    const stopped = vi.fn(async (path: string) => {
+      expect(await readFile(path, "utf8")).toBe("job-cache");
+      expect(await runtime.hasWorkDirectory("cache")).toBe(true);
+    });
+    const instance = await runtime.start(
+      "cache",
+      { ...environment, os, basePath },
+      () => {},
+      undefined,
+      { sourcePath, stopped },
+    );
+    const args: string[] = JSON.parse(await readFile(join(home, "args.json"), "utf8"));
+    expect(args.slice(-2)).toEqual(["--cache-disk", join(instance.directory, "cache.img")]);
+    expect(await readFile(join(instance.directory, "cache.img"), "utf8")).toBe("repository-cache");
+    await writeFile(join(instance.directory, "cache.img"), "job-cache");
+    await runtime.stop(instance.id);
+    expect(stopped).toHaveBeenCalledOnce();
+    expect(await readFile(sourcePath, "utf8")).toBe("repository-cache");
+    expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+  },
+);

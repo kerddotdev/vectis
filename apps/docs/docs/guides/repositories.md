@@ -90,3 +90,41 @@ Private repositories must disable fork pull request workflows or enable **Requir
 **App:** the connection's menu, **Disconnect repository**. **Web:** **Disable connection**. **CLI:** `vectis repository disconnect <binding-id>`.
 
 Disconnecting stops new runners for that connection. Running jobs finish normally. The GitHub App installation and your workflows stay as they are; jobs that still ask for the label wait until another connection provides it.
+
+## Repository cache volumes
+
+Cache volumes are opt-in. A connection can retain tool downloads and package caches between jobs on the same machine and environment:
+
+```sh
+vectis repository cache enable <binding-id> --size-gib 20
+vectis repository cache disable <binding-id>
+vectis repository cache clear <binding-id>
+```
+
+The default size cap is 20 GiB; `--size-gib` accepts whole GiB from 1 to 1024. Omitting it preserves the binding's existing size, or uses 20 for a new setting. Disable affects future jobs and preserves the existing cache. To resize, disable, wait for running jobs to finish, clear, then enable with the new size. Clearing refuses active or unreconciled cache instances. Disconnecting a repository deletes its saved generations and prevents running forks from writing back. A disconnect made in the cloud is applied when the host receives the authoritative binding list, including after reconnecting.
+
+The host stores a sparse raw `cache.img` under `<environment-storage>/cache/<environment-id>/<installation-id>-<repository-id>/`. Without a custom storage path, environment storage is `<home>/instances`. Numeric installation and repository IDs establish ownership; repository names do not. Environments are isolated to keep guest filesystems separate. Each VM receives an APFS clone of the current generation as its own writable **block device** in the instance directory. The host never mounts the guest filesystem or shares a host folder with it. APFS clone support is required; there is no full-copy fallback. The cap applies to each disk's logical capacity, not the total host storage: concurrent forks, one retained previous generation and changed copy-on-write blocks can use additional space.
+
+First use formats the cache inside the guest. Linux identifies the `VECTISCACHE` virtio device, checks its size and that it has no mounted filesystems, formats blank disks as ext4, then mounts at `/vectis-cache`. macOS excludes the root APFS physical store, requires a single other physical disk with the exact configured size, and initializes only a blank disk as APFS at `/Volumes/VECTISCACHE`. Unknown layouts and unexpected existing filesystems fail closed. Windows identifies the separate NVMe disk by serial `VECTISCACHE`, excludes boot and system disks, checks its size and initializes only RAW disks as NTFS. Windows assigns an available drive letter. Guest setup requires passwordless `sudo` on Linux/macOS or an elevated Windows runner account.
+
+Before the runner listener starts, it exports these paths to jobs:
+
+| Variable               | Directory inside the cache |
+| ---------------------- | -------------------------- |
+| `RUNNER_TOOL_CACHE`    | `toolcache`                |
+| `npm_config_cache`     | `npm`                      |
+| `npm_config_store_dir` | `pnpm`                     |
+| `YARN_CACHE_FOLDER`    | `yarn`                     |
+| `PIP_CACHE_DIR`        | `pip`                      |
+| `GOMODCACHE`           | `gomod`                    |
+| `GOCACHE`              | `go-build`                 |
+
+Workflows and setup actions can override these variables. Cargo is deliberately unchanged: `CARGO_HOME` also contains executables and configuration. The runner itself and the checkout remain on the disposable boot disk.
+
+### Write-back authority
+
+The cloud grants `cacheWrite: true` only for a known job whose workflow run is a `push`, `schedule`, or `workflow_dispatch`, targets the repository's current default branch, and has `head_repository.id` equal to the binding's repository ID. It reads `/actions/runs/{run_id}` and the verified repository's default branch when preparing the lease. Unreadable or missing metadata denies write-back. Pull requests, `pull_request_target`, forks, other branches and runners started without a specific job ID always discard their forks. The job-started hook fences writable grants to their run ID and attempt so another queued job cannot reuse that grant.
+
+A writable fork becomes the new generation only after the listener finishes normally, the guest successfully unmounts or offlines the cache, and the VM process exits. Failed runner lifecycles, cancellation, uncertain cleanup and guest connection loss leave the current generation intact. A failed workflow step can still populate the cache if the runner lifecycle and unmount complete normally. Promotions are serialized by the host and use atomic rename. Concurrent writers use **last-completed-promotion wins**; changes from parallel forks are not merged. One previous generation is retained, and a missing current image can recover from it. Crashed instances never replay a promotion: reconcile them through the normal instance and runner commands.
+
+A cache is shared job input, not a secret store. Any admitted job, including an approved pull request, can read the generation attached to its own fork. Keep credentials and sensitive artifacts out of cache directories. Cache write restrictions do not approve fork workflows or bypass GitHub's maintainer approval policy. These paths and scripts have synthetic test coverage; real Linux, macOS and Windows guest verification is still required before claiming native cache reuse.

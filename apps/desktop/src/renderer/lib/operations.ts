@@ -1,3 +1,5 @@
+import { commandLabels as sharedCommandLabels } from "../../command-labels.js";
+
 export const preparationCommands = [
   "environment.prepare-linux",
   "environment.resume",
@@ -30,11 +32,17 @@ export const cancellableCommands = [
   "migration.publish",
   "repository.connect",
 ];
-export { commandLabels } from "../../command-labels.js";
+export const commandLabels: Record<string, string> = {
+  ...sharedCommandLabels,
+  "repository.cache": "Configure repository cache",
+  "cache.clear": "Clear repository cache",
+};
 // A setting is confirmed after it happened, so its message is what changed, not what was asked.
 export const settingLabels: Record<string, string> = {
   "repository.automatic": "Automatic runners updated",
   "repository.access": "Repository access updated",
+  "repository.cache": "Repository cache updated",
+  "cache.clear": "Repository cache cleared",
   "environment.configure": "Environment updated",
   "environment.register": "Environment registered",
   "environment.remove": "Environment removed",

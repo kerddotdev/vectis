@@ -4,6 +4,7 @@ import {
   type Instance,
 } from "../../../packages/protocol/src/index.js";
 import type { RunnerBroker, RunnerProgress } from "../../../packages/protocol/src/runners.js";
+import { cacheUnmountScript } from "../../../packages/runner/src/cache-guest.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import type { GuestConnection } from "../../../packages/runner/src/guest.js";
@@ -22,6 +23,7 @@ const idleTimeoutMs = 10 * 60 * 1000;
 const pollIntervalMs = 30000;
 
 interface Controls {
+  cache?: { sizeGiB: number; complete(): void };
   broker: RunnerBroker;
   needed?: (signal: AbortSignal) => Promise<boolean>;
   request?: { jobId?: number; automatic?: boolean };
@@ -125,6 +127,11 @@ export async function runRunnerTask(
         "runner_policy_missing",
         "The runner grant has no repository assignment policy.",
       );
+    if (controls.cache && grant.cacheWrite && !grant.access.cacheRun)
+      throw new VectisError(
+        "runner_policy_missing",
+        "A writable cache grant must identify its workflow run attempt.",
+      );
     update({ runnerId: grant.runnerId, stage: "listening" });
     const listening = new AbortController();
     const listeningSignal = AbortSignal.any([signal, listening.signal]);
@@ -132,7 +139,7 @@ export async function runRunnerTask(
     const execution = await executeRunnerListener(
       connection,
       environment.os,
-      runnerStartScript(environment.os, grant.encodedConfig, grant.access),
+      runnerStartScript(environment.os, grant.encodedConfig, grant.access, controls.cache?.sizeGiB),
       listeningSignal,
     )
       .catch((error: unknown) => {
@@ -152,6 +159,19 @@ export async function runRunnerTask(
         "The runner process exited unsuccessfully.",
         "Inspect the GitHub Actions run and the base image prerequisites.",
       );
+    }
+    if (controls.cache) {
+      const unmounted = await executeGuest(connection, cacheUnmountScript(environment.os), {
+        shell,
+        signal: AbortSignal.any([signal, AbortSignal.timeout(60000)]),
+      });
+      if (unmounted.exitCode !== 0)
+        throw new VectisError(
+          "cache_unmount_failed",
+          "The cache could not be cleanly unmounted; its changes were discarded.",
+        );
+      signal.throwIfAborted();
+      if (grant.cacheWrite) controls.cache.complete();
     }
   } catch (error) {
     failure = error;
