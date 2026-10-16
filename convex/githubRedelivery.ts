@@ -9,7 +9,7 @@ const maxAge = 3 * 24 * 60 * minute;
 const events = new Set(["workflow_job", "installation", "installation_repositories", "repository"]);
 const deliveries = Schema.Array(
   Schema.Struct({
-    id: Schema.Int,
+    id: Schema.String.check(Schema.isPattern(/^\d{1,30}$/)),
     guid: Schema.NonEmptyString,
     delivered_at: Schema.String,
     status_code: Schema.NullOr(Schema.Int),
@@ -60,7 +60,7 @@ export const scan = internalAction({
       return response;
     };
 
-    const attempts = new Map<string, { id: number; deliveredAt: number; successful: boolean }>();
+    const attempts = new Map<string, { id: string; deliveredAt: number; successful: boolean }>();
     let complete = false;
     let cursor: string | null = null;
     try {
@@ -68,7 +68,9 @@ export const scan = internalAction({
         const params = new URLSearchParams({ per_page: "100" });
         if (cursor) params.set("cursor", cursor);
         const response = await request(`/app/hook/deliveries?${params}`, "GET");
-        const rows = Schema.decodeUnknownSync(deliveries)(await response.json());
+        // Delivery IDs exceed Number.MAX_SAFE_INTEGER, so they must stay strings.
+        const text = (await response.text()).replace(/"id":\s*(\d+)/g, '"id":"$1"');
+        const rows = Schema.decodeUnknownSync(deliveries)(JSON.parse(text));
         if (rows.length > 100) throw new Error("GitHub exceeded the delivery page limit.");
         for (const row of rows) {
           const deliveredAt = Date.parse(row.delivered_at);
@@ -96,7 +98,7 @@ export const scan = internalAction({
         }
       }
     } catch (error) {
-      console.warn("GitHub webhook delivery listing failed; checkpoint unchanged.", error);
+      console.warn("GitHub webhook delivery listing failed; checkpoint unchanged.", String(error));
       return;
     }
     if (!complete) {

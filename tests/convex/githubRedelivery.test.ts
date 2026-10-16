@@ -302,3 +302,15 @@ test("retention expires redelivery receipts after three days in bounded batches"
   await f.t.finishAllScheduledFunctions(vi.runAllTimers);
   expect((await f.requests()).map((row) => row.guid).sort()).toEqual(["boundary", "recent"]);
 });
+
+test("delivery IDs beyond the safe integer range are redelivered exactly", async () => {
+  const f = await fixture();
+  const body = JSON.stringify([delivery(1)]).replace('"id":1', '"id":98765432109876543210');
+  f.fetch.mockImplementation(async (_url: string, init?: RequestInit) =>
+    init?.method === "POST" ? new Response(null, { status: 202 }) : new Response(body),
+  );
+  await f.scan();
+  expect(f.posts()[0]?.[0]).toBe(
+    "https://api.github.com/app/hook/deliveries/98765432109876543210/attempts",
+  );
+});
