@@ -638,3 +638,61 @@ test.each([
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test.each([
+  { input: "demand", mode: "demand" },
+  { input: "scale-set", mode: "scale_set" },
+  { input: "scale_set", mode: undefined },
+  { input: "unknown", mode: undefined },
+])(
+  "repository capacity-mode parses $input and waits for the shared setting",
+  async ({ input, mode }) => {
+    const home = await mkdtemp(join(tmpdir(), "vectis-cli-mode-"));
+    const server = await startService({ home });
+    const submit = vi.spyOn(server.service, "submit");
+    const argv = process.argv;
+    const exitCode = process.exitCode;
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    try {
+      vi.resetModules();
+      process.argv = [
+        process.execPath,
+        "vectis",
+        "--home",
+        home,
+        "repository",
+        "capacity-mode",
+        "binding",
+        input,
+        "--key",
+        "capacity-mode",
+        "--json",
+      ];
+      await import("./main.js");
+      if (mode === undefined) {
+        await vi.waitFor(() =>
+          expect(output).toHaveBeenCalledWith(expect.stringContaining("invalid_capacity_mode")),
+        );
+        expect(submit).not.toHaveBeenCalled();
+      } else {
+        await vi.waitFor(() =>
+          expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"failed"')),
+        );
+        expect(submit).toHaveBeenCalledWith("capacity-mode", {
+          type: "repository.capacity-mode",
+          bindingId: "binding",
+          mode,
+        });
+        expect(server.service.snapshot().operations[0]?.status).toBe("failed");
+        expect(process.exitCode).toBe(1);
+      }
+    } finally {
+      process.argv = argv;
+      process.exitCode = exitCode;
+      output.mockRestore();
+      submit.mockRestore();
+      await server.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

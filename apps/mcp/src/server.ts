@@ -64,6 +64,7 @@ function compactStatus(snapshot: Snapshot) {
     machine: snapshot.machine,
     cloud: snapshot.cloud,
     runnerCapacity: snapshot.runnerCapacity,
+    ...(snapshot.scaleSets === undefined ? {} : { scaleSets: snapshot.scaleSets }),
     preparationBusy: snapshot.preparationBusy,
     environments: snapshot.environments.map(({ id, name, os, state, cpu, memoryMiB, network }) => ({
       id,

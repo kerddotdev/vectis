@@ -1,3 +1,5 @@
+import { ScaleSetListener } from "./scale-set-listener.js";
+import type { ScaleSetBroker, CapacityMode } from "../../../packages/protocol/src/scale-sets.js";
 import type { RunControlBroker } from "../../../packages/protocol/src/runs.js";
 import { unconfirmedRunCommand } from "../../../packages/github/src/run-control.js";
 import { repositoryReadiness } from "./repository-readiness.js";
@@ -80,10 +82,12 @@ export class Service {
   private cleanupAbort = new AbortController();
   private retentionTimer: ReturnType<typeof setInterval> | undefined;
   private stopWatchingJobs: () => void;
+  private readonly scaleSetListener: ScaleSetListener;
   constructor(
     readonly store: Store,
     readonly runtime: VmRuntime,
     readonly runnerConnection: () => RunnerBroker &
+      Partial<ScaleSetBroker> &
       RunControlBroker & {
         analyzeMigration(bindingId: string, signal: AbortSignal): Promise<MigrationAnalysis>;
         publishMigration(previewId: string, signal: AbortSignal): Promise<MigrationPublication>;
@@ -91,6 +95,7 @@ export class Service {
         connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
         disconnectRepository(bindingId: string): Promise<void>;
         setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+        setCapacityMode?(bindingId: string, mode: CapacityMode): Promise<void>;
         jobLogs(input: JobLogRequest, signal?: AbortSignal): Promise<JobLogs>;
         setAccess(bindingId: string, access: RepositoryAccess): Promise<void>;
         scanJobs(bindingId: string, signal: AbortSignal): Promise<JobScan>;
@@ -107,6 +112,26 @@ export class Service {
   ) {
     store.recover();
     this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
+    this.scaleSetListener = new ScaleSetListener({
+      store,
+      snapshot: () => this.snapshot(),
+      repositories: repositorySnapshot,
+      connected: runnerCleanup.connected,
+      broker: () => {
+        const broker = runnerConnection();
+        if (!broker.openScaleSet || !broker.refreshScaleSet || !broker.closeScaleSet)
+          throw new VectisError(
+            "scale_set_unsupported",
+            "This cloud connection does not support scale sets.",
+          );
+        return {
+          openScaleSet: broker.openScaleSet,
+          refreshScaleSet: broker.refreshScaleSet,
+          closeScaleSet: broker.closeScaleSet,
+        };
+      },
+      submit: (key, command) => this.submit(key, command),
+    });
   }
   async jobLogs(input: JobLogRequest, signal?: AbortSignal) {
     return this.runnerConnection().jobLogs(input, signal);
@@ -132,6 +157,9 @@ export class Service {
         },
       ),
       ...(repositories === undefined ? {} : { repositories }),
+      ...(this.scaleSetListener.states().length
+        ? { scaleSets: this.scaleSetListener.states() }
+        : {}),
     };
   }
   repositoryReadiness(
@@ -202,6 +230,7 @@ export class Service {
       }, this.runnerCleanup.intervalMs ?? 60000);
       this.cleanupTimer.unref();
     }
+    if (!this.closing) this.scaleSetListener.start();
   }
   private async retryRunnerCleanup(restarted = false) {
     const metadata = Schema.Struct({
@@ -305,6 +334,8 @@ export class Service {
     if (key.length > 200) throw new VectisError("invalid_request", "The request key is too long.");
     const fingerprint = createHash("sha256").update(JSON.stringify(command)).digest("hex");
     const accepted = this.store.accept(key, fingerprint, command.type, link, operationId);
+    if (accepted.fresh && command.type === "runner.run" && command.scaleSet)
+      this.store.put("scale-set-reservation", key, { bindingId: command.bindingId, key });
     if (accepted.fresh)
       this.queue = this.queue.then(() => this.execute(accepted.operation, command));
     return accepted.operation;
@@ -679,6 +710,17 @@ export class Service {
           result = { bindingId: command.bindingId, access };
           break;
         }
+        case "repository.capacity-mode": {
+          const broker = this.runnerConnection();
+          if (!broker.setCapacityMode)
+            throw new VectisError(
+              "scale_set_unsupported",
+              "This cloud connection cannot change capacity modes.",
+            );
+          await broker.setCapacityMode(command.bindingId, command.mode);
+          result = { bindingId: command.bindingId, capacityMode: command.mode };
+          break;
+        }
         case "repository.automatic": {
           await this.runnerConnection().setAutomatic(command.bindingId, command.enabled);
           result = { bindingId: command.bindingId, automatic: command.enabled };
@@ -799,7 +841,17 @@ export class Service {
                 "Prepare this repository's environment first.",
               );
             let startId: string | undefined;
-            const demandJobId = command.jobId;
+            if (command.scaleSet && restrictiveAccess(binding.access))
+              throw new VectisError(
+                "scale_set_policy_unsupported",
+                "Scale set preview requires any actor and automatic approval.",
+              );
+            if (command.scaleSet && (binding.capacityMode !== "scale_set" || !binding.automatic))
+              throw new VectisError(
+                "automatic_disabled",
+                "Scale set capacity is no longer enabled for this binding.",
+              );
+            const demandJobId = command.scaleSet ? undefined : command.jobId;
             if (demandJobId === undefined && restrictiveAccess(binding.access))
               throw new VectisError(
                 "job_required",
@@ -816,6 +868,7 @@ export class Service {
                 request: {
                   ...(demandJobId === undefined ? {} : { jobId: demandJobId }),
                   ...(command.automatic ? { automatic: true } : {}),
+                  ...(command.scaleSet ? { scaleSet: command.scaleSet } : {}),
                 },
                 ...(demandJobId === undefined
                   ? {}
@@ -1329,9 +1382,16 @@ export class Service {
       );
     this.closing = true;
   }
+  async suspendScaleSets() {
+    await this.scaleSetListener.suspend();
+  }
+  resumeScaleSets() {
+    this.scaleSetListener.resume();
+  }
   async close() {
     this.closing = true;
     this.stopWatchingJobs();
+    await this.scaleSetListener.close();
     if (this.retentionTimer) clearInterval(this.retentionTimer);
     if (this.cleanupTimer) clearInterval(this.cleanupTimer);
     this.cleanupAbort.abort();

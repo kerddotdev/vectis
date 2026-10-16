@@ -30,6 +30,26 @@ Readiness returns ordered checks with a status, an optional error code, a next s
 
 `repository list` shows each connection's ID (the binding ID used by other commands) and its `runsOn` label. Connecting the same repository and environment again reuses the connection.
 
+## Capacity mode
+
+Connections default to `demand`, which starts capacity for individually admitted queued jobs. The preview `scale_set` mode lets this Mac long-poll one GitHub runner scale set session and create runners from GitHub's assigned-job level. Automatic runners must be enabled in either mode.
+
+```sh
+vectis repository capacity-mode <binding-id> scale-set
+vectis repository enable-auto <binding-id>
+vectis repository list --json
+vectis status --json
+```
+
+`repository list` includes `capacityMode`; listener state and error codes appear in `status.scaleSets`. Use the reported label or scale set name, and check the workflow against the preview integration before relying on it. See [scale set capacity](/docs/guides/runners#scale-set-capacity-preview) for lifecycle and verification limits.
+
+Scale set preview requires actors `any` and approval `automatic`. Keep restrictive policies in demand mode; switching to scale sets refuses unsupported policies with `scale_set_policy_unsupported`. GitHub's external pull request approval remains a maintainer decision. Pausing, disabling automatic runners, disconnecting or changing mode stops new scale set intake and attempts to close its session without interrupting running jobs.
+
+```sh
+vectis repository disable-auto <binding-id>
+vectis repository capacity-mode <binding-id> demand
+```
+
 ## Who can use this Mac
 
 Each connection can limit the numeric GitHub user IDs that may use its runner capacity, and require a manual start. Existing connections allow any actor and use automatic approval unless a policy is set. Automatic runner admission must still be enabled separately.

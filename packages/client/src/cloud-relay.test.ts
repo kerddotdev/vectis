@@ -765,3 +765,136 @@ test("runner release preserves the busy code and guidance as a VectisError", asy
   await expect(failure).rejects.toBeInstanceOf(VectisError);
   await expect(failure).rejects.toMatchObject(data);
 });
+
+test("scale set relay decodes grants, forwards generation and keeps credentials out of results on close", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  const grant = {
+    bindingId: "binding1",
+    generation: 3,
+    scaleSetId: 42,
+    scaleSetName: "vectis-linux",
+    sessionId: "00000000-0000-4000-8000-000000000001",
+    messageQueueUrl: "https://queue.test/messages",
+    messageQueueAccessToken: "queue-token",
+  };
+  const signal = new AbortController().signal;
+  transport.action
+    .mockResolvedValueOnce(grant)
+    .mockResolvedValueOnce({ ...grant, messageQueueAccessToken: "refreshed" })
+    .mockResolvedValueOnce(null);
+  expect(await relay.openScaleSet("binding1", signal)).toEqual(grant);
+  expect(await relay.refreshScaleSet("binding1", 3, signal)).toMatchObject({
+    messageQueueAccessToken: "refreshed",
+  });
+  expect(await relay.closeScaleSet("binding1", 3, signal)).toBeUndefined();
+  expect(
+    transport.action.mock.calls.map(([action, args]) => [getFunctionName(action), args]),
+  ).toEqual([
+    ["githubScaleSets:open", { bindingId: "binding1" }],
+    ["githubScaleSets:refresh", { bindingId: "binding1", generation: 3 }],
+    ["githubScaleSets:close", { bindingId: "binding1", generation: 3 }],
+  ]);
+  transport.action.mockResolvedValueOnce({ ...grant, generation: "invalid" });
+  await expect(relay.openScaleSet("binding1", signal)).rejects.toThrow();
+});
+
+test.each([
+  "scale_set_session_conflict",
+  "scale_set_policy_unsupported",
+  "scale_set_superseded",
+  "scale_set_identity_conflict",
+])("scale set relay maps code-only %s errors", async (code) => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(new ConvexError({ code }));
+  await expect(relay.openScaleSet("binding1", new AbortController().signal)).rejects.toBeInstanceOf(
+    VectisError,
+  );
+  transport.action.mockRejectedValueOnce(new ConvexError({ code }));
+  await expect(
+    relay.refreshScaleSet("binding1", 1, new AbortController().signal),
+  ).rejects.toMatchObject({ code });
+});
+
+test("scale set relay distinguishes cloud authorization failures and bounds interrupted waits", async () => {
+  const { relay } = await fixture();
+  await expect(relay.openScaleSet("binding1", new AbortController().signal)).rejects.toMatchObject({
+    code: "cloud_unavailable",
+  });
+  transport.auth.changed?.(true);
+  transport.action.mockRejectedValueOnce(
+    new ConvexError({ code: "scale_set_unavailable", status: 401 }),
+  );
+  await expect(relay.openScaleSet("binding1", new AbortController().signal)).rejects.toMatchObject({
+    code: "scale_set_auth_failed",
+  });
+  transport.action.mockImplementationOnce(async () => new Promise(() => {}));
+  const abort = new AbortController();
+  const rejected = expect(relay.openScaleSet("binding1", abort.signal)).rejects.toThrow(
+    "Stop scale set open",
+  );
+  abort.abort(new Error("Stop scale set open"));
+  await rejected;
+});
+
+test("capacity mode relay uses the machine-authorized mutation and runner registration forwards scaleSet", async () => {
+  const { relay } = await fixture();
+  transport.auth.changed?.(true);
+  await relay.setCapacityMode("binding1", "scale_set");
+  expect(transport.mutation.mock.calls.map(([ref, args]) => [getFunctionName(ref), args])).toEqual([
+    [
+      "repositoryBindings:setCapacityModeForMachine",
+      { bindingId: "binding1", capacityMode: "scale_set" },
+    ],
+  ]);
+  const grant = { state: "pending", id: "lease1" };
+  transport.action.mockResolvedValueOnce(grant);
+  expect(
+    await relay.prepareRunner("binding1", "runner-key", new AbortController().signal, {
+      automatic: true,
+      scaleSet: { generation: 3 },
+    }),
+  ).toEqual(grant);
+  expect(transport.action.mock.calls.map(([ref, args]) => [getFunctionName(ref), args])).toEqual([
+    [
+      "githubRunners:prepare",
+      { bindingId: "binding1", key: "runner-key", automatic: true, scaleSet: { generation: 3 } },
+    ],
+  ]);
+});
+
+test("remote replay carries capacity mode through the same idempotent local command path", async () => {
+  vi.useFakeTimers();
+  const { store, local } = await fixture();
+  vi.spyOn(local, "status").mockImplementation(async () => store.snapshot());
+  const command = {
+    type: "repository.capacity-mode",
+    bindingId: "binding1",
+    mode: "scale_set",
+  } as const;
+  const submit = vi.spyOn(local, "submit").mockResolvedValue({
+    id: "local-operation",
+    key: "remote:remote-operation",
+    command: command.type,
+    status: "succeeded",
+    message: "Changed.",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  });
+  transport.query.mockImplementation(async (query) => {
+    if (getFunctionName(query) === "machines:self")
+      return { id: "machine1", localId: store.snapshot().machine.id };
+    if (getFunctionName(query) === "operations:pending")
+      return [{ _id: "remote-operation", phase: "running", commandJson: JSON.stringify(command) }];
+    return [];
+  });
+  transport.auth.changed?.(true);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(submit).toHaveBeenCalledWith(command, "remote:remote-operation", expect.any(AbortSignal));
+  expect(
+    transport.mutation.mock.calls
+      .filter(([ref]) => getFunctionName(ref) === "operations:acknowledge")
+      .map((call) => call[1]),
+  ).toMatchObject([{ id: "remote-operation", phase: "succeeded" }]);
+});

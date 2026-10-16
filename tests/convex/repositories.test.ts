@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import schema from "../../convex/schema.js";
 import { api, internal } from "../../convex/_generated/api.js";
 const modules = {
+  "../../convex/purge.ts": () => import("../../convex/purge.js"),
   "../../convex/repositoryBindings.ts": () => import("../../convex/repositoryBindings.js"),
   "../../convex/machines.ts": () => import("../../convex/machines.js"),
   "../../convex/_generated/server.js": () => import("../../convex/_generated/server.js"),
@@ -59,6 +60,7 @@ test("bindings deduplicate and disappear from machine admission when disabled", 
       environmentId: "linux",
       runsOn: "vectis-linux",
       automatic: false,
+      capacityMode: "demand",
     },
   ]);
   await machine.mutation(api.repositoryBindings.setAutomatic, { bindingId: id, enabled: true });

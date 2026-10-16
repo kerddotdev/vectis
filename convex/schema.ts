@@ -112,6 +112,7 @@ export default defineSchema({
     environmentId: v.string(),
     enabled: v.boolean(),
     automatic: v.optional(v.boolean()),
+    capacityMode: v.optional(v.union(v.literal("demand"), v.literal("scale_set"))),
     access: v.optional(repositoryAccess),
     // Legacy; jobScans holds scan times so scans do not rewrite the binding.
     lastJobScanAt: v.optional(v.number()),
@@ -127,6 +128,32 @@ export default defineSchema({
     bindingId: v.id("repositoryBindings"),
     scannedAt: v.number(),
   }).index("by_binding", ["bindingId"]),
+  runnerScaleSets: defineTable({
+    owner: v.string(),
+    installationId: v.number(),
+    repositoryId: v.number(),
+    bindingId: v.id("repositoryBindings"),
+    machineId: v.id("machines"),
+    repositoryOwner: v.string(),
+    repositoryName: v.string(),
+    githubUserId: v.number(),
+    githubLogin: v.string(),
+    // Persist intent before creating the remote set; no credentials belong in this table.
+    scaleSetId: v.optional(v.number()),
+    name: v.string(),
+    generation: v.number(),
+    sessionId: v.optional(v.string()),
+    phase: v.union(
+      v.literal("opening"),
+      v.literal("active"),
+      v.literal("refreshing"),
+      v.literal("closing"),
+      v.literal("closed"),
+      v.literal("action_required"),
+      v.literal("deleting"),
+    ),
+    updatedAt: v.number(),
+  }).index("by_binding_machine", ["bindingId", "machineId"]),
   runnerLeases: defineTable({
     owner: v.string(),
     machineId: v.id("machines"),
@@ -147,6 +174,7 @@ export default defineSchema({
     encodedConfig: v.optional(v.string()),
     configExpiresAt: v.optional(v.number()),
     access: v.optional(runnerAccess),
+    scaleSet: v.optional(v.object({ generation: v.number() })),
     jobId: v.optional(v.number()),
     automatic: v.optional(v.boolean()),
   })

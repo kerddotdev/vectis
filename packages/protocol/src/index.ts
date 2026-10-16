@@ -462,6 +462,12 @@ export const capabilities = [
       "Set which numeric GitHub actor IDs may use this binding and whether manual host approval is required.",
   },
   {
+    name: "repository.capacity-mode",
+    kind: "command",
+    activity: "setting",
+    description: "Choose demand scheduling or preview scale set capacity for a repository binding.",
+  },
+  {
     name: "repository.automatic",
     kind: "command",
     activity: "setting",

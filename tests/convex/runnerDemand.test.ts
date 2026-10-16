@@ -1061,3 +1061,25 @@ test.each([
   await expect(heartbeat(0, false, true, 5, slots)).rejects.toThrow("invalid_runner_capacity");
   expect(await operations()).toHaveLength(0);
 });
+
+test("scale set bindings leave queued jobs visible without creating demand operations", async () => {
+  const { t, hosts, heartbeat, operations, jobId } = await fixture();
+  const host = hosts[0];
+  if (!host) throw new Error("Missing host");
+  await t.run((ctx) =>
+    ctx.db.patch("repositoryBindings", host.bindingId, { capacityMode: "scale_set" }),
+  );
+  await heartbeat(0, false, true, 3);
+  expect(await operations()).toEqual([]);
+  expect(await t.run((ctx) => ctx.db.get("githubJobs", jobId))).toMatchObject({ status: "queued" });
+  const device = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: host.machineId,
+    credentialVersion: 0,
+  });
+  expect(await device.query(api.jobs.list, { bindingId: host.bindingId })).toMatchObject([
+    { jobId: 4, status: "queued" },
+  ]);
+  await heartbeat(1, false, true, 1);
+  expect(await operations()).toHaveLength(1);
+});

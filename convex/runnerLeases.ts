@@ -5,6 +5,8 @@ import {
   sameRunnerAccess,
 } from "../packages/github/src/access-policy.js";
 import { matchesRunnerLabels } from "../packages/github/src/runner-labels.js";
+import { currentScaleSet } from "./runnerScaleSets.js";
+import { assertScaleSetBinding } from "./scaleSetPolicy.js";
 import { scheduleRunnerDemand } from "./runnerDemand.js";
 import { ConvexError, v } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server.js";
@@ -12,7 +14,11 @@ import type { QueryCtx } from "./_generated/server.js";
 import { machine } from "./auth.js";
 import { internal } from "./_generated/api.js";
 
-export const runnerRequest = { jobId: v.optional(v.number()), automatic: v.optional(v.boolean()) };
+export const runnerRequest = {
+  jobId: v.optional(v.number()),
+  automatic: v.optional(v.boolean()),
+  scaleSet: v.optional(v.object({ generation: v.number() })),
+};
 
 const configLifetime = 15 * 60 * 1000;
 
@@ -41,13 +47,27 @@ export async function bindingAuthority(ctx: QueryCtx, bindingId: string, prepari
 export async function runnerAdmission(
   ctx: QueryCtx,
   bindingId: string,
-  request: { jobId?: number; automatic?: boolean },
+  request: { jobId?: number; automatic?: boolean; scaleSet?: { generation: number } },
 ): Promise<NonNullable<Doc<"runnerLeases">["access"]>> {
   const { binding, environment } = await bindingAuthority(ctx, bindingId, true);
   if (request.automatic && !binding.automatic)
     throw new ConvexError({ code: "automatic_disabled" });
   const policy = binding.access ?? { actors: "any" as const, approval: "automatic" as const };
   const base = { repositoryId: binding.repositoryId, ...policy };
+  if (request.scaleSet) {
+    assertScaleSetBinding(binding);
+    if (request.jobId !== undefined) throw new ConvexError({ code: "invalid_runner_request" });
+    const row = await currentScaleSet(ctx, binding, request.scaleSet.generation);
+    if (
+      !["active", "refreshing"].includes(row.phase) ||
+      !row.sessionId ||
+      row.scaleSetId === undefined
+    )
+      throw new ConvexError({ code: "scale_set_session_missing" });
+    return base;
+  }
+  if (request.automatic && binding.capacityMode === "scale_set")
+    throw new ConvexError({ code: "scale_set_generation_required" });
   if (request.jobId === undefined) {
     if (restrictiveAccess(policy)) throw new ConvexError({ code: "job_required" });
     return base;
@@ -108,6 +128,7 @@ export const claim = internalMutation({
         // Reconciliation fences an unclaimed request with a released lease that records no request details.
         (existing.phase !== "released" &&
           (existing.jobId !== args.jobId ||
+            existing.scaleSet?.generation !== args.scaleSet?.generation ||
             (existing.automatic ?? false) !== (args.automatic ?? false) ||
             !sameRunnerAccess(existing.access, access)))
       )
@@ -136,6 +157,7 @@ export const claim = internalMutation({
       os: environment.os,
       ...(environment.revision ? { environmentRevision: environment.revision } : {}),
       key: args.key,
+      ...(args.scaleSet ? { scaleSet: args.scaleSet } : {}),
       access,
       ...(args.jobId === undefined ? {} : { jobId: args.jobId }),
       ...(args.automatic === undefined ? {} : { automatic: args.automatic }),
@@ -162,6 +184,7 @@ export const ready = internalMutation({
       throw new ConvexError({ code: "runner_lease_conflict" });
     const authority = await bindingAuthority(ctx, lease.bindingId, true);
     const access = await runnerAdmission(ctx, lease.bindingId, {
+      ...(lease.scaleSet ? { scaleSet: lease.scaleSet } : {}),
       ...(lease.jobId === undefined ? {} : { jobId: lease.jobId }),
       ...(lease.automatic === undefined ? {} : { automatic: lease.automatic }),
     });

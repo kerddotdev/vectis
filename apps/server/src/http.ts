@@ -132,6 +132,7 @@ export async function startService(
   const reload = () => {
     const current = relayUpdate.then(async () => {
       if (closing || !connection) throw new Error("Service is not ready for cloud reload.");
+      await service.suspendScaleSets();
       await relay?.close();
       if (relay) {
         relay = undefined;
@@ -142,12 +143,14 @@ export async function startService(
         new VectisClient(connection),
         options.keychainHelper,
         (value) => {
-          if (!isDeepStrictEqual(cloud, value)) store.touch();
+          const changed = !isDeepStrictEqual(cloud, value);
           cloud = value;
+          if (changed) store.touch();
         },
         () => store.touch(),
         (entries) => service.observeJobs(entries),
       );
+      service.resumeScaleSets();
       if (relay) store.touch();
     });
     relayUpdate = current.catch(() => {});
@@ -388,9 +391,9 @@ export async function startService(
   } catch (error) {
     storageAbort.abort();
     await storageInspection;
+    await service.close();
     await relay?.close();
     server.close();
-    await service.close();
     store.close();
     await rm(lockPath, { force: true });
     throw error;

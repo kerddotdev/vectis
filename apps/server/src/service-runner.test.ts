@@ -336,6 +336,7 @@ async function cleanupFixture(intervalMs = 60000) {
     connectRepository: unused,
     disconnectRepository: unused,
     setAutomatic: unused,
+    setCapacityMode: vi.fn(async (_bindingId: string, _mode: "demand" | "scale_set") => {}),
     setAccess: unused,
     scanJobs: unused,
     refreshJob: unused,
@@ -407,6 +408,37 @@ describe("automatic runner cleanup", () => {
     await fixture.close();
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  test("capacity mode is a settled setting that calls the authorized broker without an activity", async () => {
+    const { service, broker, store } = fixture;
+    const operation = service.submit("capacity-mode", {
+      type: "repository.capacity-mode",
+      bindingId: "binding",
+      mode: "scale_set",
+    });
+    await service.drain();
+    expect(broker.setCapacityMode).toHaveBeenCalledExactlyOnceWith("binding", "scale_set");
+    expect(store.operation(operation.id)).toMatchObject({
+      status: "succeeded",
+      result: { bindingId: "binding", capacityMode: "scale_set" },
+    });
+    expect(store.snapshot().activities?.some((activity) => activity.id === operation.id)).toBe(
+      false,
+    );
+    broker.setCapacityMode.mockRejectedValueOnce(
+      new VectisError("scale_set_policy_unsupported", "Use demand for this policy."),
+    );
+    const refused = service.submit("refused-mode", {
+      type: "repository.capacity-mode",
+      bindingId: "binding",
+      mode: "scale_set",
+    });
+    await service.drain();
+    expect(store.operation(refused.id)).toMatchObject({
+      status: "failed",
+      result: { code: "scale_set_policy_unsupported" },
+    });
   });
 
   test("busy cleanup retries the existing operation and activity until GitHub releases it", async () => {

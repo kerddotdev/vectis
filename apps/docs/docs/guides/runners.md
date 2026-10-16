@@ -14,13 +14,40 @@ vectis repository enable-auto <binding-id>
 vectis repository disable-auto <binding-id>
 ```
 
-With automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts runners when it is connected and not paused, one per queued job, and a new job also starts one right away instead of waiting for the next heartbeat.
+In the default `demand` capacity mode, with automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts runners when it is connected and not paused, one per queued job, and a new job also starts one right away instead of waiting for the next heartbeat.
 
 A Mac runs up to five runners at once by default; change it in **Settings** or with `vectis machine configure --max-runners <N>` (1 to 16). The Mac also never starts more than its CPU and memory allow: all running and starting VMs together get at most every CPU core and 75 percent of the memory, and at most two macOS VMs run at a time. Capacity is calculated separately for each ready environment, including resources reserved for runners that have not booted yet. With a 6 CPU environment on a 14 core Mac, at most two such VMs fit, whatever the runner limit says. `vectis status --json` includes each environment's available slots; the overall available count is their maximum, not their sum. Interrupted VMs reserve their CPU, memory and macOS slot until verified stopped. An action-required runner whose VM is verified stopped releases its local slot while cleanup remains unresolved. Give an environment fewer CPUs or less memory with `vectis environment configure` to run more.
 
-Before booting a VM, and again before registering the runner, Vectis checks with GitHub that the job is still queued. GitHub may hand the runner a different job with the same labels. If the original job is still queued after a runner succeeded, Vectis can request another runner without consuming the failure budget. Automatic admission stops after three failures or ten total attempts per job. Failures include failed operations, requests that expire before claim, and action-required operations. Failed and expired requests wait 60 seconds before retrying; action-required operations wait ten minutes. A deleted previous operation can retry after ten minutes without inventing a failure. A person's cancellation stays final unless GitHub queues the job again after an approval or concurrency wait.
+In demand mode, before booting a VM, and again before registering the runner, Vectis checks with GitHub that the job is still queued. GitHub may hand the runner a different job with the same labels. If the original job is still queued after a runner succeeded, Vectis can request another runner without consuming the failure budget. Automatic admission stops after three failures or ten total attempts per job. Failures include failed operations, requests that expire before claim, and action-required operations. Failed and expired requests wait 60 seconds before retrying; action-required operations wait ten minutes. A deleted previous operation can retry after ten minutes without inventing a failure. A person's cancellation stays final unless GitHub queues the job again after an approval or concurrency wait.
 
 Automatic runners are off until you turn them on, per connection. These CLI commands wait for the setting to be applied without needing `--wait`, and return a nonzero exit code if it fails or needs attention.
+
+## Scale set capacity (preview)
+
+Each repository connection chooses a capacity mode independently. `demand` uses per-job admission and is the default. `scale_set` uses GitHub's runner scale set queue, with one host-owned session per binding. Enable the preview with:
+
+```sh
+vectis repository capacity-mode <binding-id> scale-set
+vectis repository enable-auto <binding-id>
+vectis status --json
+```
+
+The host long-polls with a queue-scoped token. The cloud keeps the GitHub App key and opens, refreshes and closes sessions. The token never goes to a guest or appears in status. GitHub's `totalAssignedJobs` is the capacity level, not a count to add for each notification. The host subtracts this binding's accepted and running scale set requests and limits new requests to the environment's free local capacity. Request keys and message progress are persisted before acknowledgement so queue redelivery cannot repeat an accepted request.
+
+Scale set runners request JIT configuration for their session generation without a job ID. GitHub assigns the job after registration. They skip demand-mode per-job queued checks and drain after five idle minutes, after confirming they are not busy. The same VM resource limits and guest isolation apply to Linux, macOS and Windows; this host integration has synthetic coverage, and end-to-end guest execution must be verified separately. Linux and macOS NAT do not enforce egress filtering; Windows defaults to enforced internet-only egress.
+
+Preview scale sets support only unrestricted actors with automatic approval. Actor allowlists and required manual capacity approval need demand mode; they report `scale_set_policy_unsupported` rather than weakening policy. GitHub's maintainer approval rules for external pull requests still apply. A conflicting session reports `scale_set_session_conflict`; Vectis does not take over another listener's session. Unsupported responses and authorization failures also leave the listener `action_required` with a code.
+
+`status.scaleSets` reports `connecting`, `listening`, `action_required` or `stopped` per binding, plus the last assigned level and reserved runners when known. MCP `vectis_status` includes the same listener states. A queue 401 triggers one serialized cloud token refresh and a retry; transient failures use abortable backoff and honor `Retry-After`.
+
+Pause, disable automatic runners, disconnect the repository or switch back to demand to stop polling and attempt to close the session. Existing jobs finish normally. A failed session close is bounded and best effort; GitHub may retain it until expiry. After resolving a listener error, disable and re-enable automatic runners to retry.
+
+```sh
+vectis repository disable-auto <binding-id>
+vectis repository capacity-mode <binding-id> demand
+```
+
+These are setting commands and wait for confirmation without `--wait`. The equivalent MCP command is `vectis_command` with `{key, command: {type: "repository.capacity-mode", bindingId, mode: "scale_set"}}`; the protocol uses `scale_set`, while the CLI uses `scale-set`. Remote commands replay through the same local service path.
 
 ## Manual runners
 

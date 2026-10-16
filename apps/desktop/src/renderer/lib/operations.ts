@@ -1,3 +1,5 @@
+import { commandLabels as sharedCommandLabels } from "../../command-labels.js";
+
 export const preparationCommands = [
   "environment.prepare-linux",
   "environment.resume",
@@ -30,9 +32,13 @@ export const cancellableCommands = [
   "migration.publish",
   "repository.connect",
 ];
-export { commandLabels } from "../../command-labels.js";
+export const commandLabels: Record<string, string> = {
+  ...sharedCommandLabels,
+  "repository.capacity-mode": "Change runner capacity mode",
+};
 // A setting is confirmed after it happened, so its message is what changed, not what was asked.
 export const settingLabels: Record<string, string> = {
+  "repository.capacity-mode": "Runner capacity mode updated",
   "repository.automatic": "Automatic runners updated",
   "repository.access": "Repository access updated",
   "environment.configure": "Environment updated",
