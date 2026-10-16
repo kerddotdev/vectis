@@ -54,5 +54,5 @@ export const settingLabels: Record<string, string> = {
   "instance.reconcile": "VM reconciled",
   "operation.cancel": "Operation closed",
   "machine.pause": "VM intake updated",
-  "machine.configure": "Concurrent VMs updated",
+  "machine.configure": "VM capacity updated",
 };

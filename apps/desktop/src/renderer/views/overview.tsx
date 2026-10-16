@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatRelative } from "@/lib/format";
+import { isPoolInstance } from "@/lib/vm-capacity";
 import { useStateApi } from "@/state";
 import { GetStarted } from "./get-started";
 import { ApproveJobButton, useAwaitingApprovals } from "./repository-jobs";
@@ -41,6 +42,8 @@ export function Overview() {
   const approvals = useAwaitingApprovals(snapshot?.repositories ?? []);
   const instances = snapshot?.instances ?? [];
   const running = instances.filter((instance) => ["starting", "running"].includes(instance.status));
+  const jobVms = running.filter((instance) => !isPoolInstance(instance));
+  const warm = running.length - jobVms.length;
   const interrupted = instances.filter((instance) => instance.status === "interrupted");
   // Every operation starts a VM, so the full list grows without bound. A VM that still runs or
   // needs cleanup always stays visible; the rest of the room goes to the newest finished ones.
@@ -125,14 +128,16 @@ export function Overview() {
         />
         <StatCard
           label="Virtual machines"
-          value={running.length}
-          tone={running.length ? "running" : undefined}
+          value={jobVms.length}
+          tone={jobVms.length ? "running" : undefined}
           detail={
             interrupted.length
               ? `${interrupted.length} need cleanup`
-              : running.length
-                ? "Running now"
-                : "None running"
+              : warm
+                ? `${warm} warm for faster starts`
+                : jobVms.length
+                  ? "Running now"
+                  : "None running"
           }
         />
         <StatCard
@@ -243,7 +248,7 @@ function InstanceRow({ instance }: { instance: Instance }) {
       title={environment?.name ?? instance.environmentId}
       detail={
         <span className="inline-flex items-center gap-1.5">
-          <InstanceStatus status={instance.status} inline />
+          <InstanceStatus instance={instance} inline />
           <span>· {formatRelative(instance.createdAt)}</span>
         </span>
       }

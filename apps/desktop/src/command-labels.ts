@@ -33,5 +33,5 @@ export const commandLabels: Record<string, string> = {
   "environment.remove": "Remove environment",
   "operation.cancel": "Close operation",
   "machine.pause": "Change VM intake",
-  "machine.configure": "Change concurrent VMs",
+  "machine.configure": "Change VM capacity",
 };

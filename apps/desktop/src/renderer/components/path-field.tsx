@@ -13,6 +13,7 @@ export function PathField({
   required,
   placeholder,
   description,
+  fromChooser = (picked) => picked,
 }: {
   label: string;
   value: string;
@@ -22,6 +23,7 @@ export function PathField({
   required?: boolean;
   placeholder?: string;
   description?: string;
+  fromChooser?: (picked: string) => string;
 }) {
   const { perform, machineId } = useStateApi();
   const id = useId();
@@ -45,7 +47,7 @@ export function PathField({
           aria-label={`Choose ${label}`}
           onClick={() =>
             void perform(chooser).then((picked) => {
-              if (typeof picked === "string") onChange(picked);
+              if (typeof picked === "string") onChange(fromChooser(picked));
             })
           }
         >
