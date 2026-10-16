@@ -229,6 +229,16 @@ export default defineSchema({
   })
     .index("by_delivery", ["deliveryId"])
     .index("by_received", ["receivedAt"]),
+  githubRedeliveryCheckpoint: defineTable({
+    deliveredAt: v.number(),
+    scannedAt: v.number(),
+  }),
+  githubRedeliveryRequests: defineTable({
+    guid: v.string(),
+    requestedAt: v.number(),
+  })
+    .index("by_guid", ["guid"])
+    .index("by_requested", ["requestedAt"]),
   githubAppSetups: defineTable({
     stateDigest: v.string(),
     ownerId: v.number(),

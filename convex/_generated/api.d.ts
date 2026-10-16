@@ -28,6 +28,8 @@ import type * as githubIdentity from "../githubIdentity.js";
 import type * as githubJobs from "../githubJobs.js";
 import type * as githubMigrations from "../githubMigrations.js";
 import type * as githubOAuth from "../githubOAuth.js";
+import type * as githubRedelivery from "../githubRedelivery.js";
+import type * as githubRedeliveryState from "../githubRedeliveryState.js";
 import type * as githubRepositories from "../githubRepositories.js";
 import type * as githubRunnerProbe from "../githubRunnerProbe.js";
 import type * as githubRunners from "../githubRunners.js";
@@ -78,6 +80,8 @@ declare const fullApi: ApiFromModules<{
   githubJobs: typeof githubJobs;
   githubMigrations: typeof githubMigrations;
   githubOAuth: typeof githubOAuth;
+  githubRedelivery: typeof githubRedelivery;
+  githubRedeliveryState: typeof githubRedeliveryState;
   githubRepositories: typeof githubRepositories;
   githubRunnerProbe: typeof githubRunnerProbe;
   githubRunners: typeof githubRunners;

@@ -6,6 +6,7 @@ import { internalMutation, type MutationCtx } from "./_generated/server.js";
 const day = 24 * 60 * 60 * 1000;
 export const windows = {
   deliveries: 30 * day,
+  redeliveryRequests: 3 * day,
   jobs: 90 * day,
   operations: 90 * day,
   leases: 30 * day,
@@ -32,6 +33,14 @@ async function sweepTable<T extends { _id: { __tableName: string } }>(
 
 export async function sweepOnce(ctx: MutationCtx, now: number) {
   let deleted = 0;
+  deleted += await sweepTable(
+    await ctx.db
+      .query("githubRedeliveryRequests")
+      .withIndex("by_requested", (q) => q.lt("requestedAt", now - windows.redeliveryRequests))
+      .take(limit),
+    () => false,
+    async (row) => ctx.db.delete("githubRedeliveryRequests", row._id),
+  );
   deleted += await sweepTable(
     await ctx.db
       .query("githubDeliveries")

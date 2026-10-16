@@ -44,7 +44,7 @@ A runner operation that succeeded means the VM ran and was cleaned up. It does n
 - **App:** open a connection in **Repositories** to see its recent jobs.
 - **CLI:** `vectis job list <binding-id> --json` returns the latest 100 jobs with their GitHub status and conclusion.
 
-Job states arrive through GitHub webhooks. If one seems missing or stale:
+Job states arrive through GitHub webhooks. Vectis checks for failed deliveries every two minutes and requests one automatic redelivery per webhook, usually recovering missed updates within a few minutes without a connected Mac. If one still seems missing or stale:
 
 ```sh
 vectis job scan <binding-id> --wait             # find queued and running jobs Vectis missed
