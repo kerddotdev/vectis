@@ -10,7 +10,12 @@ if (!executable) {
 }
 const shutdown = new AbortController();
 const children: Array<{ process: ChildProcess; closed: Promise<void> }> = [];
-const stop = () => shutdown.abort();
+let primaryChild: ChildProcess | undefined;
+let secondaryExitTimer: ReturnType<typeof setTimeout> | undefined;
+const stop = () => {
+  clearTimeout(secondaryExitTimer);
+  shutdown.abort();
+};
 process.stdin.once("end", stop);
 process.stdin.once("error", stop);
 process.once("SIGTERM", stop);
@@ -22,12 +27,29 @@ function owned(command: string, arguments_: string[], primary: boolean) {
     stdio: primary ? ["pipe", "inherit", "inherit"] : ["ignore", "ignore", "inherit"],
   });
   const closed = new Promise<void>((resolve) =>
-    child.once("close", () => {
-      stop();
+    child.once("close", (code, signal) => {
+      if (primary) {
+        if (code !== 0 || signal !== null) process.exitCode = code ?? 1;
+        stop();
+      } else if (!shutdown.signal.aborted) {
+        if (primaryChild) {
+          // QEMU can close the TPM socket before its own close event arrives.
+          secondaryExitTimer ??= setTimeout(() => {
+            process.exitCode = 1;
+            stop();
+          }, 3000);
+        } else {
+          process.exitCode = 1;
+          stop();
+        }
+      }
       resolve();
     }),
   );
-  child.once("error", stop);
+  child.once("error", () => {
+    process.exitCode = 1;
+    stop();
+  });
   child.stdin?.on("error", stop);
   children.push({ process: child, closed });
   return child;
@@ -57,8 +79,8 @@ try {
     }
   }
   shutdown.signal.throwIfAborted();
-  const child = owned(executable, args, true);
-  if (child.stdin) process.stdin.pipe(child.stdin);
+  primaryChild = owned(executable, args, true);
+  if (primaryChild.stdin) process.stdin.pipe(primaryChild.stdin);
   await new Promise<void>((resolve) => {
     shutdown.signal.addEventListener("abort", () => resolve(), { once: true });
     if (shutdown.signal.aborted) resolve();
@@ -67,6 +89,7 @@ try {
   process.stderr.write("The supervised VM or TPM could not start.\n");
   process.exitCode = 1;
 } finally {
+  clearTimeout(secondaryExitTimer);
   for (const child of children)
     if (child.process.exitCode === null && child.process.signalCode === null)
       child.process.kill("SIGTERM");

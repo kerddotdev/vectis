@@ -28,6 +28,7 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
     var machine: VZVirtualMachine?
     var signals: [DispatchSourceSignal] = []
     var stopping = false
+    var input = Data()
 
     func start(arguments: [String]) async throws {
         var positional = Array(arguments.prefix(7))
@@ -136,9 +137,12 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
             signals.append(source)
         }
         FileHandle.standardInput.readabilityHandler = { handle in
-            if handle.availableData.isEmpty {
+            let data = handle.availableData
+            if data.isEmpty {
                 handle.readabilityHandler = nil
                 Task { @MainActor in await self.stop() }
+            } else {
+                Task { @MainActor in self.receive(data) }
             }
         }
         try await vm.start()
@@ -161,6 +165,30 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         Task { @MainActor in await self.stop() }
+    }
+
+    func receive(_ data: Data) {
+        input.append(data)
+        guard input.count <= 1024 else {
+            input.removeAll()
+            emit("vm.shutdown_unavailable")
+            return
+        }
+        while let newline = input.firstIndex(of: 10) {
+            let command = String(decoding: input[..<newline], as: UTF8.self)
+            input.removeSubrange(...newline)
+            guard command == "shutdown" else { continue }
+            guard let machine, machine.canRequestStop, !stopping else {
+                emit("vm.shutdown_unavailable")
+                continue
+            }
+            do {
+                try machine.requestStop()
+                emit("vm.shutdown_requested")
+            } catch {
+                emit("vm.shutdown_unavailable")
+            }
+        }
     }
 
     func stop() async {

@@ -7,6 +7,10 @@ import { executeGuest, GuestUnavailableError } from "../../../packages/runner/sr
 import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-diagnostics.js";
 import { VectisError, type Environment } from "../../../packages/protocol/src/index.js";
 import { jobStartedMarker } from "../../../packages/runner/src/runner-access.js";
+import {
+  preinstalledRunnerDirectory,
+  runnerVersion,
+} from "../../../packages/runner/src/runner-release.js";
 
 vi.mock("../../../packages/runner/src/guest-ready.js", () => ({ readyGuest: vi.fn() }));
 vi.mock("../../../packages/runner/src/guest.js", async (importOriginal) => ({
@@ -93,9 +97,13 @@ function fixture(os: Environment["os"] = "linux") {
   return { controls, broker, events };
 }
 
-test.each(["linux", "macos", "windows"] as const)(
-  "%s warm takeover skips boot/readiness and requests credentials only after SSH and installation",
-  async (os) => {
+test.each(
+  (["linux", "macos", "windows"] as const).flatMap((os) =>
+    [false, true].map((preinstalled) => ({ os, preinstalled })),
+  ),
+)(
+  "$os warm takeover with preinstalled=$preinstalled requests credentials only after guest verification",
+  async ({ os, preinstalled }) => {
     const { controls, broker } = fixture(os);
     const connection = {
       host: "192.0.2.1",
@@ -116,7 +124,7 @@ test.each(["linux", "macos", "windows"] as const)(
       connection,
     }));
     broker.prepareRunner.mockImplementationOnce(async () => {
-      expect(executeGuest).toHaveBeenCalledTimes(2);
+      expect(executeGuest).toHaveBeenCalledTimes(preinstalled ? 1 : 2);
       expect(executeGuest).toHaveBeenNthCalledWith(
         1,
         connection,
@@ -137,7 +145,15 @@ test.each(["linux", "macos", "windows"] as const)(
     const result = await runRunnerTask(
       "binding",
       "key",
-      { ...environment, os },
+      {
+        ...environment,
+        os,
+        ...(preinstalled
+          ? {
+              image: { revision: "revision", runnerVersion, provisionedAt: "2026-10-16T00:00:00Z" },
+            }
+          : {}),
+      },
       { ...controls, claimWarm },
       AbortSignal.timeout(1000),
     );
@@ -148,7 +164,7 @@ test.each(["linux", "macos", "windows"] as const)(
       "queued_locally",
       "warm_takeover",
       "guest_ready",
-      "runner_install",
+      preinstalled ? "runner_preinstalled" : "runner_install",
       "registration",
       "waiting_for_job",
       "cleanup",
@@ -246,6 +262,72 @@ test("unconfirmed warm cleanup prevents cold fallback and JIT registration", asy
   expect(controls.start).not.toHaveBeenCalled();
   expect(broker.prepareRunner).not.toHaveBeenCalled();
 });
+test.each(["linux", "macos", "windows"] as const)(
+  "%s starts the baked runner without an install when the manifest matches",
+  async (os) => {
+    const { controls } = fixture(os);
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      {
+        ...environment,
+        os,
+        image: { revision: "revision", runnerVersion, provisionedAt: "2026-10-16T00:00:00Z" },
+      },
+      controls,
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(result.progress.phases?.map((phase) => phase.name)).toEqual([
+      "queued_locally",
+      "vm_start",
+      "guest_ready",
+      "runner_preinstalled",
+      "registration",
+      "waiting_for_job",
+      "cleanup",
+    ]);
+    expect(result.progress.phases?.every((phase) => phase.endedAt !== undefined)).toBe(true);
+    const scripts = vi.mocked(executeGuest).mock.calls.map((call) => call[1]);
+    expect(scripts.some((script) => script.includes(preinstalledRunnerDirectory(os)))).toBe(true);
+    expect(scripts.join("\n")).not.toMatch(/Invoke-WebRequest|curl --fail/);
+    expect(scripts.join("\n")).toContain("--jitconfig");
+    expect(controls.stop).toHaveBeenCalledOnce();
+  },
+);
+test.each([undefined, "old-version"])(
+  "a %s runner manifest uses the existing verified install path with a 600 s timeout",
+  async (version) => {
+    const { controls } = fixture();
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    const result = await runRunnerTask(
+      "binding",
+      "key",
+      {
+        ...environment,
+        ...(version
+          ? {
+              image: {
+                revision: "revision",
+                runnerVersion: version,
+                provisionedAt: "2026-10-16T00:00:00Z",
+              },
+            }
+          : {}),
+      },
+      controls,
+      new AbortController().signal,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(executeGuest).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.stringContaining("curl --fail"),
+      expect.objectContaining({ shell: "bash" }),
+    );
+    expect(timeout).toHaveBeenCalledWith(600000);
+  },
+);
 test("a failed pinned guest identity never allocates JIT credentials or sends runner scripts", async () => {
   const { controls, broker } = fixture();
   vi.mocked(readyGuest).mockRejectedValue(
@@ -1434,6 +1516,57 @@ test("a failed cache unmount discards even a trusted writer", async () => {
   expect(complete).not.toHaveBeenCalled();
   expect(controls.stop).toHaveBeenCalledOnce();
 });
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s baked scale set runners attach caches without claiming warm VMs or checking demand",
+  async (os) => {
+    const { controls, broker } = fixture(os);
+    const claimWarm = vi.fn(() => {
+      throw new Error("A generic warm VM has no cache disk");
+    });
+    const needed = vi.fn(async () => false);
+    const request = { automatic: true, scaleSet: { generation: 3 } };
+    const signal = new AbortController().signal;
+    const result = await runRunnerTask(
+      "binding",
+      "cache-cold",
+      {
+        ...environment,
+        os,
+        image: { revision: "revision", runnerVersion, provisionedAt: "2026-10-16T00:00:00Z" },
+      },
+      {
+        ...controls,
+        claimWarm,
+        needed,
+        request,
+        cache: { sizeGiB: 1, complete: vi.fn() },
+      },
+      signal,
+    );
+    expect(result.status).toBe("succeeded");
+    expect(broker.prepareRunner).toHaveBeenCalledWith("binding", "cache-cold", signal, request);
+    expect(claimWarm).not.toHaveBeenCalled();
+    expect(needed).not.toHaveBeenCalled();
+    expect(controls.start).toHaveBeenCalledOnce();
+    expect(readyGuest).toHaveBeenCalledOnce();
+    expect(result.progress.phases?.map((phase) => phase.name)).toEqual([
+      "queued_locally",
+      "vm_start",
+      "guest_ready",
+      "runner_preinstalled",
+      "registration",
+      "waiting_for_job",
+      "cleanup",
+    ]);
+    const scripts = vi.mocked(executeGuest).mock.calls.map((call) => call[1]);
+    const listener = scripts.find((script) => script.includes("--jitconfig"));
+    expect(listener).toContain(preinstalledRunnerDirectory(os));
+    expect(listener).toContain("VECTISCACHE");
+    expect(scripts.join("\n")).not.toMatch(/Invoke-WebRequest|curl --fail/);
+    expect(controls.stop).toHaveBeenCalledOnce();
+  },
+);
 
 test("cache jobs boot with their attached disk instead of claiming a generic warm VM", async () => {
   const { controls } = fixture();

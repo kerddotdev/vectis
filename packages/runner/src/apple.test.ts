@@ -1,7 +1,48 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { expect, test } from "vitest";
-import { waitForAppleVm } from "./apple.js";
+import { requestAppleVmShutdown, waitForAppleVm } from "./apple.js";
+
+test.each(["accepted", "unavailable", "old-helper", "invalid", "oversized", "error"])(
+  "Apple shutdown request handles %s and releases listeners",
+  async (mode) => {
+    const child = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+const readline = require('node:readline');
+console.log(JSON.stringify({event:'vm.running'}));
+readline.createInterface({input:process.stdin}).on('line', line => {
+  if (line !== 'shutdown') process.exit(97);
+  const mode = '${mode}';
+  if (mode === 'old-helper') return;
+  if (mode === 'invalid') return console.log('invalid');
+  if (mode === 'oversized') return console.log('x'.repeat(65537));
+  console.log(JSON.stringify({event: mode === 'accepted' ? 'vm.shutdown_requested' : mode === 'error' ? 'vm.error' : 'vm.shutdown_unavailable'}));
+});`,
+      ],
+      { stdio: ["pipe", "pipe", "ignore"] },
+    );
+    const closed = once(child, "close");
+    try {
+      await waitForAppleVm(child);
+      const errorListeners = child.listenerCount("error");
+      const dataListeners = child.stdout.listenerCount("data");
+      await expect(requestAppleVmShutdown(child, mode === "old-helper" ? 20 : 1000)).resolves.toBe(
+        mode === "accepted",
+      );
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+      expect(child.stdout.listenerCount("data")).toBe(dataListeners);
+      expect(child.stdin.listenerCount("error")).toBe(0);
+      expect(child.listenerCount("error")).toBe(errorListeners);
+    } finally {
+      child.stdin.end();
+      await closed;
+    }
+  },
+);
 
 test("requires an explicit VM running event rather than process creation", async () => {
   const child = spawn(

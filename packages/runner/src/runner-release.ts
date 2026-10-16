@@ -10,6 +10,11 @@ import type { Environment } from "../../protocol/src/index.js";
 import { VectisError } from "../../protocol/src/index.js";
 
 export const runnerVersion = "2.337.0";
+export function preinstalledRunnerDirectory(os: Environment["os"]) {
+  if (os === "windows") return `C:\\vectis\\runner\\${runnerVersion}`;
+  return `$HOME/.vectis-runner/${runnerVersion}`;
+}
+
 const distributions = {
   linux: {
     archive: "actions-runner-linux-arm64-2.337.0.tar.gz",
@@ -66,7 +71,7 @@ export function runnerStartScript(
   os: Environment["os"],
   jitConfig: string,
   access: RunnerAccess,
-  cacheSizeGiB?: number,
+  options: { cacheSizeGiB?: number; preinstalled?: boolean } = {},
 ) {
   if (!/^[A-Za-z0-9+/=]{1,60000}$/.test(jitConfig))
     throw new VectisError(
@@ -74,7 +79,9 @@ export function runnerStartScript(
       "The JIT runner configuration is invalid.",
     );
   const policy = renderRunnerPolicy(access);
-  const cache = cacheSizeGiB === undefined ? "" : cacheSetupScript(os, cacheSizeGiB);
+  const cache =
+    options.cacheSizeGiB === undefined ? "" : cacheSetupScript(os, options.cacheSizeGiB);
+  const target = options.preinstalled ? preinstalledRunnerDirectory(os) : undefined;
   if (os === "windows")
     return `$ErrorActionPreference = 'Stop'
 ${cache}$gate = Join-Path $env:USERPROFILE 'vectis-actions-runner/_vectis'
@@ -88,7 +95,7 @@ Remove-Item -LiteralPath $rejected -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $gate 'job-started'), (Join-Path $gate 'job-started.tmp') -ErrorAction SilentlyContinue
 $env:ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE = '1'
 $env:ACTIONS_RUNNER_HOOK_JOB_STARTED = Join-Path $gate 'job-started.ps1'
-Set-Location (Join-Path $env:USERPROFILE 'vectis-actions-runner')
+Set-Location ${target ? `'${target}'` : "(Join-Path $env:USERPROFILE 'vectis-actions-runner')"}
 & .\\bin\\Runner.Listener.exe run --jitconfig '${jitConfig}'
 $runnerExit = $LASTEXITCODE
 if (Test-Path -LiteralPath $rejected) { Write-Output '${assignmentRejectedMarker}'; Get-Content -LiteralPath $rejected; exit 1 }
@@ -108,7 +115,7 @@ rm -f "$gate/assignment-rejected" "$gate/job-started" "$gate/job-started.tmp"
 export ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE=1
 export ACTIONS_RUNNER_HOOK_JOB_STARTED="$gate/job-started.sh"
 umask "$job_umask"
-cd "$HOME/vectis-actions-runner"
+cd "${target ?? "$HOME/vectis-actions-runner"}"
 runner_exit=0
 ./bin/Runner.Listener run --jitconfig '${jitConfig}' || runner_exit=$?
 if test -f "$gate/assignment-rejected"; then printf '${assignmentRejectedMarker}\\n'; cat "$gate/assignment-rejected"; exit 1; fi

@@ -3,16 +3,26 @@ import { validateEnvironmentEgress } from "./environment-network.js";
 import { windowsVmArguments } from "./windows-arguments.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:fs";
-import { access, copyFile, cp, mkdir, rm, stat, writeFile, readFile } from "node:fs/promises";
+import {
+  access,
+  copyFile,
+  cp,
+  mkdir,
+  rm,
+  stat,
+  writeFile,
+  readFile,
+  symlink,
+} from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 import { Schema } from "effect";
 import { cpus, totalmem } from "node:os";
 import { fileURLToPath } from "node:url";
-import { waitForQemu } from "./qmp.js";
+import { requestQemuShutdown, waitForQemu } from "./qmp.js";
 import { availableHostMemory, estimatedVmMemoryMiB } from "./memory.js";
 import { runProcess } from "./process.js";
 import { probeStorage } from "./storage-probe.js";
-import { waitForAppleVm } from "./apple.js";
+import { requestAppleVmShutdown, waitForAppleVm } from "./apple.js";
 import { readyGuest } from "./guest-ready.js";
 import { VectisError, type Environment } from "../../protocol/src/index.js";
 import { instanceIdentity } from "./instance-identity.js";
@@ -53,7 +63,7 @@ async function removeInstanceDirectory(
 }
 
 export class VmRuntime {
-  private readonly owned = new Map<string, OwnedInstance>();
+  private readonly owned = new Map<string, OwnedInstance & { os: Environment["os"] }>();
   constructor(readonly options: RuntimeOptions) {}
   directoryFor(id: string, environment: Environment) {
     return join(environment.storagePath ?? join(this.options.home, "instances"), id);
@@ -115,9 +125,12 @@ export class VmRuntime {
     environment: Environment,
     onExit: (cleaned: boolean) => void,
     signal?: AbortSignal,
-    cacheDisk?: CacheDisk | string,
+    options: { cacheDisk?: CacheDisk | string | undefined; diskInPlace?: boolean } = {},
   ): Promise<OwnedInstance> {
     signal?.throwIfAborted();
+    const { cacheDisk } = options;
+    if (options.diskInPlace && cacheDisk)
+      throw new VectisError("invalid_configuration", "Provisioning VMs cannot attach cache disks.");
     await this.validate(environment);
     signal?.throwIfAborted();
     if (process.platform !== "darwin" || process.arch !== "arm64")
@@ -189,23 +202,31 @@ export class VmRuntime {
             "Configure the prepared Windows image, firmwarePath, firmwareVarsPath and VECTIS_SWTPM.",
           );
         await access(this.options.swtpm, constants.X_OK);
-        await copyFile(
-          resolve(environment.firmwareVarsPath),
-          join(directory, "uefi-vars.fd"),
-          constants.COPYFILE_FICLONE,
-        );
-        if (environment.tpmStatePath)
-          await cp(resolve(environment.tpmStatePath), join(directory, "tpm"), {
-            recursive: true,
-            mode: constants.COPYFILE_FICLONE,
-          });
-        else await mkdir(join(directory, "tpm"), { mode: 0o700 });
-        const disk = join(directory, "disk.qcow2");
-        await runProcess(
-          this.options.qemuImg,
-          ["create", "-f", "qcow2", "-F", "qcow2", "-b", resolve(environment.basePath), disk],
-          signal,
-        );
+        if (options.diskInPlace) {
+          await symlink(resolve(environment.basePath), join(directory, "disk.qcow2"));
+          await symlink(resolve(environment.firmwareVarsPath), join(directory, "uefi-vars.fd"));
+          if (!environment.tpmStatePath)
+            throw new VectisError("setup_required", "In-place Windows boot requires TPM state.");
+          await symlink(resolve(environment.tpmStatePath), join(directory, "tpm"));
+        } else {
+          await copyFile(
+            resolve(environment.firmwareVarsPath),
+            join(directory, "uefi-vars.fd"),
+            constants.COPYFILE_FICLONE,
+          );
+          if (environment.tpmStatePath)
+            await cp(resolve(environment.tpmStatePath), join(directory, "tpm"), {
+              recursive: true,
+              mode: constants.COPYFILE_FICLONE,
+            });
+          else await mkdir(join(directory, "tpm"), { mode: 0o700 });
+          const disk = join(directory, "disk.qcow2");
+          await runProcess(
+            this.options.qemuImg,
+            ["create", "-f", "qcow2", "-F", "qcow2", "-b", resolve(environment.basePath), disk],
+            signal,
+          );
+        }
         args = windowsVmArguments({
           firmwarePath: environment.firmwarePath,
           ...(cachePath ? { cacheDiskPath: cachePath } : {}),
@@ -214,8 +235,11 @@ export class VmRuntime {
           memoryMiB: environment.memoryMiB,
         });
       } else {
-        const destination = join(directory, environment.os === "macos" ? "bundle" : "disk.img");
-        await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination], signal);
+        const destination = options.diskInPlace
+          ? resolve(environment.basePath)
+          : join(directory, environment.os === "macos" ? "bundle" : "disk.img");
+        if (!options.diskInPlace)
+          await runProcess("/bin/cp", ["-cR", resolve(environment.basePath), destination], signal);
         let seedPath = environment.seedPath;
         if (environment.os === "linux" && environment.sshHostKeyMode === "instance") {
           const identity = await instanceIdentity(directory, id, signal);
@@ -285,6 +309,7 @@ export class VmRuntime {
       void settled.catch(() => {});
       const instance = {
         id,
+        os: environment.os,
         process: child,
         directory,
         settled,
@@ -366,6 +391,13 @@ export class VmRuntime {
     } catch {
       return false;
     }
+  }
+  async requestShutdown(id: string): Promise<boolean> {
+    const instance = this.owned.get(id);
+    if (!instance) throw new VectisError("not_owned", "This service does not own this VM.");
+    return instance.os === "windows"
+      ? requestQemuShutdown(instance.process)
+      : requestAppleVmShutdown(instance.process);
   }
   async stop(id: string) {
     const instance = this.owned.get(id);

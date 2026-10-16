@@ -21,7 +21,7 @@ test.each(["linux", "macos", "windows"] as const)(
     ])
       expect(setup).toContain(variable);
     expect(setup).not.toContain("CARGO_HOME");
-    const start = runnerStartScript(os, "c2VjcmV0", access, 20);
+    const start = runnerStartScript(os, "c2VjcmV0", access, { cacheSizeGiB: 20 });
     expect(start.indexOf(setup)).toBeLessThan(start.indexOf("--jitconfig"));
     expect(runnerStartScript(os, "c2VjcmV0", access)).not.toContain(setup);
     if (os === "linux") {

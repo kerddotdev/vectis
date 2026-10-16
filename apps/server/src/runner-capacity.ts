@@ -82,6 +82,7 @@ export function preparationBusy(snapshot: Snapshot) {
     snapshot.operations.some(
       (operation) =>
         [
+          "environment.provision",
           "environment.prepare-linux",
           "environment.resume",
           "environment.install-macos",

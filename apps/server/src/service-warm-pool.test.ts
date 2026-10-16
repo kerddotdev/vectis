@@ -260,22 +260,30 @@ test("configure zero and pause drain the pool through the shared service contrac
   expect(f.warm()).toHaveLength(0);
 });
 
-test("pool disabling remains available while image preparation is busy", async () => {
-  const f = await fixture();
-  await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
-  f.store.put("windowsInstallation", "synthetic-preparation", { phase: "installing" });
-  const operation = f.service.submit("disable-busy", {
-    type: "environment.configure",
-    id: "linux",
-    warmPool: 0,
-  });
-  await f.service.drain();
-  expect(f.store.snapshot().operations.find((item) => item.id === operation.id)?.status).toBe(
-    "succeeded",
-  );
-  expect(f.warm()).toHaveLength(0);
-  expect(f.store.snapshot().environments[0]?.warmPool).toBe(0);
-});
+test.each(["windowsInstallation", "provision"])(
+  "pool disabling remains available while %s is busy",
+  async (kind) => {
+    const f = await fixture();
+    await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+    f.store.put(kind, "synthetic-preparation", {
+      phase: "installing",
+      id: "synthetic-preparation",
+      environmentId: "derived",
+      directory: join(f.home, "derived"),
+    });
+    const operation = f.service.submit("disable-busy", {
+      type: "environment.configure",
+      id: "linux",
+      warmPool: 0,
+    });
+    await f.service.drain();
+    expect(f.store.snapshot().operations.find((item) => item.id === operation.id)?.status).toBe(
+      "succeeded",
+    );
+    expect(f.warm()).toHaveLength(0);
+    expect(f.store.snapshot().environments[0]?.warmPool).toBe(0);
+  },
+);
 
 test("a timed-out warm startup aborts and awaits its owned task", async () => {
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -337,7 +345,7 @@ test("a cache runner boots with its private disk while a generic warm VM remains
   const coldId = f.start.mock.calls[1]?.[0];
   expect(coldId).not.toBe(warmId);
   expect(f.start.mock.calls[1]?.[4]).toMatchObject({
-    sourcePath: join(f.home, "instances", "cache", "linux", "1-1", "cache.img"),
+    cacheDisk: { sourcePath: join(f.home, "instances", "cache", "linux", "1-1", "cache.img") },
   });
   expect(f.store.operation(run.id).result).toMatchObject({
     instanceId: coldId,

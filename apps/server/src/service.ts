@@ -1,5 +1,6 @@
 import { ScaleSetListener } from "./scale-set-listener.js";
 import type { ScaleSetBroker, CapacityMode } from "../../../packages/protocol/src/scale-sets.js";
+import { startProvision, recoverProvisions } from "./provision-task.js";
 import type { RunControlBroker } from "../../../packages/protocol/src/runs.js";
 import { unconfirmedRunCommand } from "../../../packages/github/src/run-control.js";
 import { repositoryReadiness } from "./repository-readiness.js";
@@ -245,9 +246,19 @@ export class Service {
   observeJobs(observations: JobObservations) {
     observeRunnerJobs(this.store, observations);
   }
+  private state(): Snapshot {
+    const current = this.store.snapshot();
+    return {
+      ...current,
+      preparationBusy:
+        current.preparationBusy === true ||
+        this.preparing !== undefined ||
+        this.store.list("provision").length > 0,
+    };
+  }
   snapshot(): Snapshot {
     const repositories = this.repositorySnapshot();
-    const snapshot = this.store.snapshot();
+    const snapshot = this.state();
     return {
       ...snapshot,
       environments: snapshot.environments.map((environment) => ({
@@ -303,6 +314,7 @@ export class Service {
       )
         this.store.put("instance", instance.id, { ...instance, status: "stopped", pid: 0 });
     }
+    await recoverProvisions(this.store);
     if (!this.closing && !this.retentionTimer) {
       const sweep = () => retainActivities(this.store, (id) => this.tasks.has(id));
       sweep();
@@ -455,6 +467,12 @@ export class Service {
         "operation_not_cancellable",
         "No active cancellable task has this operation ID.",
       );
+    if (waiting.command === "environment.provision" && this.store.get("provision", waiting.id))
+      throw new VectisError(
+        "operation_not_cancellable",
+        "This provisioning attempt still owns output requiring cleanup.",
+        "Reconcile its interrupted instance, then restart the service to retry owned output cleanup.",
+      );
     if (waiting.command === "runner.run")
       throw new VectisError(
         "operation_not_cancellable",
@@ -590,7 +608,7 @@ export class Service {
     operation = this.store.update(operation, { status: "running", message: "Running." });
     try {
       let result: unknown;
-      const snapshot = this.store.snapshot();
+      const snapshot = this.state();
       const poolOnly =
         command.type === "environment.configure" &&
         command.warmPool !== undefined &&
@@ -614,10 +632,36 @@ export class Service {
           "Finish or cancel the active image preparation before changing environments or starting VMs.",
         );
       switch (command.type) {
+        case "environment.provision": {
+          if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
+          if (this.preparing || snapshot.preparationBusy)
+            throw new VectisError("preparation_busy", "An image preparation is already active.");
+          if (
+            hasUnconfirmedMacInstallation(this.store) ||
+            hasUnconfirmedWindowsInstallation(this.store) ||
+            this.store
+              .list("preparation")
+              .some((value) => Schema.decodeUnknownSync(Preparation)(value).phase === "booting")
+          )
+            throw new VectisError(
+              "reconciliation_required",
+              "A guest installer needs exit verification.",
+            );
+          const active = await startProvision(this.store, this.runtime, operation, command);
+          this.preparing = operation.id;
+          const done = active.done.finally(() => {
+            this.preparing = undefined;
+            this.tasks.delete(operation.id);
+            this.store.touch();
+          });
+          this.tasks.set(operation.id, { abort: active.abort, done });
+          return;
+        }
+
         case "environment.install-windows":
         case "environment.resume-windows": {
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
-          if (this.preparing)
+          if (this.preparing || this.store.list("provision").length)
             throw new VectisError("preparation_busy", "An image preparation is already active.");
           const active = await startWindowsInstallation(
             this.store,
@@ -630,6 +674,7 @@ export class Service {
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
+            this.store.touch();
           });
           this.tasks.set(operation.id, { abort: active.abort, done });
           return;
@@ -675,13 +720,14 @@ export class Service {
               "A Windows installer needs exit verification.",
             );
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
-          if (this.preparing)
+          if (this.preparing || this.store.list("provision").length)
             throw new VectisError("preparation_busy", "An image preparation is already active.");
           const active = await startMacInstallation(this.store, this.runtime, operation, command);
           this.preparing = operation.id;
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
+            this.store.touch();
           });
           this.tasks.set(operation.id, { abort: active.abort, done });
           return;
@@ -697,13 +743,14 @@ export class Service {
               "A guest installer needs exit verification.",
             );
           if (this.closing) throw new VectisError("service_stopping", "The service is stopping.");
-          if (this.preparing)
+          if (this.preparing || this.store.list("provision").length)
             throw new VectisError("preparation_busy", "An image preparation is already active.");
           const active = await startPreparation(this.store, this.runtime, operation, command);
           this.preparing = active.setupId;
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
+            this.store.touch();
           });
           this.tasks.set(operation.id, { abort: active.abort, done });
           return;
@@ -1390,6 +1437,13 @@ export class Service {
         }
         case "environment.remove":
           if (
+            snapshot.environments.some((environment) => environment.image?.parentId === command.id)
+          )
+            throw new VectisError(
+              "environment_has_children",
+              "Remove derived environments before removing their parent environment. Windows images may depend on its backing disk.",
+            );
+          if (
             snapshot.instances.some(
               (instance) => instance.environmentId === command.id && instance.status !== "stopped",
             )
@@ -1463,7 +1517,7 @@ export class Service {
                   if (cleaned) this.store.remove("cacheUse", id);
                 },
                 abort.signal,
-                this.cacheDisks.get(id),
+                { cacheDisk: this.cacheDisks.get(id) },
               );
               this.store.put("instance", id, {
                 ...record,
@@ -1530,6 +1584,11 @@ export class Service {
           break;
         }
         case "instance.stop": {
+          const provision =
+            this.tasks.has(command.id) &&
+            snapshot.operations.some(
+              (item) => item.id === command.id && item.command === "environment.provision",
+            );
           const abort = new AbortController();
           let stopping = this.instanceStops.get(command.id);
           if (!stopping) {
@@ -1538,6 +1597,7 @@ export class Service {
               if (startup) {
                 startup.abort.abort();
                 await startup.done;
+                if (provision) return;
               }
               const instance = this.store.instance(command.id);
               if (instance?.status !== "stopped") await this.runtime.stop(command.id);
@@ -1546,7 +1606,13 @@ export class Service {
           }
           const done = stopping
             .then(() => {
-              this.store.update(operation, { status: "succeeded", message: "Completed." });
+              this.store.update(operation, {
+                status: "succeeded",
+                message: "Completed.",
+                ...(provision
+                  ? { result: { operationId: command.id, cancellationRequested: true } }
+                  : {}),
+              });
             })
             .catch((error: unknown) => this.failOperation(operation, error))
             .finally(() => this.tasks.delete(operation.id));
@@ -1623,7 +1689,7 @@ export class Service {
     await this.cleanupSweep;
   }
   beginShutdown(ifIdle: boolean) {
-    const snapshot = this.store.snapshot();
+    const snapshot = this.state();
     if (
       ifIdle &&
       (snapshot.preparationBusy ||

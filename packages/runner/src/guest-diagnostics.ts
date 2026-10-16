@@ -1,3 +1,4 @@
+import { preinstalledRunnerDirectory } from "./runner-release.js";
 import { redact } from "../../client/src/redact.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -7,23 +8,34 @@ import { executeGuest, GuestUnavailableError, type GuestConnection } from "./gue
 const inspect = promisify(execFile);
 const probeTimeout = 20000;
 
-const bashProbe = `set +e
+const bashProbe = (directory: string) => `set +e
 echo "== uptime"; uptime
 echo "== memory"; free -m 2>/dev/null || vm_stat | head -8
 echo "== kernel"; (dmesg 2>/dev/null || sudo -n dmesg 2>/dev/null) | tail -n 40
 echo "== runner log"
-f=$(ls -t "$HOME"/vectis-actions-runner/_diag/Runner_*.log 2>/dev/null | head -1)
+f=$(ls -t "${directory}"/_diag/Runner_*.log 2>/dev/null | head -1)
 if [ -n "$f" ]; then tail -n 40 "$f"; fi
 `;
-const powershellProbe = `$ErrorActionPreference = 'Continue'
+const powershellProbe = (directory: string) => `$ErrorActionPreference = 'Continue'
 '== uptime'; (Get-Date) - (Get-CimInstance Win32_OperatingSystem).LastBootUpTime
 '== runner log'
-$f = Get-ChildItem (Join-Path $env:USERPROFILE 'vectis-actions-runner\\_diag\\Runner_*.log') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+$f = Get-ChildItem (Join-Path ${directory} '_diag\\Runner_*.log') | Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if ($f) { Get-Content $f -Tail 40 }
 `;
 
 function tail(text: string, limit: number) {
   return text.length > limit ? `...${text.slice(-limit)}` : text;
+}
+
+export function guestCommandDiagnostics(output: { stderr: string; stdout: string }) {
+  const diagnosticTail = (value: string) => {
+    const bytes = Buffer.from(redact(value.trim()), "utf8");
+    if (bytes.length <= 4096) return bytes.toString("utf8");
+    let start = bytes.length - 4093;
+    while (((bytes[start] ?? 0) & 0xc0) === 0x80) start++;
+    return `...${bytes.subarray(start).toString("utf8")}`;
+  };
+  return `== stderr\n${diagnosticTail(output.stderr)}\n== stdout\n${diagnosticTail(output.stdout)}`;
 }
 
 async function hostNetwork(host: string) {
@@ -39,9 +51,20 @@ async function hostNetwork(host: string) {
   ].join("\n");
 }
 
-async function guestState(connection: GuestConnection, os: Environment["os"]) {
+async function guestState(
+  connection: GuestConnection,
+  os: Environment["os"],
+  preinstalled = false,
+) {
   try {
-    const result = await executeGuest(connection, os === "windows" ? powershellProbe : bashProbe, {
+    const directory = preinstalled ? preinstalledRunnerDirectory(os) : undefined;
+    const script =
+      os === "windows"
+        ? powershellProbe(
+            directory ? `'${directory}'` : "(Join-Path $env:USERPROFILE 'vectis-actions-runner')",
+          )
+        : bashProbe(directory ?? "$HOME/vectis-actions-runner");
+    const result = await executeGuest(connection, script, {
       signal: AbortSignal.timeout(probeTimeout),
       shell: os === "windows" ? "powershell" : "bash",
     });
@@ -58,10 +81,11 @@ export async function collectRunnerDiagnostics(input: {
   os: Environment["os"];
   listener: string;
   secrets: readonly string[];
+  preinstalled?: boolean;
 }) {
   const [host, guest] = await Promise.all([
     hostNetwork(input.connection.host),
-    guestState(input.connection, input.os),
+    guestState(input.connection, input.os, input.preinstalled),
   ]);
   const text = [
     `collected: ${new Date().toISOString()}`,

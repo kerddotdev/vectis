@@ -1,4 +1,5 @@
-import { runnerDistribution } from "./runner-release.js";
+import { runnerPreinstallScript } from "./provision-scripts.js";
+import { preinstalledRunnerDirectory } from "./runner-release.js";
 import { VectisError } from "../../protocol/src/index.js";
 
 export const ubuntuImage = {
@@ -14,7 +15,7 @@ export const ubuntuImage = {
 // download those at job time, and a disposable local VM should not carry them.
 const runnerPackages = [
   // vital_packages
-  "bzip2 curl g++ gcc make jq tar unzip wget",
+  "bzip2 curl g++ gcc make jq tar unzip wget zstd",
   // common_packages, without p7zip-rar, which is multiverse and non-free.
   "autoconf automake dbus dnsutils dpkg-dev fakeroot fonts-noto-color-emoji gnupg2 iproute2",
   "iputils-ping libyaml-dev libtool libssl-dev libicu-dev libgbm-dev libsqlite3-dev locales",
@@ -41,37 +42,57 @@ export function linuxSeed(input: { id: string; publicKey: string }) {
       "invalid_setup_identity",
       "Expected a generated setup identity and Ed25519 public keys.",
     );
-  const runner = runnerDistribution("linux");
   const marker = `VECTIS_PREPARED_${input.id}`;
+  const failureMarker = `VECTIS_PREPARATION_FAILED_${input.id}`;
   const network =
     'network: {version: 2, ethernets: {vectis: {match: {name: "e*"}, dhcp4: true, dhcp-identifier: mac}}}\n';
   const script = `#!/bin/bash
 set -euo pipefail
-trap 'poweroff' EXIT
+step=initialize
+completed=false
+finish() {
+  status=$?
+  trap - EXIT
+  if test "$status" -ne 0 || test "$completed" != true; then
+    printf '${failureMarker} step=%s exit=%s\\n' "$step" "$status" > /dev/hvc0
+  fi
+  poweroff || {
+    status=$?
+    printf '${failureMarker} step=poweroff exit=%s\\n' "$status" > /dev/hvc0
+  }
+  exit "$status"
+}
+trap finish EXIT
+exec > /dev/hvc0 2>&1
 test "$(uname -m)" = aarch64
 export DEBIAN_FRONTEND=noninteractive
+step=packages
 apt-get update
 apt-get install -y curl git openssh-server docker.io
 apt-get install -y --no-install-recommends ${runnerPackages}
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
-mkdir -p /opt/vectis-bootstrap
-cd /opt/vectis-bootstrap
-curl --fail --location --retry 3 --connect-timeout 15 --max-time 300 -o runner.tgz '${runner.url}'
-printf '${runner.sha256}  runner.tgz\\n' | sha256sum -c -
-tar xzf runner.tgz
-./bin/installdependencies.sh
-cd /
-rm -rf /opt/vectis-bootstrap
+step=runner-download
+runuser -l vectis -c 'bash -s' <<'VECTIS_RUNNER'
+${runnerPreinstallScript("linux", { dependencies: false })}VECTIS_RUNNER
+step=runner-dependencies
+guest_home=$(getent passwd vectis | cut -d: -f6)
+test -n "$guest_home"
+runner_target="${preinstalledRunnerDirectory("linux").replace("$HOME", "$guest_home")}"
+"$runner_target/bin/installdependencies.sh"
+chown -R vectis:vectis "$runner_target"
+step=network
 netplan generate
 test "$(docker info --format '{{.OSType}}')" = linux
+step=image-metadata
 mkdir -p /etc/vectis
 dpkg-query -W -f='\${Package}\\t\${Version}\\n' > /etc/vectis/toolchain-versions.txt
 printf '${ubuntuImage.revision}\\n' > /etc/vectis/image-revision
 # The downloaded archives go, the package lists stay: a job that runs apt-get install should not
 # have to run apt-get update first.
 apt-get clean
+step=boot-services
 install -m 0644 /opt/vectis/vectis-rosetta.service /etc/systemd/system/vectis-rosetta.service
 systemctl enable vectis-rosetta.service
 install -m 0644 /opt/vectis/vectis-instance-identity.service /etc/systemd/system/vectis-instance-identity.service
@@ -79,13 +100,16 @@ for unit in ssh.service ssh.socket; do
   mkdir -p "/etc/systemd/system/$unit.d"
   install -m 0644 /opt/vectis/vectis-identity.conf "/etc/systemd/system/$unit.d/vectis-identity.conf"
 done
+step=identity-reset
 rm -f /etc/ssh/ssh_host_* /var/lib/cloud/instance/user-data.txt /var/lib/cloud/instance/user-data.txt.i
 touch /etc/cloud/cloud-init.disabled
 printf 'uninitialized\\n' > /etc/machine-id
 printf '${marker}\\n' > /dev/hvc0
+completed=true
 `;
   return {
     marker,
+    failureMarker,
     metadata: `instance-id: ${input.id}\nlocal-hostname: vectis-linux\n`,
     network: JSON.stringify({
       version: 2,
@@ -99,6 +123,7 @@ printf '${marker}\\n' > /dev/hvc0
             name: "vectis",
             lock_passwd: true,
             shell: "/bin/bash",
+            sudo: "ALL=(ALL) NOPASSWD:ALL",
             ssh_authorized_keys: [input.publicKey.trim()],
           },
         ],

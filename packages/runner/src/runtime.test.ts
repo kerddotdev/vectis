@@ -90,6 +90,91 @@ hostTest("natural VM exit removes its disposable disk and preserves the base", a
   await expect(stat(join(home, "instances", "natural"))).rejects.toMatchObject({ code: "ENOENT" });
   expect(await readFile(environment.basePath, "utf8")).toBe("untouched-base");
 });
+hostTest.each(["linux", "macos"] as const)(
+  "%s provisioning writes in place and cleans only its supervisory directory",
+  async (os) => {
+    const { home, runtime, environment } = await fixture(
+      `const fs = require('node:fs'); const path = require('node:path'); const image = process.argv[4]; const disk = process.argv[3] === 'macos' ? path.join(image, 'disk.img') : image; fs.writeFileSync(disk, 'provisioned'); process.stdout.write('{"event":"vm.running"}\\n'); setInterval(() => {}, 1000);`,
+    );
+    const basePath = os === "macos" ? join(home, "base.bundle") : environment.basePath;
+    if (os === "macos") {
+      await mkdir(basePath);
+      await writeFile(join(basePath, "disk.img"), "parent-clone");
+    }
+    const configured = { ...environment, os, basePath };
+    const instance = await runtime.start("in-place", configured, () => {}, undefined, {
+      diskInPlace: true,
+    });
+    await runtime.stop(instance.id);
+    expect(await readFile(os === "macos" ? join(basePath, "disk.img") : basePath, "utf8")).toBe(
+      "provisioned",
+    );
+    expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+  },
+);
+hostTest(
+  "Windows in-place provisioning preserves guest writes to its disk, UEFI variables and TPM",
+  async () => {
+    const { home, runtime, environment } = await fixture("process.exit(99);");
+    const qemu = join(home, "fake-qemu.cjs");
+    const swtpm = join(home, "fake-swtpm.cjs");
+    await writeFile(
+      qemu,
+      `#!${process.execPath}
+if (process.argv.includes('-vectis-isolation-version')) { console.log('1'); process.exit(0); }
+const fs = require('node:fs');
+fs.writeFileSync('disk.qcow2', 'new-disk');
+fs.writeFileSync('uefi-vars.fd', 'new-vars');
+fs.writeFileSync('tpm/state', 'new-tpm');
+console.log(JSON.stringify({QMP:{}}));
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  const {id, execute} = JSON.parse(line);
+  if (execute === 'system_powerdown') {
+    console.log(JSON.stringify({id, return:{}}));
+    setTimeout(() => process.exit(0), 50);
+    return;
+  }
+  console.log(JSON.stringify({id, return: id === 'status' ? {running:true} : id === 'network' ? 'TCP[HOST_FORWARD] 1 127.0.0.1 12345 10.0.2.15 22 0 0' : {}}));
+});
+`,
+      { mode: 0o700 },
+    );
+    await writeFile(
+      swtpm,
+      `#!${process.execPath}\nrequire('node:net').createServer().listen('tpm.sock');`,
+      { mode: 0o700 },
+    );
+    const firmwareVarsPath = join(home, "uefi-vars.fd");
+    const tpmStatePath = join(home, "tpm");
+    await writeFile(firmwareVarsPath, "old-vars");
+    await mkdir(tpmStatePath);
+    await writeFile(join(tpmStatePath, "state"), "old-tpm");
+    const windows = new VmRuntime({ home, qemu, qemuImg: "/must-not-run-qemu-img", swtpm });
+    cleanups.push(() => windows.close());
+    const instance = await windows.start(
+      "windows-in-place",
+      {
+        ...environment,
+        os: "windows",
+        firmwarePath: join(home, "code.fd"),
+        firmwareVarsPath,
+        tpmStatePath,
+      },
+      () => {},
+      undefined,
+      { diskInPlace: true },
+    );
+    const kill = vi.spyOn(instance.process, "kill");
+    expect(await windows.requestShutdown(instance.id)).toBe(true);
+    await instance.settled;
+    expect(instance.process.exitCode).toBe(0);
+    expect(kill).not.toHaveBeenCalled();
+    expect(await readFile(environment.basePath, "utf8")).toBe("new-disk");
+    expect(await readFile(firmwareVarsPath, "utf8")).toBe("new-vars");
+    expect(await readFile(join(tpmStatePath, "state"), "utf8")).toBe("new-tpm");
+    expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+  },
+);
 hostTest("failed startup reaps the helper and removes the work disk", async () => {
   const { runtime, environment } = await fixture(
     'process.stdout.write(\'{"event":"vm.error"}\\n\'); setInterval(() => {}, 1000);',
@@ -108,6 +193,39 @@ hostTest("explicit stop waits for process exit and cleanup", async () => {
   expect(instance.process.signalCode).toBe("SIGTERM");
   expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
 });
+
+hostTest.each(["linux", "macos"] as const)(
+  "%s graceful request waits for natural exit without forcing",
+  async (os) => {
+    const { runtime, environment } = await fixture(`
+console.log(JSON.stringify({event:'vm.running'}));
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+  if (line !== 'shutdown') process.exit(97);
+  console.log(JSON.stringify({event:'vm.shutdown_requested'}));
+  setTimeout(() => process.exit(0), 50);
+});`);
+    const basePath = os === "macos" ? join(environment.basePath + ".bundle") : environment.basePath;
+    if (os === "macos") {
+      await mkdir(basePath);
+      await writeFile(join(basePath, "disk.img"), "synthetic disk");
+    }
+    const instance = await runtime.start(
+      "graceful",
+      { ...environment, os, basePath },
+      () => {},
+      undefined,
+      { diskInPlace: true },
+    );
+    const kill = vi.spyOn(instance.process, "kill");
+    expect(await runtime.requestShutdown(instance.id)).toBe(true);
+    expect(instance.process.exitCode).toBeNull();
+    await instance.settled;
+    expect(instance.process.exitCode).toBe(0);
+    expect(kill).not.toHaveBeenCalled();
+    expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+    await expect(runtime.requestShutdown(instance.id)).rejects.toMatchObject({ code: "not_owned" });
+  },
+);
 
 hostTest(
   "partial cleanup preserves exit evidence so Finder residue can be reconciled",
@@ -338,7 +456,7 @@ hostTest.each(["linux", "macos"] as const)(
       { ...environment, os, basePath },
       () => {},
       undefined,
-      { sourcePath, stopped },
+      { cacheDisk: { sourcePath, stopped } },
     );
     const args: string[] = JSON.parse(await readFile(join(home, "args.json"), "utf8"));
     expect(args.slice(-2)).toEqual(["--cache-disk", join(instance.directory, "cache.img")]);
@@ -348,5 +466,19 @@ hostTest.each(["linux", "macos"] as const)(
     expect(stopped).toHaveBeenCalledOnce();
     expect(await readFile(sourcePath, "utf8")).toBe("repository-cache");
     expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+  },
+);
+
+test.each(["linux", "macos", "windows"] as const)(
+  "%s provisioning rejects cache disks before allocating an instance directory",
+  async (os) => {
+    const { runtime, environment } = await fixture("process.exit(99);");
+    await expect(
+      runtime.start("invalid-provision", { ...environment, os }, () => {}, undefined, {
+        diskInPlace: true,
+        cacheDisk: "/unused/cache.img",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_configuration" });
+    expect(await runtime.hasWorkDirectory("invalid-provision")).toBe(false);
   },
 );

@@ -388,3 +388,25 @@ test("a running legacy runner does not block pool filling when its start leaves 
   expect(f.store.snapshot().operations.some((operation) => operation.id === start.id)).toBe(false);
   expect(f.pool.canFill(environment)).toBe(true);
 });
+
+test.each(["accepted", "running", "action_required"] as const)(
+  "%s provisioning reserves capacity and prevents warm pool startup",
+  async (status) => {
+    const f = await fixture();
+    const operation = f.store.accept("provision", "provision", "environment.provision").operation;
+    f.store.update(operation, { status });
+    if (status === "action_required")
+      f.store.put("provision", operation.id, {
+        id: operation.id,
+        environmentId: "derived",
+        directory: "/unused/derived",
+      });
+    f.pool.start();
+    expect(f.pool.canFill(environment)).toBe(false);
+    expect(runnerCapacity(f.store.snapshot(), host, { probe }).available).toBe(0);
+    expect(f.start).not.toHaveBeenCalled();
+    f.store.remove("provision", operation.id);
+    f.store.update(operation, { status: "failed" });
+    await vi.waitFor(() => expect(f.warm()).toHaveLength(2));
+  },
+);

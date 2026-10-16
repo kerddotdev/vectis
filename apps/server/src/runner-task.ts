@@ -17,6 +17,7 @@ import { collectRunnerDiagnostics } from "../../../packages/runner/src/guest-dia
 import {
   runnerInstallScript,
   runnerStartScript,
+  runnerVersion,
 } from "../../../packages/runner/src/runner-release.js";
 
 import {
@@ -149,18 +150,22 @@ export async function runRunnerTask(
     }
     connection ??= await timed("guest_ready", () => readyGuest(environment, instance, signal));
     const guest = connection;
-    const installed = await timed("runner_install", () =>
-      executeGuest(guest, runnerInstallScript(environment.os), {
-        shell,
-        signal: AbortSignal.any([signal, AbortSignal.timeout(600000)]),
-      }),
-    );
-    if (installed.exitCode !== 0)
-      throw new VectisError(
-        "runner_install_failed",
-        "The verified runner installation failed.",
-        "Inspect the base image prerequisites before starting a fresh runner.",
+    const preinstalled = environment.image?.runnerVersion === runnerVersion;
+    if (preinstalled) endPhase(beginPhase("runner_preinstalled"));
+    else {
+      const installed = await timed("runner_install", () =>
+        executeGuest(guest, runnerInstallScript(environment.os), {
+          shell,
+          signal: AbortSignal.any([signal, AbortSignal.timeout(600000)]),
+        }),
       );
+      if (installed.exitCode !== 0)
+        throw new VectisError(
+          "runner_install_failed",
+          "The verified runner installation failed.",
+          "Inspect the base image prerequisites before starting a fresh runner.",
+        );
+    }
     if (watchedControls.needed && !(await watchedControls.needed(signal)))
       throw new VectisError(
         "job_not_queued",
@@ -267,7 +272,10 @@ export async function runRunnerTask(
     const execution = await executeRunnerListener(
       connection,
       environment.os,
-      runnerStartScript(environment.os, grant.encodedConfig, grant.access, controls.cache?.sizeGiB),
+      runnerStartScript(environment.os, grant.encodedConfig, grant.access, {
+        ...(controls.cache ? { cacheSizeGiB: controls.cache.sizeGiB } : {}),
+        preinstalled,
+      }),
       listeningSignal,
       jobStarted,
       () => {
@@ -324,6 +332,7 @@ export async function runRunnerTask(
         os: environment.os,
         listener,
         secrets: [secret],
+        preinstalled: environment.image?.runnerVersion === runnerVersion,
       }).catch(() => undefined),
     });
   const cleanupResult = await timed("cleanup", async () => {

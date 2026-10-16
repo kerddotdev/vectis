@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { expect, test } from "vitest";
 import {
+  PreparationProcessError,
   preparationStopped,
   runPreparationGuest,
   runPreparationProcess,
@@ -122,6 +123,30 @@ test("failure to persist a setup event closes its owned process", () =>
     },
   ));
 
+test("other installer processes preserve their original cancellation reason", () =>
+  fixture(
+    'process.stdin.resume();process.stdin.on("end",()=>process.exit(0));process.stdout.write(\'{"event":"vm.running","macAddress":"02:11:22:33:44:55"}\\n\');',
+    async (helper, directory) => {
+      const abort = new AbortController();
+      const reason = new Error("Installer cancelled");
+      await expect(
+        runPreparationProcess(
+          {
+            helper,
+            directory,
+            id: "installer",
+            args: [],
+            marker: '"vm.running"',
+            markerStream: "stdout",
+            onRunning: () => abort.abort(reason),
+          },
+          AbortSignal.any([abort.signal, AbortSignal.timeout(3000)]),
+        ),
+      ).rejects.toBe(reason);
+      expect(await preparationStopped(directory, "installer")).toBe(true);
+    },
+  ));
+
 test("preparation logs redact credentials split across stdout and stderr chunks", () =>
   fixture(
     'process.stdout.write("token=PreparationStdoutCanary123456789\\n");process.stderr.write("Authorization: Bearer Preparation");setTimeout(()=>process.stderr.write("StderrCanary123456789\\nVECTIS_READY\\n"),10);',
@@ -152,5 +177,87 @@ test("bounded preparation output discards credential fragments without their ide
       expect(log).not.toContain("StderrCanary");
       expect(log).toContain("runner-name");
       expect(log).toContain("VECTIS_READY");
+    },
+  ));
+
+test("a split serial failure marker stops a live helper and retains bounded redacted diagnostics", () =>
+  fixture(
+    `process.stdin.resume();
+process.stdin.on("end", () => process.exit(0));
+process.stderr.write("obsolete-output\\n" + "é".repeat(5000) + "\\ntoken=FailureCanary123456789\\nVECTIS_READY\\nVECTIS_PREPARATION_");
+setTimeout(() => process.stderr.write("FAILED_setup step=runner-dependencies exit=23\\n"), 10);`,
+    async (helper, directory) => {
+      const error = await runPreparationGuest(
+        {
+          helper,
+          directory,
+          id: "setup",
+          cpu: 2,
+          memoryMiB: 2048,
+          marker: "VECTIS_READY",
+          failureMarker: "VECTIS_PREPARATION_FAILED_setup",
+        },
+        AbortSignal.timeout(3000),
+      ).catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        code: "guest_preparation_failed",
+        diagnostics: expect.stringContaining("step=runner-dependencies exit=23"),
+      });
+      if (!(error instanceof PreparationProcessError))
+        throw new Error("Missing preparation diagnostics");
+      expect(Buffer.byteLength(error.diagnostics)).toBeLessThanOrEqual(4096);
+      expect(error.diagnostics).toContain("token=[redacted]");
+      expect(error.diagnostics).not.toMatch(/FailureCanary|obsolete-output|\uFFFD/);
+      expect(await preparationStopped(directory, "setup")).toBe(true);
+    },
+  ));
+
+test("a split failure marker survives a large following serial chunk", () =>
+  fixture(
+    `process.stdin.resume();
+process.stdin.on("end", () => process.stderr.end(() => process.exit(0)));
+process.stderr.write("VECTIS_PREPARATION_");
+setTimeout(() => process.stderr.write("FAILED_setup step=packages exit=23\\n" + "output\\n".repeat(20000) + "after-failure\\n"), 10);`,
+    async (helper, directory) => {
+      await expect(
+        runPreparationGuest(
+          {
+            helper,
+            directory,
+            id: "setup",
+            cpu: 2,
+            memoryMiB: 2048,
+            marker: "VECTIS_READY",
+            failureMarker: "VECTIS_PREPARATION_FAILED_setup",
+          },
+          AbortSignal.timeout(3000),
+        ),
+      ).rejects.toMatchObject({
+        code: "guest_preparation_failed",
+        diagnostics: expect.stringContaining("after-failure"),
+      });
+      expect(await preparationStopped(directory, "setup")).toBe(true);
+    },
+  ));
+
+test("timeout retains the last serial tail and discards truncated credential fragments", () =>
+  fixture(
+    `process.stdin.resume();
+process.stdin.on("end", () => process.exit(0));
+process.stderr.write("token=" + "TimeoutFragmentCanary".repeat(5000) + "\\nAuthorization: Bearer TimeoutCanary123456789\\nvectis-provision: download stalled\\n");`,
+    async (helper, directory) => {
+      const error = await runPreparationGuest(
+        { helper, directory, id: "setup", cpu: 2, memoryMiB: 2048, marker: "VECTIS_READY" },
+        AbortSignal.timeout(1000),
+      ).catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        code: "preparation_timeout",
+        diagnostics: "Authorization: Bearer [redacted]\nvectis-provision: download stalled\n",
+      });
+      expect(await preparationStopped(directory, "setup")).toBe(true);
+      const log = await readFile(join(directory, "preparation.log"), "utf8");
+      expect(log).toContain("vectis-provision: download stalled");
+      expect(log).not.toContain("TimeoutCanary");
+      expect(log).not.toContain("TimeoutFragmentCanary");
     },
   ));

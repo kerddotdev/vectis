@@ -66,6 +66,12 @@ export const Preparation = Schema.Struct({
 });
 export type Preparation = typeof Preparation.Type;
 const WarmPoolSize = Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 4 }));
+export const EnvironmentImage = Schema.Struct({
+  parentId: Schema.optional(Identifier),
+  revision: Schema.NonEmptyString,
+  runnerVersion: Schema.optional(Schema.NonEmptyString),
+  provisionedAt: Schema.String,
+});
 export const Environment = Schema.Struct({
   id: Identifier,
   name: Schema.NonEmptyString,
@@ -88,6 +94,7 @@ export const Environment = Schema.Struct({
   firmwarePath: Schema.optional(Schema.String),
   firmwareVarsPath: Schema.optional(Schema.String),
   tpmStatePath: Schema.optional(Schema.String),
+  image: Schema.optional(EnvironmentImage),
 });
 export type Environment = typeof Environment.Type;
 export const OperationStatus = Schema.Literals([
@@ -245,6 +252,20 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("repository.disconnect"), bindingId: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.install-macos"), ...MacInstallation.fields }),
   Schema.Struct({ type: Schema.Literal("environment.prepare-linux"), ...LinuxPreparation.fields }),
+  Schema.Struct({
+    type: Schema.Literal("environment.provision"),
+    id: Identifier,
+    from: Identifier,
+    name: Schema.optional(Schema.NonEmptyString),
+    imageDirectory: Schema.NonEmptyString,
+    setupScript: Schema.optional(
+      Schema.String.check(
+        Schema.isMaxLength(65536),
+        Schema.makeFilter((script) => new TextEncoder().encode(script).length <= 65536),
+      ),
+    ),
+    runner: Schema.optional(Schema.Boolean),
+  }),
   Schema.Struct({ type: Schema.Literal("environment.resume"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.resume-macos"), id: Identifier }),
   Schema.Struct({ type: Schema.Literal("environment.open-macos-setup"), id: Identifier }),
@@ -447,6 +468,13 @@ export const capabilities = [
     activity: "intent",
     description:
       "Download and verify Ubuntu 24.04 ARM64, prepare guest SSH and Docker, and register the environment. Requires an idle Apple Silicon host and the Apple helper.",
+  },
+  {
+    name: "environment.provision",
+    kind: "command",
+    activity: "intent",
+    description:
+      "Clone a ready environment into a new absolute host image directory, preinstall the pinned runner by default, and optionally run a guest setup script. Requires an idle host. The parent stays immutable; cancellation removes owned partial output.",
   },
   {
     name: "environment.resume",

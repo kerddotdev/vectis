@@ -1,3 +1,5 @@
+import { runnerPreinstallScript } from "./provision-scripts.js";
+import { runnerVersion } from "./runner-release.js";
 import { redact } from "../../client/src/redact.js";
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
@@ -125,6 +127,8 @@ export async function installWindowsGuest(
         revision: Schema.Literal("windows-11-arm64-v1"),
         setupId: Schema.String,
         imageName: Schema.String,
+        runnerVersion: Schema.optional(Schema.String),
+        provisionedAt: Schema.optional(Schema.String),
       }),
     )(JSON.parse(completed));
     if (receipt.setupId !== setupId || receipt.imageName !== input.imageName)
@@ -140,7 +144,17 @@ export async function installWindowsGuest(
         );
     if (!(await stat(join(directory, "tpm"))).isDirectory())
       throw new VectisError("invalid_prepared_image", "Windows TPM state is missing.");
-    return windowsEnvironment(input, directory);
+    return windowsEnvironment(
+      input,
+      directory,
+      receipt.runnerVersion && receipt.provisionedAt
+        ? {
+            revision: receipt.revision,
+            runnerVersion: receipt.runnerVersion,
+            provisionedAt: receipt.provisionedAt,
+          }
+        : undefined,
+    );
   }
   if (input.memoryMiB * 1024 ** 2 > (await availableHostMemory()))
     throw new VectisError(
@@ -296,6 +310,19 @@ export async function installWindowsGuest(
         }
         if (result.exitCode === 0 && lines.at(-1)?.trim() === setupId) {
           verifyGuestReadiness(lines[0] ?? "");
+          const installed = await executeGuest(
+            connection,
+            "$ErrorActionPreference = 'Stop'\n" + runnerPreinstallScript("windows"),
+            {
+              signal: AbortSignal.any([bounded, AbortSignal.timeout(600000)]),
+              shell: "powershell",
+            },
+          );
+          if (installed.exitCode !== 0)
+            throw new VectisError(
+              "runner_install_failed",
+              "The prepared Windows runner could not be installed.",
+            );
           const shutdown = await executeGuest(connection, "shutdown.exe /s /t 3", {
             signal: AbortSignal.any([bounded, AbortSignal.timeout(15000)]),
             shell: "powershell",
@@ -315,6 +342,7 @@ export async function installWindowsGuest(
             throw new VectisError("guest_shutdown_failed", "Windows did not finish shutting down.");
           await rm(join(directory, "setup-media"), { recursive: true });
           await rm(media.iso);
+          const provisionedAt = new Date().toISOString();
           await writeFile(
             join(directory, "image.json"),
             JSON.stringify({
@@ -322,10 +350,16 @@ export async function installWindowsGuest(
               setupId,
               imageName: input.imageName,
               credentialId: media.credentialId,
+              runnerVersion,
+              provisionedAt,
             }),
             { mode: 0o600 },
           );
-          return windowsEnvironment(input, directory);
+          return windowsEnvironment(input, directory, {
+            revision: "windows-11-arm64-v1",
+            runnerVersion,
+            provisionedAt,
+          });
         }
       } catch (error) {
         if (
@@ -365,12 +399,17 @@ export async function installWindowsGuest(
   }
 }
 
-function windowsEnvironment(input: WindowsInstallation, directory: string): Environment {
+function windowsEnvironment(
+  input: WindowsInstallation,
+  directory: string,
+  image?: Environment["image"],
+): Environment {
   return {
     id: input.id,
     name: input.name,
     os: "windows",
     state: "ready",
+    ...(image ? { image } : {}),
     cpu: input.cpu,
     memoryMiB: input.memoryMiB,
     basePath: join(directory, "disk.qcow2"),
