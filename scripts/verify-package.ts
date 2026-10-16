@@ -111,9 +111,7 @@ try {
     if (status.isError) throw new Error("Packaged MCP status failed.");
     const result = Schema.decodeUnknownSync(
       Schema.Struct({ result: Schema.Struct({ machine: Snapshot.fields.machine }) }),
-    )(
-      status.structuredContent,
-    );
+    )(status.structuredContent);
     if (result.result.machine.id !== initial.machine.id || !result.result.machine.paused)
       throw new Error("Packaged MCP does not reflect the same service state.");
   } finally {
