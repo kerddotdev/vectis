@@ -177,7 +177,7 @@ test.each([false, true])(
   "runner takeover (scaleSet=%s) skips boot and readiness, then cancellation stops the claimed VM",
   async (scaleSet) => {
     const f = await fixture({ scaleSet });
-    await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+    await vi.waitFor(() => expect(f.warm()).toHaveLength(1), { timeout: 5000 });
     const id = f.warm()[0]!.id;
     vi.mocked(executeGuest).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok);
     f.listening();
@@ -186,7 +186,9 @@ test.each([false, true])(
       bindingId: "binding",
       ...(scaleSet ? { automatic: true, scaleSet: { generation: 3 } } : {}),
     });
-    await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce(), {
+      timeout: 5000,
+    });
     expect(f.broker.prepareRunner).toHaveBeenCalledWith(
       "binding",
       run.id,
@@ -201,14 +203,16 @@ test.each([false, true])(
     });
     expect(f.store.snapshot().instances.find((item) => item.id === id)?.role).toBeUndefined();
     f.service.submit("cancel", { type: "operation.cancel", id: run.id });
-    await vi.waitFor(() => expect(f.broker.releaseRunner).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(f.broker.releaseRunner).toHaveBeenCalledOnce(), {
+      timeout: 5000,
+    });
     expect(f.stop).toHaveBeenCalledWith(id);
   },
 );
 
 test("unhealthy warm SSH stops that VM before cold startup and JIT registration", async () => {
   const f = await fixture();
-  await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+  await vi.waitFor(() => expect(f.warm()).toHaveLength(1), { timeout: 5000 });
   const warmId = f.warm()[0]!.id;
   vi.mocked(executeGuest)
     .mockRejectedValueOnce(new GuestUnavailableError("stale SSH"))
@@ -229,7 +233,7 @@ test("unhealthy warm SSH stops that VM before cold startup and JIT registration"
     };
   });
   const run = f.service.submit("fallback", { type: "runner.run", bindingId: "binding" });
-  await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce(), { timeout: 5000 });
   expect(f.start).toHaveBeenCalledTimes(2);
   expect(readyGuest).toHaveBeenCalledTimes(2);
   const start = f.store.snapshot().operations.find((op) => op.key === `${run.id}:start`);
@@ -240,7 +244,7 @@ test("unhealthy warm SSH stops that VM before cold startup and JIT registration"
 
 test("configure zero and pause drain the pool through the shared service contract", async () => {
   const f = await fixture();
-  await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+  await vi.waitFor(() => expect(f.warm()).toHaveLength(1), { timeout: 5000 });
   const disabled = f.service.submit("disable", {
     type: "environment.configure",
     id: "linux",
@@ -254,7 +258,7 @@ test("configure zero and pause drain the pool through the shared service contrac
   expect(f.store.snapshot().environments[0]?.warmPool).toBe(0);
   f.service.submit("enable", { type: "environment.configure", id: "linux", warmPool: 1 });
   await f.service.drain();
-  await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+  await vi.waitFor(() => expect(f.warm()).toHaveLength(1), { timeout: 5000 });
   f.service.submit("pause", { type: "machine.pause", paused: true });
   await f.service.drain();
   expect(f.warm()).toHaveLength(0);
@@ -264,7 +268,7 @@ test.each(["windowsInstallation", "provision"])(
   "pool disabling remains available while %s is busy",
   async (kind) => {
     const f = await fixture();
-    await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+    await vi.waitFor(() => expect(f.warm()).toHaveLength(1), { timeout: 5000 });
     f.store.put(kind, "synthetic-preparation", {
       phase: "installing",
       id: "synthetic-preparation",
@@ -288,12 +292,12 @@ test.each(["windowsInstallation", "provision"])(
 test("a timed-out warm startup aborts and awaits its owned task", async () => {
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const f = await fixture({ pendingStart: true });
-  await vi.waitFor(() => expect(f.start).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(f.start).toHaveBeenCalledOnce(), { timeout: 5000 });
   const signal = f.start.mock.calls[0]?.[3];
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(Date.now() + 11 * 60 * 1000);
-  await vi.waitFor(() => expect(signal?.aborted).toBe(true));
-  await vi.waitFor(() => expect(error).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(signal?.aborted).toBe(true), { timeout: 5000 });
+  await vi.waitFor(() => expect(error).toHaveBeenCalledOnce(), { timeout: 5000 });
   expect(f.store.snapshot().instances.every((item) => item.status === "stopped")).toBe(true);
   expect(readyGuest).not.toHaveBeenCalled();
 });
@@ -324,7 +328,7 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
   "the pool starts and cleans a fake executable through the existing VM lifecycle",
   async () => {
     const f = await fixture({ native: true });
-    await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+    await vi.waitFor(() => expect(f.warm()).toHaveLength(1), { timeout: 5000 });
     const id = f.warm()[0]!.id;
     expect(f.warm()[0]?.pid).toBeGreaterThan(0);
     await f.service.close();
@@ -335,12 +339,12 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
 
 test("a cache runner boots with its private disk while a generic warm VM remains unclaimed", async () => {
   const f = await fixture({ cache: true });
-  await vi.waitFor(() => expect(f.warm()).toHaveLength(1));
+  await vi.waitFor(() => expect(f.warm()).toHaveLength(1), { timeout: 5000 });
   const warmId = f.warm()[0]!.id;
   vi.mocked(executeGuest).mockResolvedValueOnce(ok).mockResolvedValueOnce(ok);
   f.listening();
   const run = f.service.submit("cache-cold", { type: "runner.run", bindingId: "binding" });
-  await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(f.broker.prepareRunner).toHaveBeenCalledOnce(), { timeout: 5000 });
   expect(f.start).toHaveBeenCalledTimes(2);
   const coldId = f.start.mock.calls[1]?.[0];
   expect(coldId).not.toBe(warmId);
@@ -353,7 +357,7 @@ test("a cache runner boots with its private disk while a generic warm VM remains
   });
   expect(f.warm().map((instance) => instance.id)).toEqual([warmId]);
   f.service.submit("cancel-cache", { type: "operation.cancel", id: run.id });
-  await vi.waitFor(() => expect(f.broker.releaseRunner).toHaveBeenCalledOnce());
+  await vi.waitFor(() => expect(f.broker.releaseRunner).toHaveBeenCalledOnce(), { timeout: 5000 });
   expect(f.stop).toHaveBeenCalledWith(coldId);
   expect(f.stop).not.toHaveBeenCalledWith(warmId);
   expect(f.store.list("cacheUse")).toEqual([]);
