@@ -39,6 +39,31 @@ Every runner is drained after 5 minutes of inactivity if its requested job no lo
 
 A locally listening runner that GitHub reports offline or missing for 2 consecutive minutes is stopped with retryable failure code `runner_offline`. Continuous status read failures for 15 minutes trigger the same recovery. Cleanup must be confirmed before the operation ends; unconfirmed cleanup stays `action_required`.
 
+## Read phase timings
+
+Inspect a runner with `vectis operation get <operation-id> --json`, or use `vectis activity get <activity-id> --json` to include its child operations. The runner operation's `result.phases` retains phase timestamps as `stage` changes. CLI output is always JSON; `--json` makes it compact. MCP `vectis_operation`, `vectis_activity` and `vectis_status` return the same data, locally and through remote inspection.
+
+Each phase has a `name`, an ISO UTC `startedAt`, and an optional `endedAt`. Subtract the timestamps to get its duration: `00:00:00.000Z` to `00:00:12.300Z` is 12.3 seconds. A closed phase measures an attempt, including a failed or cancelled one; use the operation status to determine its outcome. A missing end means the phase is still running or was interrupted before its end was recorded. Older operations may have no phases.
+
+| Phase                      | Measured interval                                                                                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `queued_locally`           | Local operation acceptance to lifecycle task start, including local admission checks. This excludes waiting in GitHub or the cloud.                            |
+| `job_check`                | One check that the requested job still needs capacity, before startup, before registration, or while idle.                                                     |
+| `vm_start`                 | The `environment.start` child, including validation, cloning and spawning, until it confirms the VM is running.                                                |
+| `vm_start_and_guest_ready` | Rosetta startup, including guest address discovery, pinned SSH readiness, clock and architecture checks, and Rosetta verification inside `environment.start`.  |
+| `guest_ready`              | Guest readiness and the pinned SSH connection. After `vm_start_and_guest_ready`, this is a readiness recheck; the initial wait is already included in startup. |
+| `runner_install`           | Downloading, verifying and extracting the runner.                                                                                                              |
+| `registration`             | Preparing the GitHub JIT registration and validating its grant.                                                                                                |
+| `waiting_for_job`          | Registration end to the guest's job-started hook timestamp, or listener exit if no job is observed.                                                            |
+| `job`                      | The guest's job-started hook timestamp until the guest listener exits.                                                                                         |
+| `cleanup`                  | Stopping the VM and releasing the runner, including registration reconciliation attempted by this task. Later recovery retries are not included.               |
+
+The protocol also accepts `runner_preinstalled` for a future installation-skip marker; current runners record `runner_install`. After policy verification, the guest job-started hook atomically writes epoch milliseconds to `vectis-actions-runner/_vectis/job-started`. The existing policy gate poll reads it every 10 seconds and once after listener exit, without adding guest connections. A late marker corrects an earlier busy observation, including for short jobs that finish between polls. Guest readiness verifies clock skew is within 60 seconds; the hook timestamp is clamped between registration end and observation time, capped at listener exit when already known.
+
+If the marker is missing, invalid or unreadable, job timing falls back to GitHub's busy-status poll, normally every 30 seconds. That fallback uses the host's observation time and can miss short jobs. Bash uses GNU `date` milliseconds or Perl `Time::HiRes` on macOS; a timestamp failure leaves the policy decision unchanged and uses the busy fallback. Windows uses PowerShell 5.1-compatible .NET timestamp and file APIs. The measured start is the hook boundary, and the end is listener exit, including runner teardown. Clock skew still affects guest timestamps; never infer job success or an exact GitHub queue duration from these timings.
+
+History is bounded to 16 entries. When idle checks repeat, the oldest completed `job_check` entries are removed to preserve startup and cleanup. Idle checks overlap `waiting_for_job` or `job`; do not sum overlapping phases as total elapsed time.
+
 ## Read job results
 
 A runner operation that succeeded means the VM ran and was cleaned up. It does not say whether the job passed. The job's result comes from GitHub:

@@ -17,9 +17,12 @@ test("jobs keep the guest umask while the assignment gate stays private", async 
   const home = await mkdtemp(join(tmpdir(), "vectis-runner-umask-"));
   try {
     await mkdir(join(home, "vectis-actions-runner/bin"), { recursive: true });
+    await mkdir(join(home, "vectis-actions-runner/_vectis"), { recursive: true });
+    await writeFile(join(home, "vectis-actions-runner/_vectis/job-started"), "1234\n");
+    await writeFile(join(home, "vectis-actions-runner/_vectis/job-started.tmp"), "1234\n");
     await writeFile(
       join(home, "vectis-actions-runner/bin/Runner.Listener"),
-      "#!/bin/bash\numask\n",
+      '#!/bin/bash\ntest ! -e "$HOME/vectis-actions-runner/_vectis/job-started" || exit 99\ntest ! -e "$HOME/vectis-actions-runner/_vectis/job-started.tmp" || exit 99\numask\n',
       {
         mode: 0o700,
       },

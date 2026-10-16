@@ -29,6 +29,8 @@ vectis logs --lines 200 --json
 
 Displayed logs, stored operation details and retained runner and preparation diagnostics redact recognized credentials.
 
+For slow runners, inspect `result.phases` on the runner operation, either directly or inside `vectis activity get <activity-id> --json`. Compare `vm_start`, `guest_ready`, `runner_install` and `registration` to find startup costs; `cleanup` measures the stop and release attempt. Each duration is `endedAt - startedAt`. A missing end is still running or interrupted, and older records may omit phases. Job timing starts at the first GitHub busy observation, normally polled every 30 seconds, so short jobs can be missed. These local timings do not measure the full GitHub queue. See [Read phase timings](/docs/guides/runners#read-phase-timings) for the complete phase list, overlap and retention rules.
+
 The app shows the same in **Overview** and the service log in **Diagnostics**. `action_required` means completion is unconfirmed; follow its `nextStep`. Runner cleanup may still be retried automatically.
 
 GitHub reads, runner deletion and installation token creation retry transient failures up to four attempts within a 45-second budget per request. Retries respect GitHub rate limit headers. `github_unavailable` means GitHub remained unavailable; `github_rate_limited` means the rate limit could not be cleared within that budget. Wait and retry. Side-effecting POST requests are never automatically retried; an ambiguous run command keeps `run_command_unconfirmed`, and an ambiguous runner registration still requires reconciliation.

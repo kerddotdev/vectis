@@ -183,6 +183,17 @@ test.skipIf(process.platform !== "darwin" || process.arch !== "arm64").each([
       expect(broker.releaseRunner).toHaveBeenCalledTimes(phase === "starting" ? 0 : 1);
       expect(store.snapshot().instances).toHaveLength(1);
       const snapshot = store.snapshot();
+      expect(snapshot.operations.find((item) => item.id === run.id)?.result).toMatchObject({
+        phases: expect.arrayContaining([
+          expect.objectContaining({
+            name: "queued_locally",
+            startedAt: run.createdAt,
+            endedAt: expect.any(String),
+          }),
+          expect.objectContaining({ name: "vm_start", endedAt: expect.any(String) }),
+          expect.objectContaining({ name: "cleanup", endedAt: expect.any(String) }),
+        ]),
+      });
       expect(snapshot.activities).toHaveLength(1);
       expect(snapshot.activities?.[0]?.subject).not.toHaveProperty("actualJob");
       expect(snapshot.activities?.[0]).toMatchObject({

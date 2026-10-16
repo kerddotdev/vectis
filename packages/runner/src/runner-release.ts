@@ -78,6 +78,7 @@ ${policy}'@ | Set-Content -LiteralPath (Join-Path $gate 'policy') -Encoding utf8
 ${powershellJobStartedHook()}'@ | Set-Content -LiteralPath (Join-Path $gate 'job-started.ps1') -Encoding utf8
 $rejected = Join-Path $gate 'assignment-rejected'
 Remove-Item -LiteralPath $rejected -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $gate 'job-started'), (Join-Path $gate 'job-started.tmp') -ErrorAction SilentlyContinue
 $env:ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE = '1'
 $env:ACTIONS_RUNNER_HOOK_JOB_STARTED = Join-Path $gate 'job-started.ps1'
 Set-Location (Join-Path $env:USERPROFILE 'vectis-actions-runner')
@@ -96,7 +97,7 @@ ${policy}VECTIS_POLICY
 cat > "$gate/job-started.sh" <<'VECTIS_HOOK'
 ${bashJobStartedHook()}VECTIS_HOOK
 chmod 700 "$gate/job-started.sh"
-rm -f "$gate/assignment-rejected"
+rm -f "$gate/assignment-rejected" "$gate/job-started" "$gate/job-started.tmp"
 export ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE=1
 export ACTIONS_RUNNER_HOOK_JOB_STARTED="$gate/job-started.sh"
 umask "$job_umask"

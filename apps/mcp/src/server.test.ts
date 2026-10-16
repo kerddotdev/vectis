@@ -9,6 +9,71 @@ import { startService } from "../../server/src/http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { VectisError } from "../../../packages/protocol/src/index.js";
 import { activityFor } from "../../server/src/activities.js";
+import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
+
+test("MCP detail reads preserve runner phases while status stays compact", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mcp-phases-"));
+  const service = await startService({ home });
+  const api = new VectisClient(service.connection);
+  const server = createMcpServer(async () => api);
+  const client = new Client({ name: "phase-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    const command = { type: "runner.run", bindingId: "binding" } as const;
+    const operation = service.store.accept(
+      "runner",
+      "runner",
+      command.type,
+      activityFor("runner", command),
+      "runner",
+    ).operation;
+    const result: RunnerProgress = {
+      bindingId: "binding",
+      environmentId: "linux",
+      leaseKey: operation.id,
+      stage: "finished",
+      phases: [{ name: "vm_start", startedAt: operation.createdAt, endedAt: operation.createdAt }],
+    };
+    service.store.update(operation, { status: "succeeded", result });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    expect(
+      await client.callTool({ name: "vectis_operation", arguments: { id: operation.id } }),
+    ).toMatchObject({
+      content: [],
+      structuredContent: { result: { result } },
+    });
+    expect(
+      await client.callTool({ name: "vectis_activity", arguments: { id: "runner" } }),
+    ).toMatchObject({
+      content: [],
+      structuredContent: { result: { operations: [expect.objectContaining({ result })] } },
+    });
+    const status = await client.callTool({ name: "vectis_status", arguments: {} });
+    expect(status.isError).not.toBe(true);
+    expect(status.content).toEqual([]);
+    expect(status).toHaveProperty("structuredContent.result.operations", [
+      {
+        id: operation.id,
+        activityId: "runner",
+        command: "runner.run",
+        status: "succeeded",
+        updatedAt: expect.any(String),
+        message: expect.any(String),
+      },
+    ]);
+    expect(JSON.stringify(status)).not.toContain('"phases"');
+    expect(status).toHaveProperty(
+      "structuredContent.result.details",
+      expect.stringContaining("vectis_operation"),
+    );
+  } finally {
+    await client.close();
+    await server.close();
+    await service.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("MCP discovers and executes the same authenticated commands as the CLI client", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-mcp-"));
