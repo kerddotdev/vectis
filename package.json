@@ -51,7 +51,7 @@
     "package:verify-runtime-sources": "pnpm build && node dist/scripts/verify-runtime-sources.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.31.0",
+    "@modelcontextprotocol/sdk": "1.32.0",
     "convex": "1.46.0",
     "effect": "4.0.0-rc.117",
     "electron-updater": "6.8.9",
