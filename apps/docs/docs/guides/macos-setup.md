@@ -3,19 +3,19 @@ title: Install a macOS guest
 description: Restore macOS into an owned local bundle and open its setup console.
 ---
 
-Vectis downloads macOS 26.6.2 (build 25G83) directly from Apple and verifies its pinned SHA-256 and exact size before installation. The selected revision does not change when Apple publishes a new major release. You can instead supply an existing Apple macOS 26 IPSW. The Apple virtualization helper checks host and restore-image compatibility. Guest SSH enrollment uses a generated local connection script and explicit guest verification. Xcode is not installed implicitly.
+Vectis downloads macOS 27.0.1 (build 26A434) directly from Apple and verifies its pinned SHA-256 and exact size before installation. The selected revision does not change when Apple publishes a new release. You can instead supply an existing Apple macOS 26 or 27 IPSW. A macOS 27 guest needs a host running macOS 27 or later; the Apple virtualization helper checks host and restore-image compatibility. Guest SSH enrollment uses a generated local connection script and explicit guest verification. Xcode is not installed implicitly.
 
-Choose existing image and disposable VM directories. The image volume needs at least 60 GiB free for automatic download and installation, or 40 GiB with an existing IPSW. Stop existing VMs and resolve interrupted runner operations first. The installer uses a new bundle; it never replaces a registered base image.
+Choose existing image and disposable VM directories. The image volume needs at least 70 GiB free for automatic download and installation, or 40 GiB with an existing IPSW. Stop existing VMs and resolve interrupted runner operations first. The installer uses a new bundle; it never replaces a registered base image.
 
 ```sh
-vectis environment install-macos macos-26-arm64 \
+vectis environment install-macos macos-27-arm64 \
   --image-directory /absolute/path/to/images \
   --storage-path /absolute/path/to/vms \
   --cpu 2 --memory-mib 4096 --disk-gib 64 --json
 vectis operation wait <operation-id> --timeout 3600000 --json
 ```
 
-For existing media, add `--restore-path /absolute/path/to/restore.ipsw`. In desktop **Environments > Prepare a guest image**, select **macOS 26 ARM64**. Leave the optional restore path empty to download, or choose an existing image. CLI, desktop and MCP all use the same durable service operation. Closing the desktop does not cancel installation.
+For existing media, add `--restore-path /absolute/path/to/restore.ipsw`. In desktop **Environments > Prepare a guest image**, select **macOS 27 ARM64**. Leave the optional restore path empty to download, or choose an existing image. CLI, desktop and MCP all use the same durable service operation. Closing the desktop does not cancel installation.
 
 A completed restore reports `action_required`, a `setupId` and the installed bundle path. This means the operating system is installed, not that a runner is ready.
 
@@ -43,7 +43,7 @@ After the script finishes, choose **Verify guest SSH**, or run:
 vectis environment verify-macos-guest <setup-id> --wait --json
 ```
 
-Verification checks the pinned SSH connection, ARM64 architecture, clock synchronization, macOS 26, guest FileVault being off, and the guest's developer toolchain. Successful verification still returns `action_required`: shut down the guest from its Apple menu, then choose **Finish macOS setup**, or run:
+Verification checks the pinned SSH connection, ARM64 architecture, clock synchronization, macOS 26 or 27, guest FileVault being off, and the guest's developer toolchain. Successful verification still returns `action_required`: shut down the guest from its Apple menu, then choose **Finish macOS setup**, or run:
 
 ```sh
 vectis environment finish-macos-setup <setup-id> --wait --json
@@ -64,6 +64,31 @@ A macOS guest is whatever you install in its setup console. Vectis restores Appl
 One thing is not optional. Without a developer toolchain the guest has no working `git`, so `actions/checkout` fails on its first step and almost no workflow gets further. Verification refuses such a guest and tells you what to install. While the setup console is open, either run `xcode-select --install` for Apple's Command Line Tools, which bring `git`, `clang`, `make` and the macOS SDK, or install the full Xcode and open it once to accept its license. Jobs that build with Xcode, sign, or need a specific Xcode version need the full install, not the Command Line Tools.
 
 Everything else follows the same rule as the other guests: `actions/setup-*` actions download toolchains at job time, and anything your jobs always need, such as Homebrew formulas or a specific Ruby, can be installed once into a [derived environment](/docs/guides/environments) with `environment.provision`, or installed in a workflow step.
+
+## Guest TLS trust
+
+In October 2026 the private keys of eight eMudhra intermediate certificate authorities were found to be recoverable. Their chains end at the `emSign ECC Root CA - G3` root and, through Sectigo cross-signatures, at `AAA Certificate Services`. Browsers block these chains, but Apple's `curl` and `git` read `/etc/ssl/cert.pem` and check neither revocation nor Certificate Transparency. On macOS 27.2 both still accepted the compromised chains on 2026-10-21.
+
+Until Apple updates that file, remove the two roots from it inside the guest while its setup console is open, before you finish setup. This changes only the guest, never the host. The Mozilla bundle that `curl` publishes no longer contains either root.
+
+```sh
+set -euo pipefail
+work=$(mktemp -d)
+awk -v dir="$work" '/-----BEGIN CERTIFICATE-----/ { n++; file = sprintf("%s/%04d.crt", dir, n) } file { print > file } /-----END CERTIFICATE-----/ { close(file); file = "" }' /etc/ssl/cert.pem
+: > "$work/cert.pem"
+for cert in "$work"/*.crt; do
+  case "$(/usr/bin/openssl x509 -in "$cert" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':')" in
+    86A1ECBA089C4A8D3BBE2734C612BA341D813E043CF9E8A862CD5C57A36BBE6B | D7A7A0FB5D7E2731D771E9484EBCDEF71D5F0C3E0A2948782BC83EE0EA699EF4)
+      /usr/bin/openssl x509 -in "$cert" -noout -subject ;;
+    *) cat "$cert" >> "$work/cert.pem" ;;
+  esac
+done
+sudo cp /etc/ssl/cert.pem /etc/ssl/cert.pem.before-emudhra
+sudo install -m 0644 "$work/cert.pem" /etc/ssl/cert.pem
+rm -rf "$work"
+```
+
+The loop prints the two removed subjects. Afterwards `curl https://dv-g3b-emudhra.we-have-a-problem.com/` fails with a certificate error, and `curl https://github.com/` still succeeds. Apps that use Apple's system trust instead of this file depend on Apple's own block.
 
 ## Interruption and recovery
 
@@ -92,7 +117,7 @@ Use [environment provisioning](/docs/guides/environments) to create a new `base.
 
 Provisioning uses this bounded shutdown sequence instead of the virtual power button, which can open a confirmation dialog in a logged-in macOS session:
 
-1. Over SSH as the guest user, run `osascript -e 'tell application "loginwindow" to «event aevtshut»'`, then wait up to 60 seconds for the VM to stop. Apple's SDK identifies `shut` as `kAEShutDown`; `rsdn` is `kAEShowShutdownDialog` and would request confirmation. The command does not invoke sudo. [Apple documents the loginwindow shutdown event](https://developer.apple.com/library/archive/qa/qa1134/_index.html), but whether macOS 26 accepts it from the SSH session without Automation/TCC consent has not been verified. Guest applications can also cancel shutdown.
+1. Over SSH as the guest user, run `osascript -e 'tell application "loginwindow" to «event aevtshut»'`, then wait up to 60 seconds for the VM to stop. Apple's SDK identifies `shut` as `kAEShutDown`; `rsdn` is `kAEShowShutdownDialog` and would request confirmation. The command does not invoke sudo. [Apple documents the loginwindow shutdown event](https://developer.apple.com/library/archive/qa/qa1134/_index.html), but whether macOS 26 and 27 accept it from the SSH session without Automation/TCC consent has not been verified. Guest applications can also cancel shutdown.
 2. If the VM is still running and `sudo -n true` succeeds, run `sudo -n /sbin/shutdown -h now` and wait up to another 60 seconds. SSH enrollment does not grant passwordless sudo, and provisioning never prompts for a password.
 3. If the guest remains running, complete two separate `sync` commands over SSH, wait 5 seconds, then force-stop the owned provisioning VM through the Apple helper. Each SSH command and helper stop has a 30-second limit. A failed or timed-out sync prevents image registration; failed or cancelled provisioning removes its partial output after confirmed VM cleanup. Unconfirmed cleanup requires inspection.
 

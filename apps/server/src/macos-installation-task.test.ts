@@ -3,7 +3,8 @@ import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+import * as macInstallation from "../../../packages/runner/src/macos-installation.js";
 import { Store } from "./store.js";
 import {
   hasUnconfirmedMacInstallation,
@@ -194,5 +195,76 @@ test("a service restart preserves a macOS download source without requiring a VM
     });
   } finally {
     store.close();
+  }
+});
+
+test("resuming a persisted macOS 26 download keeps its original artifact after the default pin changes", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mac-resume-"));
+  const store = new Store(":memory:");
+  const service = new Service(
+    store,
+    new VmRuntime({ home, appleHelper: join(home, "synthetic-helper") }),
+  );
+  const source = {
+    directory: join(home, "restore"),
+    owner: "setup",
+    artifact: {
+      url: "https://updates.cdn-apple.com/2026SummerFCS/fullrestores/140-75212/A2A24B94-1FC1-45A3-93F7-C51B02AF1F4D/UniversalMac_26.6.2_25G83_Restore.ipsw",
+      sha256: "885503b7f4b06609e9a512f2befd40f59730640a3f1233e3892d60affdd51c95",
+      bytes: 19772231540,
+    },
+  };
+  const validate = vi.spyOn(macInstallation, "validateMacInstallation").mockResolvedValue();
+  const install = vi.spyOn(macInstallation, "installMacGuest").mockResolvedValue({
+    bundle: join(home, "base.bundle"),
+    build: "25G83",
+  });
+  try {
+    store.put("macInstallation", "setup", {
+      id: "setup",
+      attemptId: "old-attempt",
+      directory: join(home, "old-attempt"),
+      phase: "downloading",
+      restoreDownload: source,
+      configuration: {
+        id: "mac",
+        name: "Mac",
+        cpu: 2,
+        memoryMiB: 4096,
+        diskGiB: 64,
+        imageDirectory: home,
+        storagePath: home,
+      },
+    });
+    const operation = service.submit("resume-old-download", {
+      type: "environment.resume-macos",
+      id: "setup",
+    });
+    await service.drain();
+    expect(validate).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "mac" }),
+      join(home, "synthetic-helper"),
+      source,
+    );
+    expect(install).toHaveBeenCalledWith(
+      expect.objectContaining({ id: "mac" }),
+      join(home, "synthetic-helper"),
+      expect.any(String),
+      operation.id,
+      expect.any(AbortSignal),
+      source,
+      expect.any(Function),
+    );
+    expect(store.get("macInstallation", "setup")).toMatchObject({
+      phase: "setup_required",
+      build: "25G83",
+      restoreDownload: source,
+    });
+  } finally {
+    await service.close();
+    validate.mockRestore();
+    install.mockRestore();
+    store.close();
+    await rm(home, { recursive: true, force: true });
   }
 });
