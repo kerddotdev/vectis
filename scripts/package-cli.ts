@@ -41,10 +41,12 @@ const cloud = resolveCloudDeployment({
   environment: process.env,
   local: readLocalEnvironment(root, flavor),
 });
+const nodeVersion = "24.22.1";
+const nodeDirectory = `node-v${nodeVersion}-darwin-arm64`;
 const nodeSource = {
-  url: "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.gz",
-  sha256: "bed7eea5325e1108f32ce5228ddd6a5f0f08a499ee42aa7442aea583702f6057",
-  bytes: 52909993,
+  url: `https://nodejs.org/dist/v${nodeVersion}/${nodeDirectory}.tar.gz`,
+  sha256: "89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7",
+  bytes: 53062778,
 };
 async function run(executable: string, args: string[]) {
   await new Promise<void>((done, reject) => {
@@ -74,7 +76,7 @@ await mkdir(binaries);
 await mkdir(runtime);
 const cache = join(root, ".vectis", "build-cache");
 await mkdir(cache, { recursive: true, mode: 0o700 });
-const archive = join(cache, "node-v24.21.0-darwin-arm64.tar.gz");
+const archive = join(cache, `${nodeDirectory}.tar.gz`);
 await downloadArtifact(nodeSource, archive, AbortSignal.timeout(300000));
 await run("/usr/bin/tar", [
   "-xzf",
@@ -82,8 +84,8 @@ await run("/usr/bin/tar", [
   "-C",
   runtime,
   "--strip-components=1",
-  "node-v24.21.0-darwin-arm64/bin/node",
-  "node-v24.21.0-darwin-arm64/LICENSE",
+  `${nodeDirectory}/bin/node`,
+  `${nodeDirectory}/LICENSE`,
 ]);
 for (const helper of ["vectis-vm", "vectis-keychain"]) {
   const destination = join(runtime, helper);

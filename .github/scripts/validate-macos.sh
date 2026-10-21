@@ -8,7 +8,7 @@ xcrun --sdk macosx --show-sdk-path
 xcrun --find notarytool
 xcrun --find stapler
 command -v codesign
-test "$(node --version)" = v24.21.0
+test "$(node --version)" = v24.22.1
 test "$(pnpm --version)" = 10.24.0
 swift build --package-path native/apple --configuration release
 

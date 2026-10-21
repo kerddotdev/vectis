@@ -460,7 +460,7 @@ export const capabilities = [
     kind: "command",
     activity: "intent",
     description:
-      "Install an Apple macOS 26 IPSW into a new owned bundle. Requires an idle Apple Silicon host. Downloads pinned Apple media unless a local restore image is supplied. Finishes with Setup Assistant action required; does not mark a runner ready.",
+      "Install an Apple macOS 27 IPSW into a new owned bundle. Requires an idle Apple Silicon host. Downloads pinned Apple media unless a local restore image is supplied. Finishes with Setup Assistant action required; does not mark a runner ready.",
   },
   {
     name: "environment.prepare-linux",

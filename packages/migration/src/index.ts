@@ -172,6 +172,7 @@ export function previewMigration(
           "macos-14",
           "macos-15",
           "macos-26",
+          "macos-27",
           "macos-latest",
         ].includes(label)
       ) {

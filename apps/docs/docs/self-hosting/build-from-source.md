@@ -3,7 +3,7 @@ title: Build from source
 description: Build Vectis from a checkout, run an isolated development service, and configure native helpers.
 ---
 
-Use Node.js 24.21 or newer within the Node 24 release line, and pnpm 10.24.0. Native VM execution requires an Apple Silicon Mac. To use Vectis rather than develop it, [install the app](/docs/get-started/install) instead.
+Use Node.js 24.22.1 or newer within the Node 24 release line, and pnpm 10.24.0. Native VM execution requires an Apple Silicon Mac. To use Vectis rather than develop it, [install the app](/docs/get-started/install) instead.
 
 ## Development builds
 

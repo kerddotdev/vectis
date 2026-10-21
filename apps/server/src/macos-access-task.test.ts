@@ -8,7 +8,7 @@ import { completedMacEnvironment, verifyMacSetupOutput } from "./macos-access-ta
 const tools =
   "/Applications/Xcode.app/Contents/Developer|git version 2.50.1|Apple clang version 17.0.0|swift-driver version: 1.127";
 
-test("macOS readiness rejects encrypted guests, wrong versions, architecture and clock drift", () => {
+test("macOS readiness rejects encrypted guests, wrong architecture and clock drift", () => {
   const now = Math.floor(Date.now() / 1000);
   expect(() =>
     verifyMacSetupOutput(`arm64 ${now}\nFileVault is Off.\n26.6.2\n${tools}\n`),
@@ -16,14 +16,30 @@ test("macOS readiness rejects encrypted guests, wrong versions, architecture and
   expect(() => verifyMacSetupOutput(`arm64 ${now}\nFileVault is On.\n26.6.2\n${tools}\n`)).toThrow(
     "Guest FileVault",
   );
-  expect(() => verifyMacSetupOutput(`arm64 ${now}\nFileVault is Off.\n27.0\n${tools}\n`)).toThrow(
-    "macOS 26",
-  );
   expect(() =>
     verifyMacSetupOutput(`x86_64 ${now}\nFileVault is Off.\n26.6.2\n${tools}\n`),
   ).toThrow("ARM64");
   expect(() => verifyMacSetupOutput(`arm64 1\nFileVault is Off.\n26.6.2\n${tools}\n`)).toThrow(
     "clock",
+  );
+});
+
+test.each(["26.6.2", "27.0.1"])("macOS readiness accepts a %s guest", (version) => {
+  const now = Math.floor(Date.now() / 1000);
+  expect(() =>
+    verifyMacSetupOutput(`arm64 ${now}\nFileVault is Off.\n${version}\n${tools}\n`),
+  ).not.toThrow();
+});
+
+test.each(["25.6.2", "28.0.1"])("macOS readiness rejects a %s guest", (version) => {
+  const now = Math.floor(Date.now() / 1000);
+  expect(() =>
+    verifyMacSetupOutput(`arm64 ${now}\nFileVault is Off.\n${version}\n${tools}\n`),
+  ).toThrowError(
+    expect.objectContaining({
+      code: "guest_os_version",
+      message: "This setup requires a macOS 26 or 27 guest.",
+    }),
   );
 });
 

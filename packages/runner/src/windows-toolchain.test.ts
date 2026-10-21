@@ -51,6 +51,21 @@ test("Windows tooling pins official ARM64 installers and the emulated x64 zstd r
   expect(script).toContain("$binaries.Count -ne 1");
 });
 
+test("Windows Git uses and verifies the Windows certificate store even without reinstalling", () => {
+  const script = windowsToolchainScript();
+  const afterInstall = script.slice(script.indexOf("Write-Output 'vectis-provision: git-verify'"));
+  expect(afterInstall).toContain("& $gitExe config --system http.sslBackend schannel");
+  expect(afterInstall).toContain(
+    "if ($LASTEXITCODE -ne 0) { throw 'Git Windows certificate store configuration failed.' }",
+  );
+  expect(afterInstall).toContain(
+    "Get-VectisToolVersion $gitExe @('config', '--system', '--get', 'http.sslBackend')",
+  );
+  expect(afterInstall).toContain(
+    "if ($gitSslBackend -ne 'schannel') { throw 'Git must use the Windows certificate store (schannel).' }",
+  );
+});
+
 test("Windows provisioning verifies effective security settings and records protected services", () => {
   const script = windowsToolchainScript();
   for (const step of [

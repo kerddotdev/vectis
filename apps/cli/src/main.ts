@@ -192,7 +192,7 @@ Environments
                                [--name <name>] [--setup-script <file>] [--no-runner]
   environment prepare-linux <id>  Prepare Ubuntu 24.04 with --image-directory and --storage-path
   environment resume <setup-id>   Continue an interrupted Ubuntu preparation
-  environment install-macos <id>  Install macOS 26 with --image-directory and --storage-path, optional --restore-path
+  environment install-macos <id>  Install macOS 27 with --image-directory and --storage-path, optional --restore-path
   environment open-macos-setup <setup-id>     Open the guest console for Setup Assistant
   environment connect-macos-guest <setup-id>  Prepare guest SSH enrollment, optional --open-terminal
   environment verify-macos-guest <setup-id>   Verify guest SSH and unattended startup prerequisites
@@ -230,7 +230,7 @@ Options
   --repository <owner/name>     Filter activities by repository
   --wait                        Wait for the operation's terminal state (automatic for setting commands)
   --timeout <milliseconds>      Wait timeout (default: 120000)
-  --name <text>                 Environment or login name (defaults: Ubuntu 24.04 ARM64, macOS 26 ARM64,
+  --name <text>                 Environment or login name (defaults: Ubuntu 24.04 ARM64, macOS 27 ARM64,
                                 Windows 11 ARM64, Vectis CLI)
   --image-directory <path>      Existing directory for prepared base images
   --storage-path <path>         Directory for VM clones
@@ -762,7 +762,7 @@ Documentation: https://vectis.kerd.dev/docs
     request = decodeCommand({
       type: "environment.install-macos",
       id,
-      name: values.name ?? "macOS 26 ARM64",
+      name: values.name ?? "macOS 27 ARM64",
       restorePath: values["restore-path"],
       imageDirectory: values["image-directory"],
       storagePath: values["storage-path"],

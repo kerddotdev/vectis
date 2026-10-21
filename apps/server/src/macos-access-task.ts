@@ -6,6 +6,7 @@ import {
   type Environment,
   type Operation,
 } from "../../../packages/protocol/src/index.js";
+import { supportedMacGuestMajors } from "../../../packages/runner/src/macos-restore.js";
 import { prepareMacAccess } from "../../../packages/runner/src/macos-access.js";
 import { waitForGuestAddress } from "../../../packages/runner/src/guest-address.js";
 import { executeGuest } from "../../../packages/runner/src/guest.js";
@@ -34,8 +35,14 @@ export function verifyMacSetupOutput(output: string) {
     .trim()
     .split("\n")
     .map((line) => line.trim());
-  if (lines.length !== 4 || !lines[2]?.startsWith("26."))
-    throw new VectisError("guest_os_version", "This setup requires a macOS 26 guest.");
+  if (
+    lines.length !== 4 ||
+    !supportedMacGuestMajors.some((major) => lines[2]?.startsWith(`${major}.`))
+  )
+    throw new VectisError(
+      "guest_os_version",
+      `This setup requires a macOS ${supportedMacGuestMajors.join(" or ")} guest.`,
+    );
   verifyGuestReadiness(lines[0] ?? "");
   if (lines[1] !== "FileVault is Off.")
     throw new VectisError(

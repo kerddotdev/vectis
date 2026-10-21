@@ -7,7 +7,7 @@ $licenses = @(Get-CimInstance SoftwareLicensingProduct -Filter "ApplicationID='5
 if ($licenses.Count -eq 0) { throw 'Windows licensing status could not be read' }
 $licenses | Select-Object Name, Description, LicenseStatus | Format-Table -AutoSize
 Write-Output 'This manual technical trial reports activation status and does not activate Windows.'
-& node -e "if (process.arch !== 'arm64' || process.version !== 'v24.21.0') process.exit(1)"
+& node -e "if (process.arch !== 'arm64' || process.version !== 'v24.22.1') process.exit(1)"
 if ($LASTEXITCODE -ne 0) { throw 'Node ARM64 verification failed' }
 if ((& pnpm --version) -ne '10.24.0') { throw 'Unexpected pnpm version' }
 & $env:PYTHON -c "import platform; assert platform.machine().lower() == 'arm64'"

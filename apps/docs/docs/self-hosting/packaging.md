@@ -17,7 +17,7 @@ pnpm package:cli --output /absolute/path/to/new-package --helpers /absolute/path
 pnpm package:verify /absolute/path/to/new-package
 ```
 
-The output directory must not already exist. The build downloads Node 24.21.0 from nodejs.org and checks its pinned SHA-256 and byte length. The Node license and dependency license files stay in the package. Package contents use an explicit allowlist; environment files and internal documents are excluded. An inspection rejects external dependency symlinks.
+The output directory must not already exist. The build downloads Node 24.22.1 from nodejs.org and checks its pinned SHA-256 and byte length. The Node license and dependency license files stay in the package. Package contents use an explicit allowlist; environment files and internal documents are excluded. An inspection rejects external dependency symlinks.
 
 To stage the Windows runtime from locally built or installed binaries, provide the matching QEMU source tree and a new output directory:
 

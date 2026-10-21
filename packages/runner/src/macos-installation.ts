@@ -41,7 +41,7 @@ export async function validateMacInstallation(
   )
     throw new VectisError(
       "restore_image_missing",
-      "Select an existing Apple macOS 26 IPSW restore image.",
+      "Select an existing Apple macOS 26 or 27 IPSW restore image.",
     );
   for (const directory of [input.imageDirectory, input.storagePath]) {
     if (!isAbsolute(directory) || !(await stat(directory).catch(() => undefined))?.isDirectory())
