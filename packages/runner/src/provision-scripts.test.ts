@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Schema } from "effect";
 import { expect, test } from "vitest";
 import {
   provisionScript,
@@ -12,7 +13,43 @@ import {
   setupUploadScripts,
 } from "./provision-scripts.js";
 import { windowsToolchainScript } from "./windows-toolchain.js";
-import { runnerDistribution, runnerVersion } from "./runner-release.js";
+import { linuxSeed } from "./linux-seed.js";
+import { runnerInstallScript, runnerDistribution, runnerVersion } from "./runner-release.js";
+
+test("generated guest scripts never bypass certificate verification", () => {
+  const seed = linuxSeed({ id: "tls-check", publicKey: "ssh-ed25519 AAAA synthetic" });
+  const config = Schema.decodeUnknownSync(
+    Schema.Struct({
+      write_files: Schema.Array(
+        Schema.Struct({ content: Schema.String, encoding: Schema.optional(Schema.String) }),
+      ),
+    }),
+  )(JSON.parse(seed.userdata.replace(/^#cloud-config\n/, "")));
+  const scripts = [
+    ...config.write_files.map((file) =>
+      file.encoding === "b64" ? Buffer.from(file.content, "base64").toString("utf8") : file.content,
+    ),
+    windowsToolchainScript(),
+    ...(["linux", "macos", "windows"] as const).flatMap((os) => [
+      runnerInstallScript(os),
+      runnerPreinstallScript(os),
+      ...[false, true].flatMap((runner) =>
+        [false, true].map((setup) => provisionScript(os, { runner, setup })),
+      ),
+    ]),
+  ];
+  for (const script of scripts)
+    for (const bypass of [
+      "--insecure",
+      " -k ",
+      "GIT_SSL_NO_VERIFY",
+      "sslVerify",
+      "schannelCheckRevoke",
+      "SkipCertificateCheck",
+      "NODE_TLS_REJECT_UNAUTHORIZED",
+    ])
+      expect(script).not.toContain(bypass);
+});
 
 test.each(["linux", "macos", "windows"] as const)(
   "%s preinstallation pins the release, retries downloads and verifies before extraction",
