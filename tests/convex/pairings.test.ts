@@ -75,3 +75,54 @@ test("expired requests and attempts to replace a linked machine fail without iss
   expect(records).toHaveLength(1);
   expect(records[0]?.digest).toBe("b".repeat(64));
 });
+
+test.each(["enroll", "approve"] as const)(
+  "%s rejects the 101st machine while allowing a replay at the owner cap",
+  async (path) => {
+    const t = convexTest(schema, modules);
+    const owner = t.withIdentity(identity);
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 99; index++)
+        await ctx.db.insert("machines", {
+          owner: identity.tokenIdentifier,
+          localId: `mac-${index}`,
+          name: "Test Mac",
+          createdAt: Date.now(),
+        });
+    });
+    const request = input();
+    const connect = () =>
+      path === "enroll"
+        ? owner.mutation(api.machines.enroll, { localId: request.localId, name: request.name })
+        : owner.mutation(api.pairings.approve, request);
+    const first = await connect();
+    const extra = { ...request, localId: "extra", requestDigest: "d".repeat(64) };
+    await expect(
+      path === "enroll"
+        ? owner.mutation(api.machines.enroll, { localId: extra.localId, name: extra.name })
+        : owner.mutation(api.pairings.approve, extra),
+    ).rejects.toMatchObject({
+      data: {
+        code: "machine_limit",
+        nextStep: "Disconnect an unused Mac before connecting another one.",
+      },
+    });
+    expect(await connect()).toEqual(first);
+    expect(await owner.query(api.machines.list, {})).toHaveLength(100);
+    const rows = await t.run(async (ctx) => ({
+      machines: await ctx.db.query("machines").collect(),
+      credentials: await ctx.db.query("machineCredentials").collect(),
+      pairings: await ctx.db.query("pairings").collect(),
+    }));
+    expect(rows.machines).toHaveLength(100);
+    expect(rows.credentials).toHaveLength(path === "approve" ? 1 : 0);
+    expect(rows.pairings).toHaveLength(path === "approve" ? 1 : 0);
+    const other = t.withIdentity({
+      ...identity,
+      subject: "other",
+      tokenIdentifier: "https://clerk.test|other",
+    });
+    await other.mutation(api.machines.enroll, { localId: "extra", name: "Other Mac" });
+    expect(await other.query(api.machines.list, {})).toHaveLength(1);
+  },
+);

@@ -1,10 +1,24 @@
 import { automaticBindings, scheduleRunnerDemand, scheduleJobScan } from "./runnerDemand.js";
 import { v, ConvexError, type Infer } from "convex/values";
 import { internal } from "./_generated/api.js";
-import { mutation, query } from "./_generated/server.js";
+import { mutation, query, type QueryCtx } from "./_generated/server.js";
 import { environmentSummary } from "./schema.js";
 import { human, machine } from "./auth.js";
 import { presence } from "./presence.js";
+
+const machineLimit = 100;
+
+export async function assertMachineCapacity(ctx: QueryCtx, owner: string) {
+  const machines = await ctx.db
+    .query("machines")
+    .withIndex("by_owner", (q) => q.eq("owner", owner))
+    .take(machineLimit);
+  if (machines.length >= machineLimit)
+    throw new ConvexError({
+      code: "machine_limit",
+      nextStep: "Disconnect an unused Mac before connecting another one.",
+    });
+}
 
 export const enroll = mutation({
   args: { localId: v.string(), name: v.string() },
@@ -21,6 +35,7 @@ export const enroll = mutation({
       .withIndex("by_owner_local", (q) => q.eq("owner", owner).eq("localId", args.localId))
       .unique();
     if (existing) return existing._id;
+    await assertMachineCapacity(ctx, owner);
     return ctx.db.insert("machines", { ...args, owner, createdAt: Date.now() });
   },
 });
@@ -31,7 +46,7 @@ export const list = query({
     const machines = await ctx.db
       .query("machines")
       .withIndex("by_owner", (q) => q.eq("owner", owner))
-      .take(100);
+      .take(machineLimit);
     return Promise.all(
       machines.map(async (record) => {
         const current = await presence(ctx, record._id);

@@ -54,7 +54,7 @@ export async function sweepOnce(ctx: MutationCtx, now: number) {
       .query("githubJobs")
       .withIndex("by_updated", (q) => q.lt("updatedAt", now - windows.jobs))
       .take(limit),
-    (row) => row.status !== "completed",
+    () => false,
     async (row) => ctx.db.delete("githubJobs", row._id),
   );
   deleted += await sweepTable(
