@@ -41,12 +41,12 @@ const cloud = resolveCloudDeployment({
   environment: process.env,
   local: readLocalEnvironment(root, flavor),
 });
-const nodeVersion = "24.22.1";
+const nodeVersion = "24.22.2";
 const nodeDirectory = `node-v${nodeVersion}-darwin-arm64`;
 const nodeSource = {
   url: `https://nodejs.org/dist/v${nodeVersion}/${nodeDirectory}.tar.gz`,
-  sha256: "89c682593d76cd44233fa53b1563264e7de9cbb189cad169135c5b4fadfbc0a7",
-  bytes: 53062778,
+  sha256: "aa9549349e47dffaa42dcf95d6e06ade8c4bdafc980979883b88767670df385a",
+  bytes: 53068959,
 };
 async function run(executable: string, args: string[]) {
   await new Promise<void>((done, reject) => {
