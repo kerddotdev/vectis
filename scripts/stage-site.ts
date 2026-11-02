@@ -1,7 +1,7 @@
-import { createHash } from "node:crypto";
 import { cp, copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inlineScriptHashes, scriptSources } from "./site-security.js";
 import { readLocalEnvironment } from "../packages/client/src/deployment.js";
 
 const web = fileURLToPath(new URL("../../apps/web/", import.meta.url));
@@ -42,11 +42,7 @@ function route(file: string) {
 
 async function scriptHashes(file: string) {
   const html = await readFile(file, "utf8");
-  const hashes = new Set<string>();
-  for (const match of html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>([\s\S]*?)<\/script>/g))
-    if (match[1]?.trim())
-      hashes.add(`'sha256-${createHash("sha256").update(match[1]).digest("base64")}'`);
-  return [...hashes];
+  return inlineScriptHashes(html);
 }
 
 const convexUrl = setting("CONVEX_URL");
@@ -70,15 +66,7 @@ const common = [
 function policy(path: string, hashes: string[]) {
   // The account page runs Clerk, which injects its own scripts, styles and bot-protection frames.
   const account = path === "/connect";
-  const scripts = account
-    ? [
-        "'self'",
-        "'unsafe-inline'",
-        clerk,
-        "https://challenges.cloudflare.com",
-        clerk && "https://*.protect.clerk.com",
-      ]
-    : ["'self'", ...hashes];
+  const scripts = scriptSources(account, hashes, clerk);
   return [
     ...common,
     `script-src ${scripts.filter(Boolean).join(" ")}`,
