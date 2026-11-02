@@ -16,6 +16,7 @@ import {
   VectisError,
   type Command,
   type Environment,
+  type Operation,
 } from "../../../packages/protocol/src/index.js";
 import { executeGuest, GuestUnavailableError } from "../../../packages/runner/src/guest.js";
 import { readyGuest } from "../../../packages/runner/src/guest-ready.js";
@@ -37,12 +38,15 @@ vi.mock("../../../packages/runner/src/provision-image.js", () => ({
   cloneProvisionImage: vi.fn(),
 }));
 
+const progress = { timeout: 5000 };
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  for (const cleanup of cleanups.reverse()) await cleanup();
+  const failures: unknown[] = [];
+  for (const cleanup of cleanups.reverse()) await cleanup().catch((error) => failures.push(error));
   cleanups.length = 0;
   vi.restoreAllMocks();
   vi.resetAllMocks();
+  if (failures.length > 0) throw new AggregateError(failures, "Fixture cleanup failed");
 });
 
 async function fixture(configuration: { exitCode?: number; os?: Environment["os"] } = {}) {
@@ -138,6 +142,18 @@ async function fixture(configuration: { exitCode?: number; os?: Environment["os"
     store.close();
     await rm(home, { recursive: true, force: true });
   });
+  async function begin(
+    operation: Operation,
+    input: typeof command,
+    options?: Parameters<typeof startProvision>[4],
+  ) {
+    const active = await startProvision(store, runtime, operation, input, options);
+    cleanups.push(async () => {
+      active.abort.abort();
+      await active.done;
+    });
+    return active;
+  }
   async function submit(input = command) {
     const accepted = service.submit("provision", input);
     await service.drain();
@@ -149,7 +165,7 @@ async function fixture(configuration: { exitCode?: number; os?: Environment["os"
         expect(store.snapshot().operations.find((item) => item.id === id)?.status).not.toMatch(
           /accepted|running/,
         ),
-      { timeout: 5000 },
+      progress,
     );
     return store.snapshot().operations.find((item) => item.id === id);
   }
@@ -161,6 +177,7 @@ async function fixture(configuration: { exitCode?: number; os?: Environment["os"
     parent,
     command,
     submit,
+    begin,
     completed,
     start,
     stop,
@@ -352,7 +369,7 @@ const fastShutdown = { shutdownTimeoutMs: 10, shutdownCommandTimeoutMs: 100, syn
 test.each(["denied", "connection-lost", "no-effect"])(
   "macOS loginwindow %s falls back to available passwordless sudo",
   async (failure) => {
-    const { store, runtime, command, completed, shutdown, stop, exit } = await fixture({
+    const { store, begin, command, completed, shutdown, stop, exit } = await fixture({
       os: "macos",
     });
     vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
@@ -365,7 +382,7 @@ test.each(["denied", "connection-lost", "no-effect"])(
     });
     const { operation } = store.accept("sudo", "sudo", command.type);
     await (
-      await startProvision(store, runtime, operation, command, fastShutdown)
+      await begin(operation, command, fastShutdown)
     ).done;
     expect(await completed(operation.id)).toMatchObject({
       status: "succeeded",
@@ -385,7 +402,7 @@ test.each(["denied", "connection-lost", "no-effect"])(
 test.each(["unavailable", "failed", "no-effect"])(
   "macOS sudo %s freezes only after two syncs, a delay and a confirmed helper stop",
   async (sudo) => {
-    const { store, runtime, command, completed, parent, stop, shutdown } = await fixture({
+    const { store, begin, command, completed, parent, stop, shutdown } = await fixture({
       os: "macos",
     });
     vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
@@ -398,7 +415,7 @@ test.each(["unavailable", "failed", "no-effect"])(
     }));
     const { operation } = store.accept("forced", "forced", command.type);
     await (
-      await startProvision(store, runtime, operation, command, fastShutdown)
+      await begin(operation, command, fastShutdown)
     ).done;
     expect(await completed(operation.id)).toMatchObject({
       status: "succeeded",
@@ -419,7 +436,7 @@ test.each(["unavailable", "failed", "no-effect"])(
 );
 
 test.each([1, 2])("macOS sync failure at attempt %s discards the image", async (failedSync) => {
-  const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
+  const { store, begin, command, completed, stop } = await fixture({ os: "macos" });
   let syncs = 0;
   vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
     ...guestSuccess,
@@ -428,7 +445,7 @@ test.each([1, 2])("macOS sync failure at attempt %s discards the image", async (
   }));
   const { operation } = store.accept("sync-failure", "sync-failure", command.type);
   await (
-    await startProvision(store, runtime, operation, command, fastShutdown)
+    await begin(operation, command, fastShutdown)
   ).done;
   expect(await completed(operation.id)).toMatchObject({
     status: "failed",
@@ -446,7 +463,7 @@ test.each([1, 2])("macOS sync failure at attempt %s discards the image", async (
 test.each(["loginwindow", "sudo-probe", "sudo-shutdown", "sync", "helper-stop"])(
   "macOS bounds a hung %s step and never freezes without sync and VM exit",
   async (step) => {
-    const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
+    const { store, begin, command, completed, stop } = await fixture({ os: "macos" });
     vi.mocked(executeGuest).mockImplementation(async (_connection, script, { signal }) => {
       const hung =
         (step === "loginwindow" && script.includes("osascript")) ||
@@ -469,7 +486,7 @@ test.each(["loginwindow", "sudo-probe", "sudo-shutdown", "sync", "helper-stop"])
     if (step === "helper-stop") stop.mockImplementation(() => new Promise(() => {}));
     const { operation } = store.accept("hung", "hung", command.type);
     await (
-      await startProvision(store, runtime, operation, command, {
+      await begin(operation, command, {
         ...fastShutdown,
         shutdownCommandTimeoutMs: 20,
       })
@@ -490,7 +507,7 @@ test.each(["loginwindow", "sudo-probe", "sudo-shutdown", "sync", "helper-stop"])
 );
 
 test("macOS bounds cleanup when the helper exits but VM settlement is unconfirmed", async () => {
-  const { store, runtime, command, completed, start } = await fixture({ os: "macos" });
+  const { store, begin, command, completed, start } = await fixture({ os: "macos" });
   const startVm = start.getMockImplementation();
   if (!startVm) throw new Error("Missing fake runtime start");
   start.mockImplementation(async (...args) => ({
@@ -500,7 +517,7 @@ test("macOS bounds cleanup when the helper exits but VM settlement is unconfirme
   vi.mocked(executeGuest).mockResolvedValue(guestSuccess);
   const { operation } = store.accept("unsettled", "unsettled", command.type);
   await (
-    await startProvision(store, runtime, operation, command, fastShutdown)
+    await begin(operation, command, fastShutdown)
   ).done;
   expect(await completed(operation.id)).toMatchObject({
     status: "action_required",
@@ -513,7 +530,7 @@ test("macOS bounds cleanup when the helper exits but VM settlement is unconfirme
 test.each(["loginwindow", "shutdown-wait", "sync-delay"])(
   "macOS cancellation during %s removes output without freezing",
   async (stage) => {
-    const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
+    const { store, begin, command, completed, stop } = await fixture({ os: "macos" });
     vi.mocked(executeGuest).mockImplementation(async (_connection, script, { signal }) => {
       if (stage === "loginwindow" && script.includes("osascript"))
         return new Promise((_resolve, reject) => {
@@ -522,7 +539,7 @@ test.each(["loginwindow", "shutdown-wait", "sync-delay"])(
       return { ...guestSuccess, exitCode: script === "sudo -n true" ? 1 : 0 };
     });
     const { operation } = store.accept("cancel-macos", "cancel-macos", command.type);
-    const active = await startProvision(store, runtime, operation, command, {
+    const active = await begin(operation, command, {
       ...fastShutdown,
       shutdownTimeoutMs: stage === "shutdown-wait" ? 60000 : 10,
       syncDelayMs: 5000,
@@ -532,7 +549,7 @@ test.each(["loginwindow", "shutdown-wait", "sync-delay"])(
       if (stage === "sync-delay")
         expect(calls.filter((call) => call[1] === "sync")).toHaveLength(2);
       else expect(calls.some((call) => call[1].includes("osascript"))).toBe(true);
-    });
+    }, progress);
     active.abort.abort();
     await active.done;
     expect(await completed(operation.id)).toMatchObject({ status: "cancelled" });
@@ -543,7 +560,7 @@ test.each(["loginwindow", "shutdown-wait", "sync-delay"])(
 );
 
 test("macOS waits five seconds after both syncs before stopping the helper", async () => {
-  const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
+  const { store, begin, command, completed, stop } = await fixture({ os: "macos" });
   let syncedAt = 0;
   vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
     if (script === "sync") syncedAt = Date.now();
@@ -556,7 +573,7 @@ test("macOS waits five seconds after both syncs before stopping the helper", asy
   });
   const { operation } = store.accept("sync-delay", "sync-delay", command.type);
   await (
-    await startProvision(store, runtime, operation, command, { shutdownTimeoutMs: 10 })
+    await begin(operation, command, { shutdownTimeoutMs: 10 })
   ).done;
   expect(await completed(operation.id)).toMatchObject({
     status: "succeeded",
@@ -565,7 +582,7 @@ test("macOS waits five seconds after both syncs before stopping the helper", asy
 }, 10000);
 
 test("macOS notices guest shutdown during the sync delay without claiming a forced stop", async () => {
-  const { store, runtime, command, completed, exit, stop } = await fixture({ os: "macos" });
+  const { store, begin, command, completed, exit, stop } = await fixture({ os: "macos" });
   let syncs = 0;
   vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
     if (script === "sync" && ++syncs === 2) await exit();
@@ -573,7 +590,7 @@ test("macOS notices guest shutdown during the sync delay without claiming a forc
   });
   const { operation } = store.accept("late-shutdown", "late-shutdown", command.type);
   await (
-    await startProvision(store, runtime, operation, command, fastShutdown)
+    await begin(operation, command, fastShutdown)
   ).done;
   expect(await completed(operation.id)).toMatchObject({
     status: "succeeded",
@@ -583,11 +600,11 @@ test("macOS notices guest shutdown during the sync delay without claiming a forc
 });
 
 test("macOS rejects a failed helper exit even after successful syncs", async () => {
-  const { store, runtime, command, completed } = await fixture({ os: "macos", exitCode: 17 });
+  const { store, begin, command, completed } = await fixture({ os: "macos", exitCode: 17 });
   vi.mocked(executeGuest).mockResolvedValue(guestSuccess);
   const { operation } = store.accept("bad-stop", "bad-stop", command.type);
   await (
-    await startProvision(store, runtime, operation, command, fastShutdown)
+    await begin(operation, command, fastShutdown)
   ).done;
   expect(await completed(operation.id)).toMatchObject({
     status: "failed",
@@ -794,10 +811,12 @@ test.each(["operation.cancel", "instance.stop"] as const)(
       },
     );
     const operation = await submit();
-    await vi.waitFor(async () =>
-      expect(await readFile(join(command.imageDirectory, "partial"), "utf8")).toBe(
-        "unfinished clone",
-      ),
+    await vi.waitFor(
+      async () =>
+        expect(await readFile(join(command.imageDirectory, "partial"), "utf8")).toBe(
+          "unfinished clone",
+        ),
+      progress,
     );
     const cancellation = service.submit("cancel-clone", { type, id: operation.id });
     await service.drain();
@@ -841,7 +860,7 @@ test("operation cancellation remains available, reserves preparation capacity an
       }),
   );
   const operation = await submit();
-  await vi.waitFor(() => expect(executeGuest).toHaveBeenCalled());
+  await vi.waitFor(() => expect(executeGuest).toHaveBeenCalled(), progress);
   expect(service.snapshot().preparationBusy).toBe(true);
   expect(service.snapshot().runnerCapacity?.available).toBe(0);
   const remove = service.submit("remove-active", { type: "environment.remove", id: "parent" });
@@ -859,7 +878,7 @@ test("operation cancellation remains available, reserves preparation capacity an
 test.each(["linux", "windows"] as const)(
   "%s shutdown timeout forces cleanup and never freezes a dirty image",
   async (os) => {
-    const { parent, command, store, runtime, completed, stop, shutdown } = await fixture();
+    const { parent, command, store, begin, completed, stop, shutdown } = await fixture();
     store.put("environment", parent.id, { ...parent, os });
     shutdown.mockResolvedValue(true);
     vi.mocked(executeGuest)
@@ -871,7 +890,7 @@ test.each(["linux", "windows"] as const)(
         truncated: false,
       });
     const { operation } = store.accept("timeout", "timeout", command.type);
-    const active = await startProvision(store, runtime, operation, command, {
+    const active = await begin(operation, command, {
       shutdownTimeoutMs: 10,
     });
     await active.done;
@@ -937,7 +956,7 @@ test("stopping the provisioning instance cancels the operation rather than freez
       }),
   );
   const operation = await submit();
-  await vi.waitFor(() => expect(executeGuest).toHaveBeenCalled());
+  await vi.waitFor(() => expect(executeGuest).toHaveBeenCalled(), progress);
   service.submit("stop-instance", { type: "instance.stop", id: operation.id });
   await service.drain();
   expect(await completed(operation.id)).toMatchObject({ status: "cancelled" });
