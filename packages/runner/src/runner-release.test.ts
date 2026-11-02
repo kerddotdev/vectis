@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { runnerStartScript, runnerVersion } from "./runner-release.js";
 
@@ -18,7 +19,13 @@ test.each(["linux", "macos"] as const)(
         mode: 0o700,
       });
       const result = spawnSync("bash", ["-s"], {
-        input: runnerStartScript(os, "c2VjcmV0", access, { preinstalled: true }),
+        input: runnerStartScript(os, "c2VjcmV0", access, {
+          preinstalled: true,
+          macosTrust: {
+            source: fileURLToPath(new URL("./fixtures/ca/ordinary-one.pem", import.meta.url)),
+            openssl: "openssl",
+          },
+        }),
         env: { ...process.env, HOME: home },
         encoding: "utf8",
       });

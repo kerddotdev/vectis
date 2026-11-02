@@ -67,11 +67,59 @@ rm runner.tar.gz
 `;
 }
 
+const eMudhraRootFingerprints = [
+  "86A1ECBA089C4A8D3BBE2734C612BA341D813E043CF9E8A862CD5C57A36BBE6B",
+  "D7A7A0FB5D7E2731D771E9484EBCDEF71D5F0C3E0A2948782BC83EE0EA699EF4",
+];
+
+export function macosFilteredCaBundleScript(
+  source = "/etc/ssl/cert.pem",
+  openssl = "/usr/bin/openssl",
+) {
+  return `ca_source='${source}'
+ca_fail() { printf 'vectis: macOS guest CA bundle: %s\\n' "$1" >&2; exit 1; }
+ca_blocked() { case "$1" in ${eMudhraRootFingerprints.join(" | ")}) return 0;; *) return 1;; esac; }
+ca_split() { awk -v dir="$2" '/-----BEGIN CERTIFICATE-----/ { n++; file = sprintf("%s/%05d.crt", dir, n) } file { print > file } /-----END CERTIFICATE-----/ { close(file); file = "" }' "$1"; }
+ca_fingerprint() { ${openssl} x509 -in "$1" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:lower:]' '[:upper:]'; }
+test -r "$ca_source" || ca_fail "cannot read $ca_source"
+ca_work=$(mktemp -d "$gate/ca.XXXXXX")
+trap 'rm -rf "$ca_work"' EXIT
+mkdir "$ca_work/in" "$ca_work/out"
+ca_split "$ca_source" "$ca_work/in"
+ca_kept=0
+ca_checked=0
+for cert in "$ca_work"/in/*.crt; do
+  test -f "$cert" || ca_fail "$ca_source contains no certificates"
+  fp=$(ca_fingerprint "$cert") || ca_fail "cannot fingerprint a certificate in $ca_source"
+  test -n "$fp" || ca_fail "cannot fingerprint a certificate in $ca_source"
+  if ca_blocked "$fp"; then continue; fi
+  cat "$cert" >> "$ca_work/bundle.pem"
+  ca_kept=$((ca_kept + 1))
+done
+test "$ca_kept" -gt 0 || ca_fail "no certificates remain after filtering"
+ca_split "$ca_work/bundle.pem" "$ca_work/out"
+for cert in "$ca_work"/out/*.crt; do
+  fp=$(ca_fingerprint "$cert") || ca_fail "cannot verify the filtered bundle"
+  if ca_blocked "$fp"; then ca_fail "a blocked root remains in the filtered bundle"; fi
+  ca_checked=$((ca_checked + 1))
+done
+test "$ca_checked" -eq "$ca_kept" || ca_fail "the filtered bundle does not match the filtered certificates"
+mv -f "$ca_work/bundle.pem" "$gate/ca-bundle.pem"
+rm -rf "$ca_work"
+trap - EXIT
+export SSL_CERT_FILE="$gate/ca-bundle.pem" CURL_CA_BUNDLE="$gate/ca-bundle.pem" GIT_SSL_CAINFO="$gate/ca-bundle.pem"
+`;
+}
+
 export function runnerStartScript(
   os: Environment["os"],
   jitConfig: string,
   access: RunnerAccess,
-  options: { cacheSizeGiB?: number; preinstalled?: boolean } = {},
+  options: {
+    cacheSizeGiB?: number;
+    preinstalled?: boolean;
+    macosTrust?: { source?: string; openssl?: string };
+  } = {},
 ) {
   if (!/^[A-Za-z0-9+/=]{1,60000}$/.test(jitConfig))
     throw new VectisError(
@@ -114,7 +162,7 @@ chmod 700 "$gate/job-started.sh"
 rm -f "$gate/assignment-rejected" "$gate/job-started" "$gate/job-started.tmp"
 export ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE=1
 export ACTIONS_RUNNER_HOOK_JOB_STARTED="$gate/job-started.sh"
-umask "$job_umask"
+${os === "macos" ? macosFilteredCaBundleScript(options.macosTrust?.source, options.macosTrust?.openssl) : ""}umask "$job_umask"
 cd "${target ?? "$HOME/vectis-actions-runner"}"
 runner_exit=0
 ./bin/Runner.Listener run --jitconfig '${jitConfig}' || runner_exit=$?
