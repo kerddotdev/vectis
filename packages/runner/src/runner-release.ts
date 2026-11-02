@@ -9,7 +9,7 @@ import {
 import type { Environment } from "../../protocol/src/index.js";
 import { VectisError } from "../../protocol/src/index.js";
 
-export const runnerVersion = "2.337.0";
+export const runnerVersion = "2.338.2";
 export function preinstalledRunnerDirectory(os: Environment["os"]) {
   if (os === "windows") return `C:\\vectis\\runner\\${runnerVersion}`;
   return `$HOME/.vectis-runner/${runnerVersion}`;
@@ -17,16 +17,16 @@ export function preinstalledRunnerDirectory(os: Environment["os"]) {
 
 const distributions = {
   linux: {
-    archive: "actions-runner-linux-arm64-2.337.0.tar.gz",
-    sha256: "9b1dc70626422526e3c94767cf024896beb15da5342a3f4819bf2feac13e0393",
+    archive: "actions-runner-linux-arm64-2.338.2.tar.gz",
+    sha256: "670adb2f268fe21dcbb58b3db0e0aa9d5b3bddfe2c651481336e561ff86de945",
   },
   macos: {
-    archive: "actions-runner-osx-arm64-2.337.0.tar.gz",
-    sha256: "5a2cd92908a93d7276a194e1de6008099f3e7946f3f8e14aa7a1a7b4a31fdec2",
+    archive: "actions-runner-osx-arm64-2.338.2.tar.gz",
+    sha256: "25a065af409ffa317ab4d5a3b614dd15fc9c40f2172bc1b35a1b1258e919a388",
   },
   windows: {
-    archive: "actions-runner-win-arm64-2.337.0.zip",
-    sha256: "7ee1a72a0e0ad384ac7871ffc2356063a116e20d1db3ea41000eb49272cf0030",
+    archive: "actions-runner-win-arm64-2.338.2.zip",
+    sha256: "0790e3f586c2c5388ed8e293e7cef01bd0e8a2c5c68dd0a628f848b61da4b3a7",
   },
 } as const;
 export function runnerDistribution(os: Environment["os"]) {

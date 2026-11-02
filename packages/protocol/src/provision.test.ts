@@ -37,7 +37,7 @@ test("snapshots accept legacy environments and retain optional image manifests",
   const image = {
     parentId: "parent",
     revision: "revision",
-    runnerVersion: "2.337.0",
+    runnerVersion: "2.338.2",
     provisionedAt: "2026-10-16T00:00:00.000Z",
   };
   const snapshot = Schema.decodeUnknownSync(Snapshot)({
