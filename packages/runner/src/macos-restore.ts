@@ -11,11 +11,11 @@ export const MacRestoreDownload = Schema.Struct({
 });
 export type MacRestoreDownload = typeof MacRestoreDownload.Type;
 export const macosRestore = {
-  version: "27.0.1",
-  build: "26A434",
-  url: "https://updates.cdn-apple.com/2026FallFCS/59241290-5d51-4ca8-9df4-31624b9a4eac/UniversalMac_27.0.1_26A434_Restore.ipsw",
-  sha256: "2f016638293c3e641b8b25391a76fbc16563b3711915a5551cf8aa0f5598a5c1",
-  bytes: 26637307067,
+  version: "27.2",
+  build: "26B123",
+  url: "https://updates.cdn-apple.com/2026FallFCS/c9671975-52db-4fb5-9af2-00217169ba8d/UniversalMac_27.2_26B123_Restore.ipsw",
+  sha256: "6613b34e8589db2202a01ec37a2648afb141ece13428175183f8f3e38438534f",
+  bytes: 25595669503,
 };
 // The pinned download is the newest major; earlier majors stay accepted for local restore images and
 // setups that started before the pin moved. native/apple MacInstaller.swift mirrors this list.

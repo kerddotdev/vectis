@@ -3,7 +3,7 @@ title: Install a macOS guest
 description: Restore macOS into an owned local bundle and open its setup console.
 ---
 
-Vectis downloads macOS 27.0.1 (build 26A434) directly from Apple and verifies its pinned SHA-256 and exact size before installation. The selected revision does not change when Apple publishes a new release. You can instead supply an existing Apple macOS 26 or 27 IPSW. A macOS 27 guest needs a host running macOS 27 or later; the Apple virtualization helper checks host and restore-image compatibility. Guest SSH enrollment uses a generated local connection script and explicit guest verification. Xcode is not installed implicitly.
+Vectis downloads macOS 27.2 (build 26B123) directly from Apple and verifies its pinned SHA-256 and exact size before installation. The selected revision does not change when Apple publishes a new release. You can instead supply an existing Apple macOS 26 or 27 IPSW. A macOS 27 guest needs a host running macOS 27 or later; the Apple virtualization helper checks host and restore-image compatibility. Guest SSH enrollment uses a generated local connection script and explicit guest verification. Xcode is not installed implicitly.
 
 Choose existing image and disposable VM directories. The image volume needs at least 70 GiB free for automatic download and installation, or 40 GiB with an existing IPSW. Stop existing VMs and resolve interrupted runner operations first. The installer uses a new bundle; it never replaces a registered base image.
 
