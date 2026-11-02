@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { ChildProcess, spawn } from "node:child_process";
 import {
   copyFile,
   mkdtemp,
@@ -64,7 +64,53 @@ afterEach(async () => {
   if (failures.length > 0) throw new AggregateError(failures, "Fixture cleanup failed");
 });
 
-async function fixture(configuration: { exitCode?: number; os?: Environment["os"] } = {}) {
+function syntheticHelper(exitCode: number, onExit: (exited: boolean) => void) {
+  const child = new ChildProcess();
+  let settle = () => {};
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  let exited = false;
+  const exit = async () => {
+    if (exited) return settled;
+    exited = true;
+    Object.defineProperty(child, "exitCode", { value: exitCode });
+    child.emit("exit", exitCode, null);
+    child.emit("close", exitCode, null);
+    onExit(true);
+    settle();
+    return settled;
+  };
+  return { child, settled, exit };
+}
+
+async function spawnedHelper(home: string, exitCode: number, onExit: (exited: boolean) => void) {
+  const helper = join(home, "fake-helper.cjs");
+  await writeFile(
+    helper,
+    `process.stdin.resume(); process.stdin.on('end', () => process.exit(${exitCode}));`,
+  );
+  const child = spawn(process.execPath, [helper], { stdio: ["pipe", "ignore", "ignore"] });
+  const settled = new Promise<void>((resolve) =>
+    child.once("close", () => {
+      onExit(true);
+      resolve();
+    }),
+  );
+  const exit = async () => {
+    child.stdin.end();
+    await settled;
+  };
+  return { child, settled, exit };
+}
+
+async function fixture(
+  configuration: {
+    exitCode?: number;
+    os?: Environment["os"];
+    helper?: "process" | "synthetic";
+  } = {},
+) {
   const home = await mkdtemp(join(tmpdir(), "vectis-provision-"));
   const store = new Store(join(home, "state.sqlite"));
   const runtime = new VmRuntime({ home });
@@ -104,22 +150,13 @@ async function fixture(configuration: { exitCode?: number; os?: Environment["os"
       signal?.throwIfAborted();
       expect(options).toEqual({ diskInPlace: true });
       await writeFile(environment.basePath, "provisioning writes the clone");
-      const helper = join(home, "fake-helper.cjs");
-      await writeFile(
-        helper,
-        `process.stdin.resume(); process.stdin.on('end', () => process.exit(${configuration.exitCode ?? 0}));`,
-      );
-      const child = spawn(process.execPath, [helper], { stdio: ["pipe", "ignore", "ignore"] });
-      const settled = new Promise<void>((resolve) =>
-        child.once("close", () => {
-          onExit(true);
-          resolve();
-        }),
-      );
-      exit = async () => {
-        child.stdin.end();
-        await settled;
-      };
+      const exitCode = configuration.exitCode ?? 0;
+      const helper =
+        configuration.helper === "synthetic"
+          ? syntheticHelper(exitCode, onExit)
+          : await spawnedHelper(home, exitCode, onExit);
+      const { child, settled } = helper;
+      exit = helper.exit;
       return {
         id,
         process: child,
@@ -419,6 +456,7 @@ test.each(["unavailable", "failed", "no-effect"])(
   async (sudo) => {
     const { store, begin, command, completed, parent, stop, shutdown } = await fixture({
       os: "macos",
+      helper: "synthetic",
     });
     vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
       ...guestSuccess,
@@ -451,7 +489,10 @@ test.each(["unavailable", "failed", "no-effect"])(
 );
 
 test.each([1, 2])("macOS sync failure at attempt %s discards the image", async (failedSync) => {
-  const { store, begin, command, completed, stop } = await fixture({ os: "macos" });
+  const { store, begin, command, completed, stop } = await fixture({
+    os: "macos",
+    helper: "synthetic",
+  });
   let syncs = 0;
   vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
     ...guestSuccess,
@@ -478,7 +519,10 @@ test.each([1, 2])("macOS sync failure at attempt %s discards the image", async (
 test.each(["loginwindow", "sudo-probe", "sudo-shutdown", "sync", "helper-stop"])(
   "macOS bounds a hung %s step and never freezes without sync and VM exit",
   async (step) => {
-    const { store, begin, command, completed, stop } = await fixture({ os: "macos" });
+    const { store, begin, command, completed, stop } = await fixture({
+      os: "macos",
+      helper: "synthetic",
+    });
     vi.mocked(executeGuest).mockImplementation(async (_connection, script, { signal }) => {
       const hung =
         (step === "loginwindow" && script.includes("osascript")) ||
@@ -545,7 +589,10 @@ test("macOS bounds cleanup when the helper exits but VM settlement is unconfirme
 test.each(["loginwindow", "shutdown-wait", "sync-delay"])(
   "macOS cancellation during %s removes output without freezing",
   async (stage) => {
-    const { store, begin, command, completed, stop } = await fixture({ os: "macos" });
+    const { store, begin, command, completed, stop } = await fixture({
+      os: "macos",
+      helper: "synthetic",
+    });
     vi.mocked(executeGuest).mockImplementation(async (_connection, script, { signal }) => {
       if (stage === "loginwindow" && script.includes("osascript"))
         return new Promise((_resolve, reject) => {
@@ -635,7 +682,11 @@ test("macOS notices guest shutdown during the sync delay without claiming a forc
 });
 
 test("macOS rejects a failed helper exit even after successful syncs", async () => {
-  const { store, begin, command, completed } = await fixture({ os: "macos", exitCode: 17 });
+  const { store, begin, command, completed } = await fixture({
+    os: "macos",
+    exitCode: 17,
+    helper: "synthetic",
+  });
   vi.mocked(executeGuest).mockResolvedValue(guestSuccess);
   const { operation } = store.accept("bad-stop", "bad-stop", command.type);
   await (
