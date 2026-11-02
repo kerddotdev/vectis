@@ -292,3 +292,10 @@ jobs:
   );
   expect(preview.jobs?.[0]?.targets).toEqual(["vectis-linux-arm64", "vectis-macos"]);
 });
+
+test.each(["macos-26", "macos-27"])("migrates the compatible %s runner label", (label) => {
+  const source = `on: push\njobs:\n  build:\n    runs-on: ${label}\n`;
+  const preview = previewMigration(source, [{ from: label, to: "vectis-macos" }]);
+  expect(preview.source).toBe(source.replace(label, "vectis-macos"));
+  expect(preview.jobs?.[0]?.changed).toBe(true);
+});

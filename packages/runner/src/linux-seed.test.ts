@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Schema } from "effect";
 import { expect, test } from "vitest";
-import { linuxSeed } from "./linux-seed.js";
+import { linuxSeed, ubuntuImage } from "./linux-seed.js";
 import { runnerPreinstallScript } from "./provision-scripts.js";
 import { runnerVersion } from "./runner-release.js";
 
@@ -56,8 +56,32 @@ test("fresh Linux images retain the same verified runner used by derived environ
   );
 });
 
+test("Linux preparation upgrades the CA store and requires the distrust update before downloads", () => {
+  const script = content("/opt/vectis/prepare.sh");
+  expect(ubuntuImage.revision).toBe("ubuntu-24.04-arm64-20261017");
+  expect(script).toContain("apt_get install -y ca-certificates curl git openssh-server docker.io");
+  expect(script).toContain("begin_step trust-store");
+  expect(script).toContain(
+    `dpkg --compare-versions "$(dpkg-query -W -f='\${Version}' ca-certificates)" ge 20260816ubuntu0.24.04.1`,
+  );
+  expect(script.indexOf("begin_step packages")).toBeLessThan(
+    script.indexOf("begin_step trust-store"),
+  );
+  expect(script.indexOf("begin_step trust-store")).toBeLessThan(
+    script.indexOf("begin_step runner-download"),
+  );
+});
+
 test.each([
   { name: "success", downloadExit: 0, dependenciesExit: 0, expected: 0 },
+  {
+    name: "outdated CA store",
+    caVersion: "20240203",
+    downloadExit: 0,
+    dependenciesExit: 0,
+    expected: 1,
+  },
+  { name: "missing CA store", caVersion: "", downloadExit: 0, dependenciesExit: 0, expected: 1 },
   { name: "download failure", downloadExit: 22, dependenciesExit: 0, expected: 22 },
   { name: "root dependency failure", downloadExit: 0, dependenciesExit: 23, expected: 23 },
   {
@@ -84,6 +108,8 @@ test.each([
       input: `
 uname() { echo aarch64; }
 apt-get() { :; }
+dpkg-query() { printf '%s' '${scenario.caVersion ?? "20260816ubuntu0.24.04.1"}'; }
+dpkg() { test "$*" = '--compare-versions 20260816ubuntu0.24.04.1 ge 20260816ubuntu0.24.04.1'; }
 fuser() { return 1; }
 usermod() { :; }
 systemctl() { :; }
@@ -129,9 +155,13 @@ completed=true
       );
     } else {
       expect(output).toContain(
-        `VECTIS_PREPARATION_FAILED_test step=${scenario.shutdownExit ? "poweroff" : scenario.downloadExit ? "runner-download" : "runner-dependencies"} exit=${scenario.expected}`,
+        `VECTIS_PREPARATION_FAILED_test step=${scenario.shutdownExit ? "poweroff" : scenario.caVersion !== undefined ? "trust-store" : scenario.downloadExit ? "runner-download" : "runner-dependencies"} exit=${scenario.expected}`,
       );
       if (!scenario.shutdownExit) expect(output).not.toContain("VECTIS_PREPARED_test");
+      if (scenario.caVersion !== undefined) {
+        expect(output).toContain("ca-certificates 20260816ubuntu0.24.04.1 or newer is required");
+        expect(output).not.toContain("vectis-prepare: step=runner-download");
+      }
     }
   } finally {
     await rm(home, { recursive: true, force: true });
@@ -276,7 +306,7 @@ completed=true
       const commands = calls.map((call) => call.slice(options.length));
       const update = commands.filter((call) => call === "update");
       const base = commands.filter(
-        (call) => call === "install -y curl git openssh-server docker.io",
+        (call) => call === "install -y ca-certificates curl git openssh-server docker.io",
       );
       const toolchain = commands.filter((call) =>
         call.startsWith("install -y --no-install-recommends "),

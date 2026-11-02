@@ -77,5 +77,5 @@ Operations and runner leases that have not finished are not removed. GitHub ends
 ## Hosts and guests
 
 - The host is an Apple Silicon Mac running macOS 15 or later. Intel Macs are not supported.
-- Guests are ARM64 only: Ubuntu, macOS and Windows 11 ARM64.
+- Guests are ARM64 only: Ubuntu 24.04, macOS 26 or 27, and Windows 11 ARM64. A macOS 27 guest needs a macOS 27 host.
 - Windows support is experimental.

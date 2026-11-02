@@ -109,6 +109,10 @@ try {
   $tarVersion = Get-VectisToolVersion $tarExe @('--version')
   $bashVersion = Get-VectisToolVersion $bashExe @('--version')
   if ($gitVersion -ne 'git version 2.55.0.windows.5' -or $tarVersion -notmatch 'GNU tar' -or $bashVersion -notmatch 'GNU bash') { throw 'Full Git, GNU tar or Bash verification failed.' }
+  & $gitExe config --system http.sslBackend schannel
+  if ($LASTEXITCODE -ne 0) { throw 'Git Windows certificate store configuration failed.' }
+  $gitSslBackend = Get-VectisToolVersion $gitExe @('config', '--system', '--get', 'http.sslBackend')
+  if ($gitSslBackend -ne 'schannel') { throw 'Git must use the Windows certificate store (schannel).' }
   Write-Output 'vectis-provision: zstd-install-x64-emulation'
   $zstdRoot = 'C:\Program Files\zstd'
   $zstdExe = Join-Path $zstdRoot 'zstd.exe'

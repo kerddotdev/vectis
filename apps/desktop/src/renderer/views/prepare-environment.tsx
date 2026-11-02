@@ -33,8 +33,8 @@ const defaults = {
     diskMin: "16",
   },
   macos: {
-    id: "macos-26-arm64",
-    name: "macOS 26 ARM64",
+    id: "macos-27-arm64",
+    name: "macOS 27 ARM64",
     memoryMin: "4096",
     disk: "64",
     diskMin: "40",
@@ -51,7 +51,7 @@ const summaries = {
   linux:
     "Downloads verified Ubuntu 24.04 ARM64 and prepares SSH, Git, Docker and runner dependencies.",
   macos:
-    "Downloads the verified macOS 26 image from Apple, or uses an existing IPSW. Setup Assistant and guest SSH configuration are separate steps; this does not register a ready runner.",
+    "Downloads the verified macOS 27 image from Apple, or uses an existing macOS 26 or 27 IPSW. Setup Assistant and guest SSH configuration are separate steps; this does not register a ready runner.",
   windows:
     "Experimental. Installs Windows 11 ARM64 from your official ISO with separate driver media, UEFI firmware and TPM state, and needs QEMU and swtpm installed. Activation and required licenses remain your responsibility.",
 } as const;
@@ -183,7 +183,7 @@ export function PrepareEnvironment({ onDone }: { onDone: () => void }) {
       <Tabs value={os} onValueChange={(value: GuestOs) => setOs(value)}>
         <TabsList className="w-full">
           <TabsTrigger value="linux">Ubuntu 24.04</TabsTrigger>
-          <TabsTrigger value="macos">macOS 26</TabsTrigger>
+          <TabsTrigger value="macos">macOS 27</TabsTrigger>
           <TabsTrigger value="windows">Windows 11</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -198,7 +198,7 @@ export function PrepareEnvironment({ onDone }: { onDone: () => void }) {
               chooser="chooseRestoreImage"
               value={restorePath}
               onChange={setRestorePath}
-              placeholder="Download the verified macOS 26 image"
+              placeholder="Download the verified macOS 27 image"
             />
           )}
           {os === "windows" && (

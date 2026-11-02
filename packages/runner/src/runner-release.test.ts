@@ -2,10 +2,16 @@ import { spawnSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { runnerStartScript, runnerVersion } from "./runner-release.js";
 
 const access = { repositoryId: 2, actors: "any", approval: "automatic" } as const;
+// Linux CI has no /etc/ssl/cert.pem or /usr/bin/openssl; the filter itself is covered in runner-ca-bundle.test.ts.
+const macosTrust = {
+  source: fileURLToPath(new URL("./fixtures/ca/ordinary-one.pem", import.meta.url)),
+  openssl: "openssl",
+};
 
 test.each(["linux", "macos"] as const)(
   "the baked %s runner runs in the guest home while the assignment gate retains its stable private path",
@@ -18,7 +24,10 @@ test.each(["linux", "macos"] as const)(
         mode: 0o700,
       });
       const result = spawnSync("bash", ["-s"], {
-        input: runnerStartScript(os, "c2VjcmV0", access, { preinstalled: true }),
+        input: runnerStartScript(os, "c2VjcmV0", access, {
+          preinstalled: true,
+          macosTrust,
+        }),
         env: { ...process.env, HOME: home },
         encoding: "utf8",
       });
@@ -85,10 +94,14 @@ test.each(["linux", "macos"] as const)(
         { mode: 0o700 },
       );
       for (const code of [0, 1, 5]) {
-        const result = spawnSync("bash", ["-c", runnerStartScript(os, "c2VjcmV0", access)], {
-          env: { ...process.env, HOME: home, VECTIS_TEST_RUNNER_EXIT: String(code) },
-          encoding: "utf8",
-        });
+        const result = spawnSync(
+          "bash",
+          ["-c", runnerStartScript(os, "c2VjcmV0", access, { macosTrust })],
+          {
+            env: { ...process.env, HOME: home, VECTIS_TEST_RUNNER_EXIT: String(code) },
+            encoding: "utf8",
+          },
+        );
         expect(result.status, result.stderr).toBe(code);
       }
     } finally {

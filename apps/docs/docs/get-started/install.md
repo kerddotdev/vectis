@@ -5,13 +5,13 @@ description: Requirements, installation, the background service and the command 
 
 ## Requirements
 
-- A Mac with Apple Silicon, running macOS 15 or later. Intel Macs are not supported.
+- A Mac with Apple Silicon, running macOS 15 or later. Intel Macs are not supported. A macOS 27 guest needs macOS 27 on the Mac.
 - Free disk space for the guests you prepare, on the internal disk or an external drive:
 
 | Guest                     | Free space to prepare                         | Notes                                                      |
 | ------------------------- | --------------------------------------------- | ---------------------------------------------------------- |
 | Ubuntu 24.04              | 8 GiB or more                                 | Grows as software is installed                             |
-| macOS 26                  | 60 GiB, or 40 GiB with your own restore image | Apple's restore image is downloaded unless you provide one |
+| macOS 27                  | 70 GiB, or 40 GiB with your own restore image | Apple's restore image is downloaded unless you provide one |
 | Windows 11 (experimental) | 30 GiB or more                                | Needs your own installation media and QEMU                 |
 
 - Every running VM also needs space for its copy of the disk. Copies share unchanged blocks with the image, so they start small.

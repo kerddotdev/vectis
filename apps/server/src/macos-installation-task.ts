@@ -287,7 +287,7 @@ export async function startMacInstallation(
     },
     message: configuration.restorePath
       ? "Installing macOS from the selected Apple restore image."
-      : "Downloading the pinned macOS 26 restore image from Apple.",
+      : `Downloading the pinned macOS ${macosRestore.version} restore image from Apple.`,
   });
   const abort = new AbortController();
   const signal = AbortSignal.any([abort.signal, AbortSignal.timeout(3600000)]);

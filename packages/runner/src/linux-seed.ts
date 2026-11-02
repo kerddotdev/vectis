@@ -2,11 +2,13 @@ import { runnerPreinstallScript } from "./provision-scripts.js";
 import { preinstalledRunnerDirectory } from "./runner-release.js";
 import { VectisError } from "../../protocol/src/index.js";
 
+const minimumCaCertificatesVersion = "20260816ubuntu0.24.04.1";
+
 export const ubuntuImage = {
-  revision: "ubuntu-24.04-arm64-20260911",
-  url: "https://cloud-images.ubuntu.com/releases/noble/release-20260911/ubuntu-24.04-server-cloudimg-arm64.img",
-  sha256: "7b682958a67ff5de068e36de6af8b75fa645d296af5a70d6500527f6a33781db",
-  bytes: 619621888,
+  revision: "ubuntu-24.04-arm64-20261017",
+  url: "https://cloud-images.ubuntu.com/releases/noble/release-20261017/ubuntu-24.04-server-cloudimg-arm64.img",
+  sha256: "50e24e1fb79e89116e939d90aa7738f7af48c442fa1bc2510131e0b39c50348e",
+  bytes: 616522752,
 };
 // GitHub's own ARM64 Ubuntu image decides what a hosted runner guarantees a workflow, and its
 // definition is public: images/ubuntu/toolsets/toolset-2404-arm64.json in actions/runner-images,
@@ -117,11 +119,16 @@ test "$(uname -m)" = aarch64
 export DEBIAN_FRONTEND=noninteractive
 begin_step packages
 apt_get update
-apt_get install -y curl git openssh-server docker.io
+apt_get install -y ca-certificates curl git openssh-server docker.io
 apt_get install -y --no-install-recommends ${runnerPackages}
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
+begin_step trust-store
+if ! dpkg --compare-versions "$(dpkg-query -W -f='\${Version}' ca-certificates)" ge ${minimumCaCertificatesVersion}; then
+  printf 'E: ca-certificates ${minimumCaCertificatesVersion} or newer is required to distrust compromised eMudhra certificate chains.\\n' >&2
+  exit 1
+fi
 begin_step runner-download
 runuser -l vectis -c 'bash -s' <<'VECTIS_RUNNER'
 ${runnerPreinstallScript("linux", { dependencies: false })}VECTIS_RUNNER

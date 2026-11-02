@@ -44,7 +44,7 @@ export const analyze = action({
           ? ["ubuntu-24.04-arm", "ubuntu-24.04", "ubuntu-latest"]
           : environment.os === "windows"
             ? ["windows-11-arm", "windows-latest", "windows-2025", "windows-2022"]
-            : ["macos-26", "macos-latest"];
+            : ["macos-27", "macos-26", "macos-latest"];
       const targets = labels.map((from) => ({ from, to: `vectis-${environment.id}` }));
       const report = {
         baseBranch: source.baseBranch,

@@ -16,11 +16,12 @@ func installMac(arguments: [String]) async throws {
         throw HelperError(message: "The destination already exists. Use a new bundle directory.")
     }
     let restore = try await VZMacOSRestoreImage.image(from: restoreURL)
-    guard restore.operatingSystemVersion.majorVersion == 26,
+    // Mirrors supportedMacGuestMajors in packages/runner/src/macos-restore.ts.
+    guard [26, 27].contains(restore.operatingSystemVersion.majorVersion),
           let requirements = restore.mostFeaturefulSupportedConfiguration,
           cpu >= requirements.minimumSupportedCPUCount,
           memory * 1048576 >= requirements.minimumSupportedMemorySize else {
-        throw HelperError(message: "The restore image must support macOS 26 on this host with the requested CPU and memory.")
+        throw HelperError(message: "The restore image must be macOS 26 or 27 and supported on this host with the requested CPU and memory.")
     }
     guard mkdir(bundle.path, 0o700) == 0 else {
         throw HelperError(message: "Could not reserve a new macOS bundle directory.")
