@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
 import { mutation, internalQuery } from "./_generated/server.js";
 import { human } from "./auth.js";
+import { assertMachineCapacity } from "./machines.js";
 
 export const approve = mutation({
   args: {
@@ -61,6 +62,7 @@ export const approve = mutation({
         nextStep:
           "Use the existing machine connection. Replacing a connection requires a separate recovery flow.",
       });
+    await assertMachineCapacity(ctx, owner);
     const machineId = await ctx.db.insert("machines", {
       owner,
       localId: args.localId,
