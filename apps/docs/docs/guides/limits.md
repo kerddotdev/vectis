@@ -40,6 +40,7 @@ Override them with `--cpu`, `--memory-mib` and `--disk-gib`. Minimum disk sizes 
 
 | Limit                                              | Value                                             |
 | -------------------------------------------------- | ------------------------------------------------- |
+| Connected Macs per account                         | 100                                               |
 | Active runner leases per Mac                       | 100                                               |
 | Lifetime of a runner's just-in-time configuration  | 15 minutes                                        |
 | Automatic runner failures per job                  | 3                                                 |
@@ -64,14 +65,14 @@ In the cloud:
 | Record                                   | Kept                            |
 | ---------------------------------------- | ------------------------------- |
 | GitHub webhook deliveries                | 30 days                         |
-| Jobs                                     | 90 days                         |
+| Jobs, finished or not                    | 90 days since the last update   |
 | Operations                               | 90 days                         |
 | Runner leases                            | 30 days                         |
 | Controllers                              | 30 days after the grant expires |
 | Expired pairing and GitHub link requests | 1 day after they expire         |
 | Workflow migration previews              | 24 hours                        |
 
-Jobs, operations and leases that have not finished are not removed.
+Operations and runner leases that have not finished are not removed. GitHub ends every job long before 90 days, so a job record that has not changed in that time is removed even if Vectis never saw it finish.
 
 ## Hosts and guests
 

@@ -136,11 +136,13 @@ export function PairingApproval({
       setError(
         code === "machine_already_linked"
           ? "This Mac is already connected to an account. Its existing connection stays in place."
-          : code
-            ? `The request could not be approved (${code}). Start connecting again from your Mac.`
-            : issue instanceof Error
-              ? issue.message
-              : "The request could not be approved. Try again.",
+          : code === "machine_limit"
+            ? "Your account already has 100 connected Macs. Disconnect one you no longer use, then connect this Mac again."
+            : code
+              ? `The request could not be approved (${code}). Start connecting again from your Mac.`
+              : issue instanceof Error
+                ? issue.message
+                : "The request could not be approved. Try again.",
       );
       setState("idle");
     }

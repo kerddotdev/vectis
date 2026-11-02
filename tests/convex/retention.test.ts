@@ -9,7 +9,11 @@ const modules = {
   "../../convex/_generated/server.js": () => import("../../convex/_generated/server.js"),
 };
 const day = 24 * 60 * 60 * 1000;
-const job = (jobId: number, updatedAt: number, status: "queued" | "completed") => ({
+const job = (
+  jobId: number,
+  updatedAt: number,
+  status: "queued" | "waiting" | "in_progress" | "completed",
+) => ({
   installationId: 1,
   repositoryId: 2,
   jobId,
@@ -23,7 +27,7 @@ const job = (jobId: number, updatedAt: number, status: "queued" | "completed") =
   updatedAt,
 });
 
-test("the sweep deletes records past their retention window and keeps unfinished work", async () => {
+test("the sweep expires old jobs and released leases but keeps unreleased leases", async () => {
   vi.useFakeTimers();
   const t = convexTest(schema, modules);
   const now = Date.now();
@@ -41,6 +45,10 @@ test("the sweep deletes records past their retention window and keeps unfinished
     await ctx.db.insert("githubJobs", job(1, now - windows.jobs - day, "completed"));
     await ctx.db.insert("githubJobs", job(2, now - windows.jobs - day, "queued"));
     await ctx.db.insert("githubJobs", job(3, now - day, "completed"));
+    await ctx.db.insert("githubJobs", job(4, now - day, "queued"));
+    await ctx.db.insert("githubJobs", job(5, now - windows.jobs - day, "in_progress"));
+    await ctx.db.insert("githubJobs", job(6, now - windows.jobs - day, "waiting"));
+    await ctx.db.insert("githubJobs", job(7, now - windows.jobs, "in_progress"));
     const machineId = await ctx.db.insert("machines", {
       owner: "owner",
       localId: "local",
@@ -64,6 +72,10 @@ test("the sweep deletes records past their retention window and keeps unfinished
     for (const [key, phase, updatedAt] of [
       ["released", "released", now - windows.leases - day],
       ["ready", "ready", now - windows.leases - day],
+      ["preparing", "preparing", now - windows.leases - day],
+      ["attention", "action_required", now - windows.leases - day],
+      ["recent", "ready", now - day],
+      ["boundary", "ready", now - windows.leases],
     ] as const)
       await ctx.db.insert("runnerLeases", {
         owner: "owner",
@@ -122,9 +134,9 @@ test("the sweep deletes records past their retention window and keeps unfinished
   }));
   expect(left).toEqual({
     deliveries: ["recent"],
-    jobs: [2, 3],
+    jobs: [3, 4, 7],
     operations: ["fresh", "stuck"],
-    leases: ["ready"],
+    leases: ["ready", "preparing", "attention", "recent", "boundary"],
     controllers: 0,
     pairings: 0,
   });
