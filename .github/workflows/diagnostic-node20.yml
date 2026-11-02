@@ -1,0 +1,28 @@
+name: Node20 compatibility diagnostic
+
+on:
+  push:
+    branches: [diagnostic/v0.3.2-node20-20261102]
+
+permissions:
+  contents: read
+
+jobs:
+  node20:
+    runs-on: vectis-ubuntu
+    timeout-minutes: 10
+    env:
+      RELEASE_BASE_SHA: dc5d8cee295403111b29815845cdc7ae05cb6a05
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Legacy action uses the GitHub-selected Node24 engine
+        uses: ./.github/actions/node20-engine-proof
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '20'
+          package-manager-cache: false
+      - name: User Node20 compatibility and separate TLS diagnostics
+        run: node .github/actions/node20-engine-proof/proof.cjs 20

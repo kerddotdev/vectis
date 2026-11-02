@@ -1,0 +1,5 @@
+name: Node20 action engine proof
+description: Observe the actual engine of a legacy Node20 JavaScript action
+runs:
+  using: node20
+  main: proof.cjs
