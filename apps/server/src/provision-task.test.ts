@@ -37,8 +37,23 @@ vi.mock("../../../packages/runner/src/provision-image.js", () => ({
   cloneProvisionImage: vi.fn(),
 }));
 
+const delayGate = vi.hoisted(() => ({
+  intercept: undefined as
+    | undefined
+    | ((ms: number, signal: AbortSignal | undefined) => Promise<void>),
+}));
+vi.mock("node:timers/promises", async (original) => {
+  const timers = await original<typeof import("node:timers/promises")>();
+  const setTimeout = (delay?: number, value?: unknown, options?: { signal?: AbortSignal }) =>
+    delayGate.intercept
+      ? delayGate.intercept(delay ?? 1, options?.signal)
+      : timers.setTimeout(delay, value, options);
+  return { ...timers, setTimeout };
+});
+
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
+  delayGate.intercept = undefined;
   for (const cleanup of cleanups.reverse()) await cleanup();
   cleanups.length = 0;
   vi.restoreAllMocks();
@@ -544,25 +559,45 @@ test.each(["loginwindow", "shutdown-wait", "sync-delay"])(
 
 test("macOS waits five seconds after both syncs before stopping the helper", async () => {
   const { store, runtime, command, completed, stop } = await fixture({ os: "macos" });
-  let syncedAt = 0;
-  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => {
-    if (script === "sync") syncedAt = Date.now();
-    return { ...guestSuccess, exitCode: script === "sudo -n true" ? 1 : 0 };
-  });
-  const stopVm = stop.getMockImplementation();
-  stop.mockImplementation(async (id) => {
-    expect(Date.now() - syncedAt).toBeGreaterThanOrEqual(5000);
-    await stopVm?.(id);
-  });
+  vi.mocked(executeGuest).mockImplementation(async (_connection, script) => ({
+    ...guestSuccess,
+    exitCode: script === "sudo -n true" ? 1 : 0,
+  }));
+  const syncCount = () =>
+    vi.mocked(executeGuest).mock.calls.filter((call) => call[1] === "sync").length;
+  const delays: Array<{ ms: number; syncsBefore: number }> = [];
+  let release = () => {};
+  delayGate.intercept = (ms, signal) => {
+    delays.push({ ms, syncsBefore: syncCount() });
+    return new Promise<void>((resolve, reject) => {
+      release = resolve;
+      signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+    });
+  };
   const { operation } = store.accept("sync-delay", "sync-delay", command.type);
-  await (
-    await startProvision(store, runtime, operation, command, { shutdownTimeoutMs: 10 })
-  ).done;
-  expect(await completed(operation.id)).toMatchObject({
-    status: "succeeded",
-    result: { shutdown: "forced_stop_after_sync" },
+  const active = await startProvision(store, runtime, operation, command, {
+    shutdownTimeoutMs: 10,
   });
-}, 10000);
+  try {
+    await vi.waitFor(() => expect(delays).toHaveLength(1), { timeout: 5000 });
+    expect(delays).toEqual([{ ms: 5000, syncsBefore: 2 }]);
+    for (let tick = 0; tick < 5; tick++) await new Promise((resolve) => setImmediate(resolve));
+    expect(stop).not.toHaveBeenCalled();
+    release();
+    await active.done;
+    expect(stop).toHaveBeenCalledOnce();
+    expect(syncCount()).toBe(2);
+    expect(await completed(operation.id)).toMatchObject({
+      status: "succeeded",
+      result: { shutdown: "forced_stop_after_sync" },
+    });
+  } finally {
+    delayGate.intercept = undefined;
+    active.abort.abort();
+    release();
+    await active.done;
+  }
+});
 
 test("macOS notices guest shutdown during the sync delay without claiming a forced stop", async () => {
   const { store, runtime, command, completed, exit, stop } = await fixture({ os: "macos" });
