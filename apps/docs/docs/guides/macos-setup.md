@@ -69,7 +69,9 @@ Everything else follows the same rule as the other guests: `actions/setup-*` act
 
 In October 2026 the private keys of eight eMudhra intermediate certificate authorities were found to be recoverable. Their chains end at the `emSign ECC Root CA - G3` root and, through Sectigo cross-signatures, at `AAA Certificate Services`. Browsers block these chains, but Apple's `curl` and `git` read `/etc/ssl/cert.pem` and check neither revocation nor Certificate Transparency. On macOS 27.2 both still accepted the compromised chains on 2026-10-21.
 
-Until Apple updates that file, remove the two roots from it inside the guest while its setup console is open, before you finish setup. This changes only the guest, never the host. The Mozilla bundle that `curl` publishes no longer contains either root.
+Vectis handles this for runner jobs automatically. Before each runner starts, it writes a copy of `/etc/ssl/cert.pem` without the two roots into the runner's private directory and exports it as `SSL_CERT_FILE`, `CURL_CA_BUNDLE` and `GIT_SSL_CAINFO`, which jobs inherit. No sudo is needed and the guest trust store is untouched. If the source is unreadable or the filter cannot be verified, the runner does not start. Tools that ignore those variables and read their own bundle are unaffected by this filtering; tools that use Apple's system trust depend on Apple's own block.
+
+The manual step below stays optional, for interactive use inside the guest. Until Apple updates `/etc/ssl/cert.pem`, remove the two roots from it while the setup console is open, before you finish setup. This changes only the guest, never the host. The Mozilla bundle that `curl` publishes no longer contains either root.
 
 ```sh
 set -euo pipefail
@@ -117,7 +119,7 @@ Use [environment provisioning](/docs/guides/environments) to create a new `base.
 
 Provisioning uses this bounded shutdown sequence instead of the virtual power button, which can open a confirmation dialog in a logged-in macOS session:
 
-1. Over SSH as the guest user, run `osascript -e 'tell application "loginwindow" to «event aevtshut»'`, then wait up to 60 seconds for the VM to stop. Apple's SDK identifies `shut` as `kAEShutDown`; `rsdn` is `kAEShowShutdownDialog` and would request confirmation. The command does not invoke sudo. [Apple documents the loginwindow shutdown event](https://developer.apple.com/library/archive/qa/qa1134/_index.html), but whether macOS 26 and 27 accept it from the SSH session without Automation/TCC consent has not been verified. Guest applications can also cancel shutdown.
+1. Over SSH as the guest user, run `osascript -e 'tell application "loginwindow" to «event aevtshut»'`, then wait up to 60 seconds for the VM to stop. Apple's SDK identifies `shut` as `kAEShutDown`; `rsdn` is `kAEShowShutdownDialog` and would request confirmation. The command does not invoke sudo. [Apple documents the loginwindow shutdown event](https://developer.apple.com/library/archive/qa/qa1134/_index.html), but on a cold-booted clone with no logged-in console session (root-owned `/dev/console`) the AppleEvent was observed to fail with -10810, and provisioning then uses the fallbacks below. Guest applications can also cancel shutdown.
 2. If the VM is still running and `sudo -n true` succeeds, run `sudo -n /sbin/shutdown -h now` and wait up to another 60 seconds. SSH enrollment does not grant passwordless sudo, and provisioning never prompts for a password.
 3. If the guest remains running, complete two separate `sync` commands over SSH, wait 5 seconds, then force-stop the owned provisioning VM through the Apple helper. Each SSH command and helper stop has a 30-second limit. A failed or timed-out sync prevents image registration; failed or cancelled provisioning removes its partial output after confirmed VM cleanup. Unconfirmed cleanup requires inspection.
 
