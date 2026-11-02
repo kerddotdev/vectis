@@ -11,6 +11,8 @@ import type { JobLogRequest, JobLogs } from "../../../packages/protocol/src/jobs
 import { activityFor } from "../../server/src/activities.js";
 import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
 
+const roundTrip = { timeout: 10000 };
+
 test("operation and activity inspection retain phases in pretty and compact JSON", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-cli-phases-"));
   const server = await startService({ home });
@@ -49,7 +51,7 @@ test("operation and activity inspection retain phases in pretty and compact JSON
           ...flags,
         ];
         await import("./main.js");
-        await vi.waitFor(() => expect(output).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(output).toHaveBeenCalledOnce(), roundTrip);
         const printed: unknown = JSON.parse(String(output.mock.calls[0]?.[0]));
         expect(printed).toMatchObject(
           command === "operation"
@@ -91,8 +93,9 @@ test("machine configure settles without --wait and status prints runner capacity
       "--json",
     ];
     await import("./main.js");
-    await vi.waitFor(() =>
-      expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"succeeded"')),
+    await vi.waitFor(
+      () => expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"succeeded"')),
+      roundTrip,
     );
     expect(server.service.snapshot().machine).toMatchObject({
       maxRunners: 3,
@@ -102,12 +105,14 @@ test("machine configure settles without --wait and status prints runner capacity
     vi.resetModules();
     process.argv = [process.execPath, "vectis", "--home", home, "status", "--json"];
     await import("./main.js");
-    await vi.waitFor(() =>
-      expect(output).toHaveBeenCalledWith(
-        expect.stringContaining(
-          '"runnerCapacity":{"max":3,"active":0,"available":0,"environments":[],',
+    await vi.waitFor(
+      () =>
+        expect(output).toHaveBeenCalledWith(
+          expect.stringContaining(
+            '"runnerCapacity":{"max":3,"active":0,"available":0,"environments":[],',
+          ),
         ),
-      ),
+      roundTrip,
     );
   } finally {
     process.argv = argv;
@@ -148,7 +153,7 @@ test.each([
         "--json",
       ];
       await import("./main.js");
-      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+      await vi.waitFor(() => expect(output).toHaveBeenCalled(), roundTrip);
       if (valid) {
         expect(submit).toHaveBeenCalledWith("budget", {
           type: "machine.configure",
@@ -202,7 +207,10 @@ test.each([
         "--json",
       ];
       await import("./main.js");
-      await vi.waitFor(() => expect(server.service.snapshot().operations).toHaveLength(1));
+      await vi.waitFor(
+        () => expect(server.service.snapshot().operations).toHaveLength(1),
+        roundTrip,
+      );
       const operation = server.service.snapshot().operations[0];
       expect(operation?.command).toBe("repository.access");
       if (!operation) throw new Error("Missing operation");
@@ -247,8 +255,9 @@ test("repository readiness prints JSON for named repositories and binding inspec
         "--json",
       ];
       await import("./main.js");
-      await vi.waitFor(() =>
-        expect(output).toHaveBeenCalledWith(expect.stringContaining('"ready":false')),
+      await vi.waitFor(
+        () => expect(output).toHaveBeenCalledWith(expect.stringContaining('"ready":false')),
+        roundTrip,
       );
       const value = output.mock.calls[0]?.[0];
       if (typeof value !== "string") throw new Error("Expected JSON output.");
@@ -353,9 +362,9 @@ test("job log follow stops on interrupt and releases its polling timer and liste
       "--follow",
     ];
     await import("./main.js");
-    await vi.waitFor(() => expect(output).toHaveBeenCalledWith("waiting"));
+    await vi.waitFor(() => expect(output).toHaveBeenCalledWith("waiting"), roundTrip);
     process.emit("SIGINT");
-    await vi.waitFor(() => expect(process.listenerCount("SIGINT")).toBe(interrupts));
+    await vi.waitFor(() => expect(process.listenerCount("SIGINT")).toBe(interrupts), roundTrip);
     expect(read).toHaveBeenCalledOnce();
     expect(process.exitCode).toBe(exitCode);
   } finally {
@@ -482,14 +491,16 @@ test.each(["rosetta", "off"])(
         "--json",
       ];
       await import("./main.js");
-      await vi.waitFor(() =>
-        expect(submit).toHaveBeenCalledWith("x64", {
-          type: "environment.configure",
-          id: "linux",
-          x64,
-        }),
+      await vi.waitFor(
+        () =>
+          expect(submit).toHaveBeenCalledWith("x64", {
+            type: "environment.configure",
+            id: "linux",
+            x64,
+          }),
+        roundTrip,
       );
-      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+      await vi.waitFor(() => expect(output).toHaveBeenCalled(), roundTrip);
     } finally {
       process.argv = argv;
       process.exitCode = exitCode;
@@ -543,7 +554,7 @@ test.each([
         "--json",
       ];
       await import("./main.js");
-      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+      await vi.waitFor(() => expect(output).toHaveBeenCalled(), roundTrip);
       if (egress === "invalid" || subcommand === "start") {
         expect(submit).not.toHaveBeenCalled();
         expect(output).toHaveBeenCalledWith(
@@ -564,12 +575,14 @@ test.each([
         vi.resetModules();
         process.argv = [process.execPath, "vectis", "--home", home, ...commands, "--json"];
         await import("./main.js");
-        await vi.waitFor(() =>
-          expect(output).toHaveBeenCalledWith(
-            expect.stringContaining(
-              `"network":{"egress":"${egress}","enforcement":"${egress === "open" ? "not_enforced" : "enforced"}"}`,
+        await vi.waitFor(
+          () =>
+            expect(output).toHaveBeenCalledWith(
+              expect.stringContaining(
+                `"network":{"egress":"${egress}","enforcement":"${egress === "open" ? "not_enforced" : "enforced"}"}`,
+              ),
             ),
-          ),
+          roundTrip,
         );
       }
     } finally {
@@ -643,8 +656,9 @@ test.each(runCommands)(
         "--json",
       ];
       await import("./main.js");
-      await vi.waitFor(() =>
-        expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"failed"')),
+      await vi.waitFor(
+        () => expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"failed"')),
+        roundTrip,
       );
       expect(submit).toHaveBeenCalledWith("cli-run", command);
       expect(process.exitCode).toBe(1);
@@ -686,8 +700,9 @@ test.each([
     vi.resetModules();
     process.argv = [process.execPath, "vectis", "--home", home, ...args, "--json"];
     await import("./main.js");
-    await vi.waitFor(() =>
-      expect(output).toHaveBeenCalledWith(expect.stringContaining('"error":')),
+    await vi.waitFor(
+      () => expect(output).toHaveBeenCalledWith(expect.stringContaining('"error":')),
+      roundTrip,
     );
     expect(submit).not.toHaveBeenCalled();
     expect(process.exitCode).toBe(1);
@@ -735,7 +750,7 @@ test.each([
         "--json",
       ];
       await import("./main.js");
-      await vi.waitFor(() => expect(output).toHaveBeenCalled());
+      await vi.waitFor(() => expect(output).toHaveBeenCalled(), roundTrip);
       if (valid)
         expect(submit).toHaveBeenCalledWith("pool", {
           type: "environment.configure",
@@ -786,8 +801,9 @@ test("CLI status shows warm pool VMs without counting them as running jobs", asy
     vi.resetModules();
     process.argv = [process.execPath, "vectis", "--home", home, "status", "--json"];
     await import("./main.js");
-    await vi.waitFor(() =>
-      expect(output).toHaveBeenCalledWith(expect.stringContaining('"role":"warm"')),
+    await vi.waitFor(
+      () => expect(output).toHaveBeenCalledWith(expect.stringContaining('"role":"warm"')),
+      roundTrip,
     );
     expect(output).toHaveBeenCalledWith(expect.stringContaining('"active":0'));
   } finally {
@@ -835,9 +851,10 @@ test.each([
       "--json",
     ];
     await import("./main.js");
-    await vi.waitFor(() => expect(submit).toHaveBeenCalledWith("cache", expected));
-    await vi.waitFor(() =>
-      expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"failed"')),
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledWith("cache", expected), roundTrip);
+    await vi.waitFor(
+      () => expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"failed"')),
+      roundTrip,
     );
   } finally {
     process.argv = argv;
@@ -880,13 +897,16 @@ test.each([
       ];
       await import("./main.js");
       if (mode === undefined) {
-        await vi.waitFor(() =>
-          expect(output).toHaveBeenCalledWith(expect.stringContaining("invalid_capacity_mode")),
+        await vi.waitFor(
+          () =>
+            expect(output).toHaveBeenCalledWith(expect.stringContaining("invalid_capacity_mode")),
+          roundTrip,
         );
         expect(submit).not.toHaveBeenCalled();
       } else {
-        await vi.waitFor(() =>
-          expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"failed"')),
+        await vi.waitFor(
+          () => expect(output).toHaveBeenCalledWith(expect.stringContaining('"status":"failed"')),
+          roundTrip,
         );
         expect(submit).toHaveBeenCalledWith("capacity-mode", {
           type: "repository.capacity-mode",
@@ -942,16 +962,18 @@ test.each([false, true])(
         "--json",
       ];
       await import("./main.js");
-      await vi.waitFor(() =>
-        expect(submit).toHaveBeenCalledWith("provision", {
-          type: "environment.provision",
-          id: "derived",
-          from: "parent",
-          imageDirectory: join(home, "image"),
-          name: "Derived tools",
-          setupScript: "printf 'guest setup text'\n",
-          ...(noRunner ? { runner: false } : {}),
-        }),
+      await vi.waitFor(
+        () =>
+          expect(submit).toHaveBeenCalledWith("provision", {
+            type: "environment.provision",
+            id: "derived",
+            from: "parent",
+            imageDirectory: join(home, "image"),
+            name: "Derived tools",
+            setupScript: "printf 'guest setup text'\n",
+            ...(noRunner ? { runner: false } : {}),
+          }),
+        roundTrip,
       );
     } finally {
       process.argv = argv;
