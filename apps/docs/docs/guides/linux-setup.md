@@ -39,6 +39,8 @@ Deliberately absent: language runtimes and their version managers, databases, br
 
 Docker container jobs (`container:`) and service containers (`services:`) are supported on the Ubuntu environment and covered by the environment validation workflow.
 
+Newly prepared images append `console=hvc0` to GRUB without removing existing consoles. They enable kernel warning/error output and 60-second hung-task reporting without panic. Apple-helper Linux instances retain bounded host serial logs independently of SSH; see [Troubleshooting](/docs/guides/troubleshooting#linux-guest-connection-or-storage-failures). Existing images need re-preparation for this kernel configuration. macOS and Windows serial consoles are not covered.
+
 ## Run x86_64 Linux tools
 
 Enable Rosetta per Linux environment to run x86_64 Linux binaries and Docker images requested with `docker run --platform linux/amd64`. The Mac must have Rosetta installed, and the Linux image must have been prepared with Rosetta guest support. Older images need re-preparation; enabling the option alone does not update an image. Prepare a new Linux environment and reconnect its repositories if the existing image lacks support.

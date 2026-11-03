@@ -1,3 +1,4 @@
+import { createSerialLog } from "./serial-log.js";
 import type { CacheDisk } from "./cache-volume.js";
 import { validateEnvironmentEgress } from "./environment-network.js";
 import { windowsVmArguments } from "./windows-arguments.js";
@@ -179,6 +180,7 @@ export class VmRuntime {
     const directory = this.directoryFor(id, environment);
     await mkdir(directory, { mode: 0o700 });
     let launched = false;
+    let serial: Awaited<ReturnType<typeof createSerialLog>> | undefined;
     try {
       signal?.throwIfAborted();
       const cachePath = cacheDisk ? join(directory, "cache.img") : undefined;
@@ -272,11 +274,13 @@ export class VmRuntime {
         ),
       );
       signal?.throwIfAborted();
+      if (environment.os === "linux") serial = await createSerialLog(this.options.home, id);
+      signal?.throwIfAborted();
       const child = spawn(
         supervised ? process.execPath : executable,
         supervised ? [supervisor, executable, ...args] : args,
         {
-          stdio: ["pipe", "pipe", supervised ? "pipe" : "ignore"],
+          stdio: ["pipe", "pipe", supervised || serial ? "pipe" : "ignore"],
           detached: false,
           ...(supervised ? { cwd: directory } : {}),
           env: {
@@ -290,11 +294,13 @@ export class VmRuntime {
         },
       );
       launched = true;
+      if (serial && child.stderr) serial.attach(child.stderr);
       child.stdin?.on("error", () => {});
       const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
       const settled = closed.then(async () => {
         let cleaned = false;
         try {
+          await serial?.close().catch(() => {});
           if (cachePath && cacheDisk && typeof cacheDisk !== "string")
             await cacheDisk.stopped(cachePath);
           await removeInstanceDirectory(
@@ -357,7 +363,10 @@ export class VmRuntime {
       this.owned.set(id, ready);
       return ready;
     } catch (error) {
-      if (!launched) await removeInstanceDirectory(directory);
+      if (!launched) {
+        await serial?.close().catch(() => {});
+        await removeInstanceDirectory(directory);
+      }
       throw error;
     }
   }

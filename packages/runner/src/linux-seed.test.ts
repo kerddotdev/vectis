@@ -433,3 +433,18 @@ test("Rosetta binfmt matches x86_64 executables and shared objects with containe
   elf32[4] = 1;
   expect(matches(elf32)).toBe(false);
 });
+
+test("kernel console setup preserves existing GRUB arguments and configures nonfatal stall reporting", () => {
+  const dropin = content("/etc/default/grub.d/99-vectis-console.cfg");
+  const result = spawnSync("/bin/bash", ["-s"], {
+    input: `GRUB_CMDLINE_LINUX_DEFAULT='quiet console=ttyAMA0'\n${dropin}\nprintf '%s' "$GRUB_CMDLINE_LINUX_DEFAULT"`,
+    encoding: "utf8",
+  });
+  expect(result.status).toBe(0);
+  expect(result.stdout).toBe("quiet console=ttyAMA0 console=hvc0");
+  const sysctl = content("/etc/sysctl.d/99-vectis-diagnostics.conf");
+  expect(sysctl).toContain("kernel.hung_task_timeout_secs = 60");
+  expect(sysctl).toContain("kernel.hung_task_panic = 0");
+  expect(sysctl).toContain("kernel.printk = 5 4 1 7");
+  expect(content("/opt/vectis/prepare.sh")).toContain("update-grub\nsysctl --system");
+});
