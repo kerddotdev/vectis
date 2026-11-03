@@ -4,6 +4,7 @@ import { Schema } from "effect";
 import { bootAutomaticMac } from "../../../packages/runner/src/macos-automatic-boot.js";
 import {
   enrollAutomaticMac,
+  MacEnrollmentError,
   macCommandLineTools,
   macSetupPassword,
   waitForMacSsh,
@@ -72,7 +73,7 @@ export async function automateMacSetup(
     await enrollAutomaticMac(
       connection,
       password,
-      AbortSignal.any([signal, AbortSignal.timeout(120000)]),
+      AbortSignal.any([signal, AbortSignal.timeout(360000)]),
     );
     password = "";
     progress("macos.installing_clt", "Installing Apple Command Line Tools (up to 30 minutes).");
@@ -144,6 +145,30 @@ export async function automateMacSetup(
         environmentId: environment.id,
         phase: "registered",
         setupMode: "automatic",
+      },
+    });
+  } catch (error) {
+    if (!(error instanceof MacEnrollmentError)) throw error;
+    const current = Schema.decodeUnknownSync(MacInstallationRecord)(
+      store.get("macInstallation", record.id),
+    );
+    store.put("macInstallation", record.id, { ...current, phase: "setup_required" });
+    store.update(operation, {
+      status: signal.aborted ? "cancelled" : "action_required",
+      message: signal.aborted
+        ? "Automatic macOS setup stopped. The bundle is preserved."
+        : "Automatic macOS setup needs attention at macos.enrolling. The bundle is preserved.",
+      result: {
+        setupId: record.id,
+        bundle,
+        build: record.build,
+        phase: "setup_required",
+        setupMode: "automatic",
+        failedStep: "macos.enrolling",
+        code: "macos_automatic_setup_incomplete",
+        diagnostics: error.diagnostics,
+        nextStep:
+          "Open the macOS setup console to inspect the guest. Complete SSH enrollment if needed, install Command Line Tools or full Xcode, then verify and finish this same setup. If the generated account password is needed, reset it using guest macOS Recovery; Vectis does not retain it.",
       },
     });
   } finally {

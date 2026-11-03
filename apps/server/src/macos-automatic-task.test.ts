@@ -79,9 +79,11 @@ test.each([false, true])(
   },
 );
 
-test.each([true, false])(
+test.each(["success", "tools_failure", "enrollment_failure"])(
   "automatic pipeline registers only after toolchain, verification and clean shutdown: %s",
-  async (toolsAvailable) => {
+  async (outcome) => {
+    const toolsAvailable = outcome !== "tools_failure";
+    const succeeds = outcome === "success";
     const bootModule = await import("../../../packages/runner/src/macos-automatic-boot.js");
     const automaticModule = await import("../../../packages/runner/src/macos-automatic.js");
     const accessModule = await import("../../../packages/runner/src/macos-access.js");
@@ -104,7 +106,12 @@ test.each([true, false])(
       vi.spyOn(processes, "runProcess").mockResolvedValue("true\n"),
       vi.spyOn(addressModule, "waitForGuestAddress").mockResolvedValue("192.168.64.20"),
       vi.spyOn(automaticModule, "waitForMacSsh").mockResolvedValue(),
-      vi.spyOn(automaticModule, "enrollAutomaticMac").mockResolvedValue(),
+      vi.spyOn(automaticModule, "enrollAutomaticMac").mockImplementation(async () => {
+        if (outcome === "enrollment_failure")
+          throw new automaticModule.MacEnrollmentError(
+            "step: enroll.sudo_check\nprovisioned user lacks administrator rights",
+          );
+      }),
       vi.spyOn(accessModule, "prepareMacAccess").mockImplementation(async (directory) => ({
         path: join(directory, "connect.command"),
         connection: {
@@ -170,15 +177,23 @@ test.each([true, false])(
       await service.drain();
       await vi.waitFor(() =>
         expect(store.snapshot().operations.find((item) => item.id === operation.id)?.status).toBe(
-          toolsAvailable ? "succeeded" : "action_required",
+          succeeds ? "succeeded" : "action_required",
         ),
       );
-      expect(store.snapshot().environments).toHaveLength(toolsAvailable ? 1 : 0);
+      expect(store.snapshot().environments).toHaveLength(succeeds ? 1 : 0);
       expect(store.get("macInstallation", operation.id)).toMatchObject({
-        phase: toolsAvailable ? "registered" : "setup_required",
+        phase: succeeds ? "registered" : "setup_required",
         bundle,
       });
-      expect(runtimeValidation).toHaveBeenCalledTimes(toolsAvailable ? 1 : 0);
+      expect(runtimeValidation).toHaveBeenCalledTimes(succeeds ? 1 : 0);
+      if (outcome === "enrollment_failure") {
+        expect(store.operation(operation.id)?.result).toMatchObject({
+          failedStep: "macos.enrolling",
+          code: "macos_automatic_setup_incomplete",
+          diagnostics: "step: enroll.sudo_check\nprovisioned user lacks administrator rights",
+        });
+        expect(guest).not.toHaveBeenCalled();
+      }
       const password = boot.mock.calls[0]?.[7];
       expect(password).toBeTruthy();
       expect(JSON.stringify(store.snapshot())).not.toContain(password);
