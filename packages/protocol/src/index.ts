@@ -211,6 +211,8 @@ export const RunnerCapacity = Schema.Struct({
       hostMemoryMiB: Schema.Number,
       pressure: Schema.Literals(["normal", "warning", "critical"]),
       pressureKnown: Schema.optional(Schema.Boolean),
+      swapUsedRatio: Schema.optional(Schema.Number),
+      compressorRatio: Schema.optional(Schema.Number),
     }),
   ),
 });

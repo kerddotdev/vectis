@@ -431,11 +431,36 @@ test.each(["unidentified Apple process", "missing XPC row", "ps failure"])(
       mode === "missing XPC row" ? 500 : undefined,
     );
     capacity(state, host, { probe: measured });
-    await vi.waitFor(() => expect(read).toHaveResolvedTimes(mode === "ps failure" ? 1 : 2));
+    await vi.waitFor(() => expect(read).toHaveResolvedTimes(mode === "ps failure" ? 2 : 3));
     expect(capacity(state, host, { probe: measured })).toMatchObject({
       available: 0,
       budget: { memoryCommittedMiB: environment.memoryMiB },
     });
     expect(admit(state, environment, host, 1, measured)?.code).toBe("memory_budget_exceeded");
+  },
+);
+
+test("heavy swap use alone does not gate admission", () => {
+  const measured: ResourceProbe = () => ({ ...probe([]), swapUsedRatio: 0.95 });
+  expect(admit(snapshot(), environment, host, 1, measured)).toBeUndefined();
+});
+
+test.each([["compressorRatio", 0.25]] as const)(
+  "%s gates admission at its threshold",
+  (field, threshold) => {
+    const state = snapshot();
+    for (const value of [threshold, threshold + 0.01]) {
+      const measured: ResourceProbe = () => ({ ...probe([]), [field]: value });
+      expect(admit(state, environment, host, 1, measured)).toMatchObject({
+        code: "memory_pressure",
+      });
+      expect(capacity(state, host, { probe: measured })).toMatchObject({
+        available: 0,
+        budget: { [field]: value },
+      });
+    }
+    const below: ResourceProbe = () => ({ ...probe([]), [field]: threshold - 0.01 });
+    expect(admit(state, environment, host, 1, below)).toBeUndefined();
+    expect(admit(state, environment, host, 1, probe)).toBeUndefined();
   },
 );

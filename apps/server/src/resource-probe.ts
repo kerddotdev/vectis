@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { totalmem } from "node:os";
 import { promisify } from "node:util";
 import { appleVmProcessPid } from "../../../packages/runner/src/apple.js";
 import type { Environment, Instance } from "../../../packages/protocol/src/index.js";
@@ -8,6 +9,8 @@ export type ResourceUsage = {
   footprintsMiB: ReadonlyMap<string, number>;
   pressure: Pressure;
   pressureKnown: boolean;
+  swapUsedRatio?: number;
+  compressorRatio?: number;
 };
 export type ResourceProbe = (
   instances: readonly Instance[],
@@ -22,12 +25,30 @@ async function readResource(file: string, args: string[]): Promise<string> {
 
 type Measurement = { value?: string; expiresAt: number; pending: boolean };
 
+export function parseSwapUsedRatio(text: string): number | undefined {
+  const match = /total\s*=\s*([\d.]+)([KMGTP])\s+used\s*=\s*([\d.]+)([KMGTP])/i.exec(text);
+  if (!match || !match[2] || !match[4]) return undefined;
+  const units = "KMGTP";
+  const total = Number(match[1]) * 1024 ** units.indexOf(match[2].toUpperCase());
+  const used = Number(match[3]) * 1024 ** units.indexOf(match[4].toUpperCase());
+  return total > 0 && Number.isFinite(total) && Number.isFinite(used) ? used / total : undefined;
+}
+
+export function parseCompressorRatio(text: string, memoryBytes: number): number | undefined {
+  const page = /page size of (\d+) bytes/.exec(text);
+  const occupied = /^Pages occupied by compressor:\s*(\d+)\./m.exec(text);
+  if (!page || !occupied || !Number.isFinite(memoryBytes) || memoryBytes <= 0) return undefined;
+  const bytes = Number(page[1]) * Number(occupied[1]);
+  return Number.isSafeInteger(bytes) && Number(page[1]) > 0 ? bytes / memoryBytes : undefined;
+}
+
 export function createResourceProbe(
   read = readResource,
   now = Date.now,
   vmProcessPid = appleVmProcessPid,
 ): ResourceProbe {
   const processes: Measurement = { expiresAt: 0, pending: false };
+  const vmStats: Measurement = { expiresAt: 0, pending: false };
   const pressure: Measurement = { expiresAt: 0, pending: false };
   function cached(entry: Measurement, file: string, args: string[]) {
     if (!entry.pending && now() >= entry.expiresAt) {
@@ -102,11 +123,19 @@ export function createResourceProbe(
     const value = cached(pressure, "/usr/sbin/sysctl", [
       "-n",
       "kern.memorystatus_vm_pressure_level",
+      "vm.swapusage",
     ]);
+    const level = value?.split("\n")[0];
+    const swapUsedRatio = value === undefined ? undefined : parseSwapUsedRatio(value);
+    const stats = cached(vmStats, "/usr/bin/vm_stat", []);
+    const compressorRatio =
+      stats === undefined ? undefined : parseCompressorRatio(stats, totalmem());
     return {
       footprintsMiB,
-      pressure: value === "2" ? "warning" : value === "4" ? "critical" : "normal",
-      pressureKnown: value === "1" || value === "2" || value === "4",
+      pressure: level === "2" ? "warning" : level === "4" ? "critical" : "normal",
+      pressureKnown: level === "1" || level === "2" || level === "4",
+      ...(swapUsedRatio === undefined ? {} : { swapUsedRatio }),
+      ...(compressorRatio === undefined ? {} : { compressorRatio }),
     };
   };
 }
