@@ -660,7 +660,7 @@ async function watchIdleRunner(
       continue;
     }
     offlineSince = undefined;
-    if (now() - idleSince < timeoutMs) continue;
+    if (listenerReportedJobStart() || now() - idleSince < timeoutMs) continue;
     try {
       if (controls.needed && (await controls.needed(signal))) continue;
     } catch {

@@ -1538,6 +1538,24 @@ test("listener-reported job start prevents status failures from aborting the run
   expect(await done).toMatchObject({ status: "succeeded" });
 });
 
+test("listener-reported job start prevents idle release", async () => {
+  const { broker, done, complete, controls } = await listeningFixture(false, {
+    pollIntervalMs: 10000,
+    idleTimeoutMs: 20000,
+  });
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 0,
+    stdout: `${jobStartedMarker}\n${Date.now()}\n`,
+    stderr: "",
+    truncated: false,
+  });
+  broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
+  await vi.advanceTimersByTimeAsync(40000);
+  expect(controls.stop).not.toHaveBeenCalled();
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
 test("offline failure survives unconfirmed VM cleanup", async () => {
   const { controls, broker, done } = await listeningFixture(false, {
     pollIntervalMs: 10,
