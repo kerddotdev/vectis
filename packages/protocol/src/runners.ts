@@ -82,6 +82,7 @@ export const RunnerProgress = Schema.Struct({
     }),
   ),
   diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(16384))),
+  recoveryCause: Schema.optional(Schema.Struct({ code: Schema.String, message: Schema.String })),
   cause: Schema.optional(
     Schema.Struct({
       code: Schema.Literal("runner_assignment_rejected"),

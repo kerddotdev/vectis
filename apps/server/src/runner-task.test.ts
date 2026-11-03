@@ -101,6 +101,31 @@ function fixture(os: Environment["os"] = "linux") {
   return { controls, broker, events };
 }
 
+test("persists an infrastructure failure before uncertain cleanup", async () => {
+  const { controls } = fixture();
+  const cause = new VectisError("storage_io_error", "Guest disk I/O failed.");
+  vi.mocked(readyGuest).mockRejectedValueOnce(cause);
+  controls.stop.mockImplementationOnce(async () => {
+    expect(controls.progress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recoveryCause: { code: cause.code, message: cause.message },
+      }),
+    );
+    throw new Error("stop uncertain");
+  });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({
+    status: "action_required",
+    progress: { recoveryCause: { code: cause.code, message: cause.message } },
+  });
+});
+
 test.each(["linux", "macos", "windows"] as const)(
   "%s cache privilege failure stops before installation and registration and discards the fork",
   async (os) => {
@@ -1516,7 +1541,7 @@ test("offline failure survives unconfirmed VM cleanup", async () => {
   expect(await done).toMatchObject({
     status: "action_required",
     code: "runner_cleanup_required",
-    recoveryCause: { code: "runner_offline" },
+    progress: { recoveryCause: { code: "runner_offline" } },
   });
   expect(broker.releaseRunner).not.toHaveBeenCalled();
 });
