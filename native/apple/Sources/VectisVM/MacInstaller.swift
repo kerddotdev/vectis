@@ -75,7 +75,7 @@ func installMac(arguments: [String]) async throws {
     }
     emit("installation.started", message: restore.buildVersion)
     try await installer.install()
-    let metadata: [String: Any] = ["build": restore.buildVersion, "state": "action_required", "nextStep": "Complete macOS Setup Assistant before preparing the runner."]
+    let metadata: [String: Any] = ["build": restore.buildVersion, "majorVersion": restore.operatingSystemVersion.majorVersion, "state": "action_required", "nextStep": "Complete macOS Setup Assistant before preparing the runner."]
     try JSONSerialization.data(withJSONObject: metadata).write(to: bundle.appendingPathComponent("installation.json"), options: .atomic)
     emit("installation.action_required", message: "Complete macOS Setup Assistant before preparing the runner.")
 }

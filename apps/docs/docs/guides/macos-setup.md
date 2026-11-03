@@ -3,7 +3,7 @@ title: Install a macOS guest
 description: Restore macOS into an owned local bundle and open its setup console.
 ---
 
-Vectis downloads macOS 27.2 (build 26B123) directly from Apple and verifies its pinned SHA-256 and exact size before installation. The selected revision does not change when Apple publishes a new release. You can instead supply an existing Apple macOS 26 or 27 IPSW. A macOS 27 guest needs a host running macOS 27 or later; the Apple virtualization helper checks host and restore-image compatibility. Guest SSH enrollment uses a generated local connection script and explicit guest verification. Xcode is not installed implicitly.
+Vectis downloads macOS 27.2 (build 26B123) directly from Apple and verifies its pinned SHA-256 and exact size before installation. The selected revision does not change when Apple publishes a new release. You can instead supply an existing Apple macOS 26 or 27 IPSW. A macOS 27 guest needs a host running macOS 27 or later; the Apple virtualization helper checks host and restore-image compatibility. On a macOS 27 or later host, a newly restored macOS 27 guest is automatically provisioned when the Apple helper was built with Xcode 27 or later. Full Xcode is not installed implicitly.
 
 Choose existing image and disposable VM directories. The image volume needs at least 70 GiB free for automatic download and installation, or 40 GiB with an existing IPSW. Stop existing VMs and resolve interrupted runner operations first. The installer uses a new bundle; it never replaces a registered base image.
 
@@ -17,7 +17,21 @@ vectis operation wait <operation-id> --timeout 3600000 --json
 
 For existing media, add `--restore-path /absolute/path/to/restore.ipsw`. In desktop **Environments > Prepare a guest image**, select **macOS 27 ARM64**. Leave the optional restore path empty to download, or choose an existing image. CLI, desktop and MCP all use the same durable service operation. Closing the desktop does not cancel installation.
 
-A completed restore reports `action_required`, a `setupId` and the installed bundle path. This means the operating system is installed, not that a runner is ready.
+## Automatic setup
+
+For a supported host, helper and restored guest, installation creates the local `vectis` account, enables automatic login and Remote Login, enrolls a dedicated SSH key, grants guest-only passwordless sudo, disables SSH password and keyboard-interactive authentication, installs Apple Command Line Tools, and runs the same readiness checks as manual verification. It then cleanly shuts down the guest and registers a ready environment. The operation reports `setupMode: automatic`, progress in `step`, and `phase: registered` only after registration.
+
+The service generates a random guest password in memory. It passes it over helper stdin and uses a private local askpass socket for one password-authenticated SSH session, feeding sudo over stdin. The password is never written to files, arguments, environment variables, operation results or the cloud, and is released after enrollment. The first SSH connection uses `StrictHostKeyChecking=accept-new` against this setup's isolated known-hosts file. This is trust on first use: it trusts the address discovered for the VM Vectis just restored, without human fingerprint confirmation. A network attacker able to impersonate that guest during enrollment could intercept it. All subsequent connections require the pinned host key and dedicated guest identity.
+
+Command Line Tools installation is bounded to 30 minutes and uses Apple's `softwareupdate` on-demand catalog. Full Xcode, Apple ID sign-in, licenses and additional tools remain manual. Repository linking and a real Actions verification job are separate steps.
+
+Add `--manual-setup` (MCP command field `manualSetup: true`) to opt out. Hosts or guests older than macOS 27, and helpers compiled with older SDK toolchains, retain the manual flow below. The operation reports `setupMode: manual`.
+
+Failures return `action_required` with `failedStep` and a next step; cancellation stops the owned boot process. Both preserve the restored bundle. Open the same setup console, inspect guest state, complete missing tools or SSH enrollment, then verify and finish. Automatic provisioning is evaluated only on the first boot after restore and is never retried against an already provisioned guest. The generated password is not recoverable from Vectis. If enrollment failed before passwordless sudo was installed, use guest macOS Recovery to reset the local account password; automatic console login may still be available. After successful enrollment, the dedicated key and passwordless sudo remain available.
+
+## Manual setup
+
+A manual restore reports `action_required`, a `setupId` and the installed bundle path. This means the operating system is installed, not that a runner is ready.
 
 ```sh
 vectis environment open-macos-setup <setup-id> --json
@@ -59,7 +73,7 @@ Apple Virtualization NAT does not enforce egress filtering. The guest can reach 
 
 ## What the guest contains
 
-A macOS guest is whatever you install in its setup console. Vectis restores Apple's image, enrolls SSH and verifies the guest; it cannot install Xcode for you, because Apple does not permit redistributing it and it needs an Apple ID and tens of gigabytes.
+Automatic setup installs Apple Command Line Tools. For a manual setup, install your developer toolchain in the console. Full Xcode remains a manual installation requiring Apple licensing and potentially an Apple ID and tens of gigabytes.
 
 One thing is not optional. Without a developer toolchain the guest has no working `git`, so `actions/checkout` fails on its first step and almost no workflow gets further. Verification refuses such a guest and tells you what to install. While the setup console is open, either run `xcode-select --install` for Apple's Command Line Tools, which bring `git`, `clang`, `make` and the macOS SDK, or install the full Xcode and open it once to accept its license. Jobs that build with Xcode, sign, or need a specific Xcode version need the full install, not the Command Line Tools.
 

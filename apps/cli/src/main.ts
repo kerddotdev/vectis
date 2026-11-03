@@ -76,6 +76,7 @@ async function main() {
       "no-runner": { type: "boolean" },
       "restore-path": { type: "string" },
       "open-terminal": { type: "boolean" },
+      "manual-setup": { type: "boolean" },
       "iso-path": { type: "string" },
       "drivers-path": { type: "string" },
       "firmware-path": { type: "string" },
@@ -192,7 +193,7 @@ Environments
                                [--name <name>] [--setup-script <file>] [--no-runner]
   environment prepare-linux <id>  Prepare Ubuntu 24.04 with --image-directory and --storage-path
   environment resume <setup-id>   Continue an interrupted Ubuntu preparation
-  environment install-macos <id>  Install macOS 27 with --image-directory and --storage-path, optional --restore-path
+  environment install-macos <id>  Install macOS 27 with --image-directory and --storage-path, optional --restore-path, --manual-setup
   environment open-macos-setup <setup-id>     Open the guest console for Setup Assistant
   environment connect-macos-guest <setup-id>  Prepare guest SSH enrollment, optional --open-terminal
   environment verify-macos-guest <setup-id>   Verify guest SSH and unattended startup prerequisites
@@ -238,6 +239,7 @@ Options
   --memory-mib <MiB>            Memory (defaults: 4096, Windows 8192; at most 75% of host memory)
   --disk-gib <GiB>              Disk capacity (defaults: Ubuntu 32, macOS 64, Windows 96)
   --restore-path <file.ipsw>    Local macOS restore image instead of the pinned download
+  --manual-setup                Opt out of automatic macOS first-boot setup
   --open-terminal               Open Terminal with the guest enrollment script
   --iso-path, --drivers-path, --firmware-path, --firmware-vars-path <path>  Windows installation media
   --image-name <text>           Windows edition in the ISO (default: Windows 11 Pro)
@@ -764,6 +766,7 @@ Documentation: https://vectis.kerd.dev/docs
       id,
       name: values.name ?? "macOS 27 ARM64",
       restorePath: values["restore-path"],
+      manualSetup: values["manual-setup"] ? true : undefined,
       imageDirectory: values["image-directory"],
       storagePath: values["storage-path"],
       cpu: Number(values.cpu ?? 2),

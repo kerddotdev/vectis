@@ -72,15 +72,18 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
     var machine: VZVirtualMachine?
     var signals: [DispatchSourceSignal] = []
     var stopping = false
+    var provisionedBoot = false
     var input = Data()
 
     func start(arguments: [String]) async throws {
         var positional = Array(arguments.prefix(7))
+        var provision = false
         var rosetta = false
         var cachePath: String?
         var extra = Array(arguments.dropFirst(7))[...]
         while let option = extra.popFirst() {
-            if option == "--rosetta" && !rosetta { rosetta = true }
+            if option == "--provision" && !provision { provision = true }
+            else if option == "--rosetta" && !rosetta { rosetta = true }
             else if option == "--cache-disk" && cachePath == nil {
                 guard let path = extra.popFirst(), path.hasPrefix("/") else {
                     throw HelperError(message: "--cache-disk requires an absolute disk image path.")
@@ -186,6 +189,12 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
             source.resume()
             signals.append(source)
         }
+        let startOptions = VZMacOSVirtualMachineStartOptions()
+        if provision {
+            guard os == "macos" else { throw HelperError(message: "Provisioning requires macOS.") }
+            try configureProvisioning(startOptions)
+            provisionedBoot = true
+        }
         FileHandle.standardInput.readabilityHandler = { handle in
             let data = handle.availableData
             if data.isEmpty {
@@ -195,7 +204,11 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
                 Task { @MainActor in self.receive(data) }
             }
         }
-        try await vm.start()
+        if provision {
+            do { try await vm.start(options: startOptions) }
+            catch { throw HelperError(message: "Automatic macOS first boot failed.") }
+        }
+        else { try await vm.start() }
         for attempt in 0...10 {
             if let pid = virtualMachineProcessPid(disk: disk) {
                 emit("vm.process", pid: pid)
@@ -269,7 +282,7 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
     nonisolated func virtualMachine(_ virtualMachine: VZVirtualMachine, didStopWithError error: Error) {
         let message = error.localizedDescription
         Task { @MainActor in
-            emit("vm.error", message: message)
+            emit("vm.error", message: self.provisionedBoot ? "The virtual machine stopped with an error." : message)
             exit(1)
         }
     }
@@ -280,6 +293,10 @@ if showConsole { NSApplication.shared.setActivationPolicy(.regular) }
 let controller = Controller()
 Task { @MainActor in
     do {
+        if CommandLine.arguments.dropFirst().first == "provisioning-supported" {
+            print(provisioningSupported() ? "true" : "false")
+            exit(0)
+        }
         if CommandLine.arguments.dropFirst().first == "restore-info" {
             try await restoreImageInfo(arguments: CommandLine.arguments)
             exit(0)

@@ -14,7 +14,21 @@ const Progress = Schema.Struct({
   restoreDirectory: Schema.optional(Schema.String),
   nextStep: Schema.optional(Schema.String),
   phase: Schema.optional(Schema.String),
+  setupMode: Schema.optional(Schema.String),
+  step: Schema.optional(Schema.String),
+  failedStep: Schema.optional(Schema.String),
 });
+
+const automaticSteps: Record<string, string> = {
+  "macos.provisioning": "Creating the guest account",
+  "macos.waiting_ssh": "Waiting for guest SSH",
+  "macos.enrolling": "Enrolling the guest SSH key",
+  "macos.installing_clt": "Installing Command Line Tools",
+  "macos.verifying": "Verifying the guest",
+  "macos.shutting_down": "Shutting down the guest",
+  "macos.registering": "Registering the environment",
+};
+const stepLabel = (step: string | undefined) => step && (automaticSteps[step] ?? step);
 
 export function PreparationResult({
   result,
@@ -30,10 +44,11 @@ export function PreparationResult({
   const { submit } = useStateApi();
   const [confirmation, setConfirmation] = useState("");
   if (!Schema.is(Progress)(result)) return null;
+  const automatic = result.setupMode === "automatic";
   const discardable =
     macos && resumable && ["setup_required", "interrupted"].includes(result.phase ?? "");
   const actions = [
-    macos && result.phase === "setup_running",
+    macos && !automatic && result.phase === "setup_running",
     macos && result.phase === "ssh_enrollment",
     macos && result.phase === "ssh_verified",
     macos && result.phase === "setup_required",
@@ -42,6 +57,8 @@ export function PreparationResult({
   const details = (
     <Details
       items={[
+        ["Automatic setup", automatic && stepLabel(result.step)],
+        ["Failed step", stepLabel(result.failedStep)],
         ["Downloaded", result.receivedBytes !== undefined && formatBytes(result.receivedBytes)],
         ["Image directory", result.directory && <Mono>{result.directory}</Mono>],
         ["Restore download", result.restoreDirectory && <Mono>{result.restoreDirectory}</Mono>],
@@ -58,7 +75,7 @@ export function PreparationResult({
       )}
       {details}
       <div className="flex flex-wrap gap-2 empty:hidden">
-        {macos && result.phase === "setup_running" && (
+        {macos && !automatic && result.phase === "setup_running" && (
           <Button
             size="sm"
             onClick={() =>

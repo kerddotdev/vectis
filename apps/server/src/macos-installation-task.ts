@@ -1,3 +1,9 @@
+import {
+  automaticMacSetup,
+  installedMacMajor,
+} from "../../../packages/runner/src/macos-automatic.js";
+import { runProcess } from "../../../packages/runner/src/process.js";
+import { automateMacSetup } from "./macos-automatic-task.js";
 import { MacRestoreDownload, macosRestore } from "../../../packages/runner/src/macos-restore.js";
 import { hasReservedEnvironment } from "./preparation-state.js";
 import { access } from "node:fs/promises";
@@ -321,13 +327,64 @@ export async function startMacInstallation(
       });
     },
   )
-    .then(({ bundle, build }) => {
+    .then(async ({ bundle, build }) => {
       store.put("macInstallation", record.id, {
         ...record,
         phase: "setup_required",
         bundle,
         build,
       });
+      const supported =
+        !configuration.manualSetup &&
+        (
+          await runProcess(helper, ["provisioning-supported"], signal).catch(() => "false")
+        ).trim() === "true";
+      if (
+        automaticMacSetup(
+          supported,
+          await installedMacMajor(bundle).catch(() => 0),
+          configuration.manualSetup,
+        )
+      ) {
+        try {
+          await automateMacSetup(
+            store,
+            runtime,
+            operation,
+            { ...record, bundle, build },
+            helper,
+            bundle,
+            signal,
+          );
+        } catch {
+          const failed = store.snapshot().operations.find((item) => item.id === operation.id);
+          const failedStep = Schema.is(Schema.Struct({ step: Schema.String }))(failed?.result)
+            ? failed.result.step
+            : "macos.provisioning";
+          const current = Schema.decodeUnknownSync(MacInstallationRecord)(
+            store.get("macInstallation", record.id),
+          );
+          store.put("macInstallation", record.id, { ...current, phase: "setup_required" });
+          store.update(operation, {
+            status: signal.aborted ? "cancelled" : "action_required",
+            message: signal.aborted
+              ? "Automatic macOS setup stopped. The bundle is preserved."
+              : `Automatic macOS setup needs attention at ${failedStep}. The bundle is preserved.`,
+            result: {
+              setupId: record.id,
+              bundle,
+              build,
+              phase: "setup_required",
+              setupMode: "automatic",
+              failedStep,
+              code: "macos_automatic_setup_incomplete",
+              nextStep:
+                "Open the macOS setup console to inspect the guest. Complete SSH enrollment if needed, install Command Line Tools or full Xcode, then verify and finish this same setup. If the generated account password is needed, reset it using guest macOS Recovery; Vectis does not retain it.",
+            },
+          });
+        }
+        return;
+      }
       store.update(operation, {
         status: "action_required",
         message: "macOS installed. Guest Setup Assistant is still required.",
@@ -339,6 +396,7 @@ export async function startMacInstallation(
           build,
           phase: "setup_required",
           code: "guest_setup_required",
+          setupMode: "manual",
           nextStep:
             "Complete the guest Setup Assistant and configure guest-only SSH before registering this bundle as a ready runner. No runner has been registered.",
         },
