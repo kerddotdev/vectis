@@ -41,6 +41,7 @@ export interface OwnedInstance {
   readonly directory: string;
   readonly settled: Promise<void>;
   readonly macAddress?: string;
+  readonly vmPid?: number;
   readonly sshHost?: string;
   readonly sshPort?: number;
   readonly knownHostsPath?: string;
@@ -320,7 +321,7 @@ export class VmRuntime {
         void this.stop(id).catch(() => {});
       };
       signal?.addEventListener("abort", cancel, { once: true });
-      let network: { macAddress?: string; sshHost?: string; sshPort?: number } = {};
+      let network: { macAddress?: string; vmPid?: number; sshHost?: string; sshPort?: number } = {};
       try {
         signal?.throwIfAborted();
         if (environment.os === "windows")

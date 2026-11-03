@@ -15,7 +15,7 @@ import { resourceProbe, type ResourceProbe } from "./resource-probe.js";
 type Host = { cpus: number; memoryBytes: number };
 
 function memoryBudget(snapshot: Snapshot, host: Host, probe: ResourceProbe) {
-  const usage = probe(snapshot.instances);
+  const usage = probe(snapshot.instances, snapshot.environments);
   const hostMemoryMiB = host.memoryBytes / 1024 ** 2;
   let memoryCommittedMiB = 0;
   for (const instance of snapshot.instances) {
@@ -109,7 +109,7 @@ export function runnerCapacity(
     probe?: ResourceProbe;
   } = {},
 ): RunnerCapacity {
-  const usage = probe(snapshot.instances);
+  const usage = probe(snapshot.instances, snapshot.environments);
   const measured: ResourceProbe = () => usage;
   const max = snapshot.machine.maxRunners ?? defaultMaxRunners;
   const runners = snapshot.operations

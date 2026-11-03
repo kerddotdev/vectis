@@ -1,18 +1,20 @@
 import Foundation
 import AppKit
 import Virtualization
+import Darwin
 
 struct HelperError: Error { let message: String; var code: String? = nil }
 
 @MainActor
-func emit(_ event: String, message: String? = nil, macAddress: String? = nil, code: String? = nil) {
+func emit(_ event: String, message: String? = nil, macAddress: String? = nil, code: String? = nil, pid: pid_t? = nil) {
     if (event == "vm.stopped" || event == "vm.error" || event == "installation.action_required"),
        let path = ProcessInfo.processInfo.environment["VECTIS_EXIT_RECEIPT"],
        let id = ProcessInfo.processInfo.environment["VECTIS_INSTANCE_ID"],
        let receipt = try? JSONSerialization.data(withJSONObject: ["instanceId": id, "pid": getpid()]) {
         try? receipt.write(to: URL(fileURLWithPath: path), options: .atomic)
     }
-    var body = ["event": event]
+    var body: [String: Any] = ["event": event]
+    if let pid { body["pid"] = pid }
     if let message { body["message"] = message }
     if let code { body["code"] = code }
     if let macAddress { body["macAddress"] = macAddress }
@@ -20,6 +22,48 @@ func emit(_ event: String, message: String? = nil, macAddress: String? = nil, co
         FileHandle.standardOutput.write(data)
         FileHandle.standardOutput.write(Data([10]))
     }
+}
+
+func canonicalPath(_ path: String) -> String {
+    let resolved = URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+    return resolved.hasPrefix("/private/") ? String(resolved.dropFirst(8)) : resolved
+}
+
+func virtualMachineProcessPid(disk: URL) -> pid_t? {
+    let capacity = proc_listallpids(nil, 0)
+    guard capacity > 0 else { return nil }
+    var pids = [pid_t](repeating: 0, count: Int(capacity) + 256)
+    let count = pids.withUnsafeMutableBytes { proc_listallpids($0.baseAddress, Int32($0.count)) }
+    guard count > 0, count < pids.count else { return nil }
+    let executable = "/System/Library/Frameworks/Virtualization.framework/Versions/A/XPCServices/com.apple.Virtualization.VirtualMachine.xpc/Contents/MacOS/com.apple.Virtualization.VirtualMachine"
+    let diskPath = canonicalPath(disk.path)
+    var matches: [pid_t] = []
+    for pid in pids.prefix(Int(count)) where pid > 0 {
+        var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid, &path, UInt32(path.count)) > 0,
+              String(decoding: path.prefix(while: { $0 != 0 }).map { UInt8(bitPattern: $0) }, as: UTF8.self) == executable else { continue }
+        let size = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard size > 0 else { continue }
+        let stride = MemoryLayout<proc_fdinfo>.stride
+        var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: Int(size) / stride + 64)
+        let bytes = fds.withUnsafeMutableBytes {
+            proc_pidinfo(pid, PROC_PIDLISTFDS, 0, $0.baseAddress, Int32($0.count))
+        }
+        guard bytes > 0, Int(bytes) < fds.count * stride, Int(bytes) % stride == 0 else { continue }
+        for fd in fds.prefix(Int(bytes) / stride) where fd.proc_fdtype == PROX_FDTYPE_VNODE {
+            var info = vnode_fdinfowithpath()
+            let infoSize = Int32(MemoryLayout<vnode_fdinfowithpath>.size)
+            guard proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDVNODEPATHINFO, &info, infoSize) == infoSize else { continue }
+            let filePath = withUnsafeBytes(of: &info.pvip.vip_path) {
+                String(decoding: $0.prefix(while: { $0 != 0 }), as: UTF8.self)
+            }
+            if !filePath.isEmpty && canonicalPath(filePath) == diskPath {
+                matches.append(pid)
+                break
+            }
+        }
+    }
+    return matches.count == 1 ? matches.first : nil
 }
 
 @MainActor
@@ -146,6 +190,13 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
             }
         }
         try await vm.start()
+        for attempt in 0...10 {
+            if let pid = virtualMachineProcessPid(disk: disk) {
+                emit("vm.process", pid: pid)
+                break
+            }
+            if attempt < 10 { try await Task.sleep(for: .milliseconds(500)) }
+        }
         if arguments.last == "--console" {
             guard os == "macos" else { throw HelperError(message: "The graphical console requires macOS.") }
             let view = VZVirtualMachineView()
