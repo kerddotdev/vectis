@@ -343,6 +343,9 @@ export async function startMacInstallation(
             ? failed.result.failedStep
             : "macos.provisioning";
         const timedOut = automaticSignal.aborted && !abort.signal.aborted;
+        const diagnostics = Schema.is(Schema.Struct({ diagnostics: Schema.String }))(failed?.result)
+          ? failed.result.diagnostics
+          : undefined;
         const current = Schema.decodeUnknownSync(MacInstallationRecord)(
           store.get("macInstallation", record.id),
         );
@@ -362,6 +365,7 @@ export async function startMacInstallation(
             setupMode: "automatic",
             failedStep,
             code: "macos_automatic_setup_incomplete",
+            ...(diagnostics === undefined ? {} : { diagnostics }),
             nextStep:
               "Open the macOS setup console to inspect the guest. Complete SSH enrollment if needed, install Command Line Tools or full Xcode, then verify and finish this same setup. If the generated account password is needed, reset it using guest macOS Recovery; Vectis does not retain it.",
           },
