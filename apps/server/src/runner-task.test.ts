@@ -286,6 +286,17 @@ test("a failed warm health command stops the claim before a cold start", async (
     stderr: "",
     truncated: false,
   });
+  controls.stop.mockImplementationOnce(async () => {
+    expect(controls.progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        recoveryCause: {
+          code: "guest_unavailable",
+          message: "The warm VM failed its SSH health check.",
+        },
+      }),
+    );
+    events.push("stop");
+  });
   controls.start.mockImplementationOnce(async () => {
     expect(events).toEqual(["stop"]);
     expect(broker.prepareRunner).not.toHaveBeenCalled();
@@ -306,6 +317,7 @@ test("a failed warm health command stops the claim before a cold start", async (
   );
   expect(result.status).toBe("succeeded");
   expect(result.progress.instanceId).toBe("cold");
+  expect(result.progress.recoveryCause).toBeUndefined();
   expect(result.progress.phases?.map((phase) => phase.name)).toEqual([
     "queued_locally",
     "warm_takeover",
@@ -320,6 +332,38 @@ test("a failed warm health command stops the claim before a cold start", async (
   expect(result.progress.phases?.every((phase) => phase.endedAt !== undefined)).toBe(true);
   expect(readyGuest).toHaveBeenCalledOnce();
   expect(controls.stop).toHaveBeenCalledTimes(2);
+});
+
+test("a warm health check timeout is persisted as unavailable when cleanup fails", async () => {
+  const { controls } = fixture();
+  vi.mocked(executeGuest).mockRejectedValueOnce(
+    new VectisError("guest_cancelled", "Guest command cancelled."),
+  );
+  controls.stop.mockRejectedValue(new Error("unconfirmed"));
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      claimWarm: () => ({
+        instance: { id: "warm", environmentId: "test", status: "running", pid: 0, createdAt: "" },
+        connection: {
+          host: "192.0.2.1",
+          port: 22,
+          user: "test",
+          identityFile: "/unused/key",
+          knownHostsFile: "/unused/hosts",
+          hostKeyAlias: "warm",
+        },
+      }),
+    },
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({
+    status: "action_required",
+    progress: { recoveryCause: { code: "guest_unavailable" } },
+  });
 });
 
 test("unconfirmed warm cleanup prevents cold fallback and JIT registration", async () => {

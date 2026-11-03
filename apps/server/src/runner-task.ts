@@ -163,13 +163,13 @@ export async function runRunnerTask(
         });
       } catch (error) {
         signal.throwIfAborted();
-        try {
-          await controls.stop();
-        } catch (stopError) {
-          if (error instanceof VectisError)
-            update({ recoveryCause: { code: error.code, message: error.message } });
-          throw stopError;
-        }
+        const cause =
+          error instanceof VectisError && error.code !== "guest_cancelled"
+            ? error
+            : new VectisError("guest_unavailable", "The warm VM failed its SSH health check.");
+        update({ recoveryCause: { code: cause.code, message: cause.message } });
+        await controls.stop();
+        update({ recoveryCause: undefined });
         instance = await start();
         update({ instanceId: instance.id });
       }
