@@ -67,6 +67,7 @@ export function createResourceProbe(
     }
     return entry.value;
   }
+  cached(vmStats, "/usr/bin/vm_stat", []);
   return (instances, environments = []) => {
     const live = instances.filter(
       (instance) =>

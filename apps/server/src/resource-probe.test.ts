@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { totalmem } from "node:os";
 import { waitForAppleVm, appleVmProcessPid } from "../../../packages/runner/src/apple.js";
 import { expect, test, vi } from "vitest";
 import type { Environment, Instance } from "../../../packages/protocol/src/index.js";
@@ -56,6 +57,25 @@ test("probes share in-flight work and cache results for five seconds", async () 
   expect(read).toHaveBeenCalledTimes(6);
   await vi.waitFor(() => expect(probe([instance]).pressure).toBe("warning"));
   expect(probe([instance]).footprintsMiB.get(instance.id)).toBe(4096);
+});
+
+test("primes compressor measurement and reports compressor and swap ratios", async () => {
+  const read = vi.fn(async (file: string) => {
+    if (file === "/usr/bin/vm_stat")
+      return "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages occupied by compressor: 1192728.";
+    if (file === "/usr/sbin/sysctl")
+      return "2\ntotal = 8192.00M  used = 7475.20M  free = 716.80M  (encrypted)";
+    return "123 1 1024";
+  });
+  const probe = createProbe(read);
+  expect(read).toHaveBeenCalledWith("/usr/bin/vm_stat", []);
+  expect(probe([instance]).compressorRatio).toBeUndefined();
+  await vi.waitFor(() => {
+    const usage = probe([instance]);
+    expect(usage.compressorRatio).toBeCloseTo((1192728 * 16384) / totalmem());
+    expect(usage.swapUsedRatio).toBeCloseTo(7475.2 / 8192);
+    expect(usage.pressure).toBe("warning");
+  });
 });
 
 test("PID changes and stopped instances cannot reuse another process footprint", async () => {
