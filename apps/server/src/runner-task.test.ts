@@ -1520,6 +1520,24 @@ test("status failures do not abort a runner after it was observed busy", async (
   expect(await done).toMatchObject({ status: "succeeded" });
 });
 
+test("listener-reported job start prevents status failures from aborting the runner", async () => {
+  const { broker, done, complete, controls } = await listeningFixture(false, {
+    pollIntervalMs: 10000,
+    statusFailureTimeoutMs: 20000,
+  });
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 0,
+    stdout: `${jobStartedMarker}\n${Date.now()}\n`,
+    stderr: "",
+    truncated: false,
+  });
+  broker.runnerStatus.mockRejectedValue(new Error("Unavailable"));
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(controls.stop).not.toHaveBeenCalled();
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
 test("offline failure survives unconfirmed VM cleanup", async () => {
   const { controls, broker, done } = await listeningFixture(false, {
     pollIntervalMs: 10,

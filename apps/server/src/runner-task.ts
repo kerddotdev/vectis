@@ -271,7 +271,9 @@ export async function runRunnerTask(
     let job: RunnerPhase | undefined;
     let listenerExitedAt: number | undefined;
     let guestStartObserved = false;
+    let listenerReportedJobStart = false;
     const jobStarted = (reportedAt?: number) => {
+      if (reportedAt !== undefined) listenerReportedJobStart = true;
       if (
         guestStartObserved ||
         (reportedAt === undefined && (job || listenerExitedAt !== undefined))
@@ -304,9 +306,14 @@ export async function runRunnerTask(
     };
     const listening = new AbortController();
     const listeningSignal = AbortSignal.any([signal, listening.signal]);
-    const watcher = watchIdleRunner(grant.id, watchedControls, listening, listeningSignal, () => {
-      jobStarted();
-    });
+    const watcher = watchIdleRunner(
+      grant.id,
+      watchedControls,
+      listening,
+      listeningSignal,
+      () => jobStarted(),
+      () => listenerReportedJobStart,
+    );
     const execution = await executeRunnerListener(
       connection,
       environment.os,
@@ -593,6 +600,7 @@ async function watchIdleRunner(
   listening: AbortController,
   signal: AbortSignal,
   onBusy: () => void,
+  listenerReportedJobStart: () => boolean,
 ) {
   const now = controls.now ?? Date.now;
   const timeoutMs = controls.idleTimeoutMs ?? idleTimeoutMs;
@@ -618,7 +626,8 @@ async function watchIdleRunner(
       if (!signal.aborted) {
         failureSince ??= now();
         offlineSince = undefined;
-        if (!observedBusy && now() - failureSince >= failureTimeout) offline();
+        if (!observedBusy && !listenerReportedJobStart() && now() - failureSince >= failureTimeout)
+          offline();
       }
       return undefined;
     }
