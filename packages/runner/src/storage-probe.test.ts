@@ -2,7 +2,8 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
+import * as processRunner from "./process.js";
 import { probeStorage } from "./storage-probe.js";
 
 test("storage preflight reads an image without changing its directory", async () => {
@@ -39,5 +40,21 @@ test("missing storage reports an actionable error", async () => {
     });
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("storage preflight enforces the working reserve", async () => {
+  const run = vi.spyOn(processRunner, "runProcess");
+  try {
+    run.mockResolvedValueOnce(String(20 * 1024 ** 3 - 1));
+    await expect(probeStorage("image", "/volume/vms")).rejects.toMatchObject({
+      code: "storage_headroom",
+      message: expect.stringContaining("/volume/vms"),
+      nextStep: expect.stringContaining("environment configure --storage-path"),
+    });
+    run.mockResolvedValueOnce(String(20 * 1024 ** 3 + 1));
+    await expect(probeStorage("image", "/volume/vms")).resolves.toBeUndefined();
+  } finally {
+    run.mockRestore();
   }
 });

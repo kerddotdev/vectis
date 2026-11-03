@@ -1551,7 +1551,8 @@ export class Service {
               });
             } catch (error) {
               const remaining =
-                error instanceof VectisError && error.code === "storage_access_required"
+                error instanceof VectisError &&
+                ["storage_access_required", "storage_headroom"].includes(error.code)
                   ? false
                   : await this.runtime.hasWorkDirectory(id, record.directory).catch(() => true);
               this.store.put("instance", id, {
