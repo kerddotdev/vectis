@@ -681,6 +681,7 @@ async function watchIdleRunner(
       offlineSince ??= now();
       continue;
     }
+    if (listenerReportedJobStart()) continue;
     listening.abort(
       new VectisError(
         "runner_idle",

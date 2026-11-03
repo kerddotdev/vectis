@@ -915,6 +915,41 @@ test("a job assigned during the demand read prevents drain", async () => {
   expect(await done).toMatchObject({ status: "succeeded" });
 });
 
+test("a listener job start during the confirmation status read prevents drain", async () => {
+  const { broker, controls, events, needed, done, complete } = await listeningFixture();
+  needed.mockResolvedValue(false);
+  let resolveConfirmation!: (status: { busy: false; status: "online" }) => void;
+  let confirmationStarted = false;
+  let statusReads = 0;
+  broker.runnerStatus.mockImplementation(async () => {
+    statusReads += 1;
+    if (statusReads === 11) {
+      confirmationStarted = true;
+      return await new Promise((resolve) => {
+        resolveConfirmation = resolve;
+      });
+    }
+    return { busy: false, status: "online" };
+  });
+
+  await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+  expect(confirmationStarted).toBe(true);
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 0,
+    stdout: `${jobStartedMarker}\n${Date.now()}\n`,
+    stderr: "",
+    truncated: false,
+  });
+  await vi.advanceTimersByTimeAsync(10000);
+  resolveConfirmation({ busy: false, status: "online" });
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(controls.stop).not.toHaveBeenCalled();
+  expect(events).toEqual([]);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
 test.each(["stop", "release"] as const)(
   "idle drain with failed %s cleanup needs reconciliation",
   async (step) => {
