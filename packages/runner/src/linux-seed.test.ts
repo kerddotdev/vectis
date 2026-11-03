@@ -111,6 +111,8 @@ apt-get() { :; }
 dpkg-query() { printf '%s' '${scenario.caVersion ?? "20260816ubuntu0.24.04.1"}'; }
 dpkg() { test "$*" = '--compare-versions 20260816ubuntu0.24.04.1 ge 20260816ubuntu0.24.04.1'; }
 fuser() { return 1; }
+gh() { test "$*" = --version; }
+docker() { test "$*" = 'compose version' || test "$*" = 'buildx version'; }
 usermod() { :; }
 systemctl() { :; }
 poweroff() { echo powered-off; return ${scenario.shutdownExit ?? 0}; }
@@ -238,6 +240,8 @@ fuser() {
   lock_checks=$((lock_checks + 1))
   test "$lock_checks" -le ${scenario.locks ?? 0}
 }
+gh() { test "$*" = --version; }
+docker() { test "$*" = 'compose version' || test "$*" = 'buildx version'; }
 tee() { /bin/sleep 0.05; command tee "$@"; }
 poweroff() {
   cmp "$FIXTURE_ROOT/serial.log" "$FIXTURE_ROOT/prepare.log" >/dev/null || test "$completed" = false || return 95
