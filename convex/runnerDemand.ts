@@ -218,7 +218,10 @@ export async function scheduleRunnerDemand(
       if (environmentSlots && (environmentSlots.get(binding.environmentId) ?? 0) <= 0) continue;
       while (queue.remaining > 0) {
         const next = await jobs.next();
-        if (next.done) break;
+        if (next.done) {
+          queue.remaining = 0;
+          break;
+        }
         queue.remaining--;
         const job = next.value;
         if (

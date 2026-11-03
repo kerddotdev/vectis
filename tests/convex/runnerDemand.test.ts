@@ -218,6 +218,47 @@ test("an ineligible queue does not starve another binding", async () => {
     { repositoryId: 99, jobId: 999 },
   ]);
 });
+test("an exhausted earlier binding queue does not block later queued demand", async () => {
+  const { t, hosts, accountId, jobId, heartbeat } = await fixture();
+  const machineId = hosts[0]!.machineId;
+  await t.run(async (ctx) => {
+    await ctx.db.patch("githubJobs", jobId, { repositoryId: 98 });
+    await ctx.db.insert("repositoryBindings", {
+      owner: "owner",
+      accountId,
+      machineId,
+      repositoryId: 99,
+      repositoryName: "later",
+      installationId: 3,
+      environmentId: "mac",
+      enabled: true,
+      automatic: true,
+      verifiedAt: 1,
+    });
+    for (const queuedJobId of [100, 101]) {
+      await ctx.db.insert("githubJobs", {
+        installationId: 3,
+        repositoryId: 99,
+        jobId: queuedJobId,
+        runId: 5,
+        name: "Build",
+        status: "queued",
+        conclusion: null,
+        labels: ["self-hosted", "macOS", "ARM64", "vectis-mac"],
+        runnerId: null,
+        runnerName: null,
+        updatedAt: 1,
+      });
+    }
+  });
+
+  await heartbeat(0, false, true, 2);
+
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").collect())).toMatchObject([
+    { repositoryId: 99, jobId: 100 },
+    { repositoryId: 99, jobId: 101 },
+  ]);
+});
 test("revoked account ownership prevents automatic scheduling", async () => {
   const { t, accountId, heartbeat, operations } = await fixture();
   await t.run(async (ctx) => ctx.db.patch("githubAccounts", accountId, { owner: "other" }));
