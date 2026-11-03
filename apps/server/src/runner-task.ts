@@ -601,6 +601,7 @@ async function watchIdleRunner(
   let idleSince = now();
   let offlineSince: number | undefined;
   let failureSince: number | undefined;
+  let observedBusy = false;
   const offline = () =>
     listening.abort(
       new VectisError(
@@ -617,7 +618,7 @@ async function watchIdleRunner(
       if (!signal.aborted) {
         failureSince ??= now();
         offlineSince = undefined;
-        if (now() - failureSince >= failureTimeout) offline();
+        if (!observedBusy && now() - failureSince >= failureTimeout) offline();
       }
       return undefined;
     }
@@ -638,6 +639,7 @@ async function watchIdleRunner(
     if (signal.aborted) return;
     if (!status) continue;
     if ("busy" in status && status.busy) {
+      observedBusy = true;
       onBusy();
       idleSince = now();
       offlineSince = undefined;
@@ -661,6 +663,7 @@ async function watchIdleRunner(
     if (signal.aborted) return;
     if (!confirmed) continue;
     if ("busy" in confirmed && confirmed.busy) {
+      observedBusy = true;
       onBusy();
       idleSince = now();
       continue;

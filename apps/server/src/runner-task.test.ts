@@ -1505,6 +1505,21 @@ test.each(["idle", "offline", "errors"] as const)(
   },
 );
 
+test("status failures do not abort a runner after it was observed busy", async () => {
+  const { broker, done, complete, controls } = await listeningFixture(false, {
+    pollIntervalMs: 10,
+    statusFailureTimeoutMs: 30,
+    now: () => Date.now(),
+  });
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+  await vi.advanceTimersByTimeAsync(10);
+  broker.runnerStatus.mockRejectedValue(new Error("Unavailable"));
+  await vi.advanceTimersByTimeAsync(50);
+  expect(controls.stop).not.toHaveBeenCalled();
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
 test("offline failure survives unconfirmed VM cleanup", async () => {
   const { controls, broker, done } = await listeningFixture(false, {
     pollIntervalMs: 10,
