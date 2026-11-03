@@ -161,9 +161,15 @@ export async function runRunnerTask(
             throw new VectisError("guest_unavailable", "The warm VM failed its SSH health check.");
           connection = warm.connection;
         });
-      } catch {
+      } catch (error) {
         signal.throwIfAborted();
-        await controls.stop();
+        try {
+          await controls.stop();
+        } catch (stopError) {
+          if (error instanceof VectisError)
+            update({ recoveryCause: { code: error.code, message: error.message } });
+          throw stopError;
+        }
         instance = await start();
         update({ instanceId: instance.id });
       }
@@ -487,6 +493,7 @@ export async function runRunnerTask(
     return { status: "cancelled" as const, progress, message: failure.message };
   if (
     signal.aborted &&
+    !progress.recoveryCause &&
     !(
       failure instanceof VectisError &&
       ["runner_assignment_rejected", "runner_offline"].includes(failure.code)

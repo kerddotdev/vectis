@@ -332,7 +332,8 @@ test("unconfirmed warm cleanup prevents cold fallback and JIT registration", asy
     knownHostsFile: "/unused/hosts",
     hostKeyAlias: "warm",
   };
-  vi.mocked(executeGuest).mockRejectedValueOnce(new GuestUnavailableError("SSH lost"));
+  const cause = new GuestUnavailableError("SSH lost");
+  vi.mocked(executeGuest).mockRejectedValueOnce(cause);
   controls.stop.mockRejectedValue(new Error("unconfirmed"));
   const result = await runRunnerTask(
     "binding",
@@ -350,7 +351,10 @@ test("unconfirmed warm cleanup prevents cold fallback and JIT registration", asy
   expect(result).toMatchObject({
     status: "action_required",
     code: "runner_cleanup_required",
-    progress: { instanceId: "warm" },
+    progress: {
+      instanceId: "warm",
+      recoveryCause: { code: cause.code, message: cause.message },
+    },
   });
   expect(controls.start).not.toHaveBeenCalled();
   expect(broker.prepareRunner).not.toHaveBeenCalled();
@@ -1372,6 +1376,19 @@ test("cancellation stops an in-flight marker check and releases all monitoring t
   expect(events).toEqual(["stop", "release"]);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test.each(["storage_io_error", "guest_unavailable"])(
+  "a witnessed %s stays failed if cancellation arrives during cleanup",
+  async (code) => {
+    const { controls } = fixture();
+    const abort = new AbortController();
+    const cause = new VectisError(code, "Infrastructure failure.");
+    vi.mocked(readyGuest).mockRejectedValueOnce(cause);
+    controls.stop.mockImplementation(async () => abort.abort());
+    const result = await runRunnerTask("binding", "key", environment, controls, abort.signal);
+    expect(result).toMatchObject({ status: "failed", code, message: cause.message });
+  },
+);
 
 test("a witnessed policy rejection stays failed if cancellation arrives during cleanup", async () => {
   const { controls } = fixture();
