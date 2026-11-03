@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { Command, Operation } from "../../../packages/protocol/src/index.js";
+import { VectisError, type Command, type Operation } from "../../../packages/protocol/src/index.js";
 import type { MachineRepositories } from "../../../packages/protocol/src/repositories.js";
 import {
   infrastructureFailureCodes,
@@ -87,13 +87,20 @@ export function reconcileInfraReruns(
     const key = `infra-rerun:${decision.bindingId}:${decision.runId}:${decision.attempt}`;
     if (!bindings.some((binding) => binding.id === decision.bindingId && binding.infraRerun))
       continue;
-    const rerun = submit(key, {
-      type: "run.rerun-failed",
-      bindingId: decision.bindingId,
-      runId: decision.runId,
-      expectedRunAttempt: decision.attempt,
-      infraJobIds: [...decision.infraJobIds],
-    });
+    let rerun: Operation;
+    try {
+      rerun = submit(key, {
+        type: "run.rerun-failed",
+        bindingId: decision.bindingId,
+        runId: decision.runId,
+        expectedRunAttempt: decision.attempt,
+        infraJobIds: [...decision.infraJobIds],
+      });
+    } catch (error) {
+      if (!(error instanceof VectisError) || error.code !== "operation_expired") throw error;
+      store.put("infra-rerun", key, { ...decision, settled: true });
+      continue;
+    }
     const waiting = Schema.is(Schema.Struct({ code: Schema.Literal("run_not_ready") }))(
       rerun.result,
     );

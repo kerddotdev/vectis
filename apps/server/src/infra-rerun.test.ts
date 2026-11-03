@@ -268,6 +268,50 @@ test("completed decisions survive activity pruning without resubmitting", async 
   }
 });
 
+test("expired rerun requests settle and do not block later decisions", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-infra-expired-"));
+  const store = new Store(join(home, "state.sqlite"));
+  const firstKey = "infra-rerun:binding:42:1";
+  const secondKey = "infra-rerun:binding:43:1";
+  const expired = store.accept(firstKey, "synthetic", "run.rerun-failed").operation;
+  store.remove("operation", expired.id);
+  store.put("infra-rerun", secondKey, {
+    bindingId: "binding",
+    runId: 43,
+    attempt: 1,
+    runnerOperationId: "pruned-runner",
+    infraJobIds: [2],
+  });
+  store.put("infra-rerun", firstKey, {
+    bindingId: "binding",
+    runId: 42,
+    attempt: 1,
+    runnerOperationId: "pruned-runner",
+    infraJobIds: [1],
+  });
+  const submit = vi.fn(
+    (key: string) => store.accept(key, "synthetic", "run.rerun-failed").operation,
+  );
+  const bindings = [
+    {
+      id: "binding",
+      repositoryId: 1,
+      repositoryName: "owner/repo",
+      environmentId: "linux",
+      infraRerun: true,
+    },
+  ];
+  try {
+    expect(() => reconcileInfraReruns(store, bindings, submit)).not.toThrow();
+    expect(store.get("infra-rerun", firstKey)).toMatchObject({ settled: true });
+    expect(submit.mock.calls.map(([key]) => key)).toEqual([firstKey, secondKey]);
+    expect(store.get("infra-rerun", secondKey)).toBeDefined();
+  } finally {
+    store.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("an active workflow waits and retries the same command after its remaining jobs finish", async () => {
   vi.useFakeTimers();
   const home = await mkdtemp(join(tmpdir(), "vectis-infra-wait-"));
