@@ -173,6 +173,8 @@ completed=true
 const packageScenarios: {
   name: string;
   failure?: "update" | "base" | "toolchain";
+  failedTool?: "gh" | "compose" | "buildx";
+  toolError?: string;
   failures?: number;
   locks?: number;
   attempts?: [number, number, number];
@@ -223,6 +225,24 @@ const packageScenarios: {
   },
   { name: "busy apt locks clear", locks: 2, expected: 0 },
   { name: "busy apt locks time out", locks: 1000, expected: 100 },
+  {
+    name: "missing GitHub CLI",
+    failedTool: "gh",
+    toolError: "GitHub CLI (gh --version)",
+    expected: 1,
+  },
+  {
+    name: "broken Docker Compose",
+    failedTool: "compose",
+    toolError: "Docker Compose v2 (docker compose version)",
+    expected: 1,
+  },
+  {
+    name: "broken Docker Buildx",
+    failedTool: "buildx",
+    toolError: "Docker Buildx (docker buildx version)",
+    expected: 1,
+  },
 ];
 
 test.each(packageScenarios)("Linux package preparation: $name", async (scenario) => {
@@ -240,8 +260,14 @@ fuser() {
   lock_checks=$((lock_checks + 1))
   test "$lock_checks" -le ${scenario.locks ?? 0}
 }
-gh() { test "$*" = --version; }
-docker() { test "$*" = 'compose version' || test "$*" = 'buildx version'; }
+gh() { test "$*" = --version && test "\${FAILED_TOOL:-}" != gh; }
+docker() {
+  case "$*" in
+    'compose version') test "\${FAILED_TOOL:-}" != compose ;;
+    'buildx version') test "\${FAILED_TOOL:-}" != buildx ;;
+    *) return 1 ;;
+  esac
+}
 tee() { /bin/sleep 0.05; command tee "$@"; }
 poweroff() {
   cmp "$FIXTURE_ROOT/serial.log" "$FIXTURE_ROOT/prepare.log" >/dev/null || test "$completed" = false || return 95
@@ -279,7 +305,12 @@ ${script}
 completed=true
 `,
       cwd: home,
-      env: { ...process.env, HOME: home, FIXTURE_ROOT: home },
+      env: {
+        ...process.env,
+        HOME: home,
+        FIXTURE_ROOT: home,
+        FAILED_TOOL: scenario.failedTool ?? "",
+      },
       encoding: "utf8",
       timeout: 10_000,
     });
@@ -320,7 +351,7 @@ completed=true
       );
       expect(update.length + base.length + toolchain.length).toBe(calls.length);
       expect(checks).toHaveLength(calls.length + (scenario.locks ?? 0));
-      if (scenario.expected) {
+      if (scenario.expected && !scenario.toolError) {
         const marker = "VECTIS_PREPARATION_FAILED_test step=packages exit=100";
         const beforeMarker = output.slice(0, output.indexOf(marker));
         const replay = beforeMarker.trimEnd().split("\n").slice(-40);
@@ -333,7 +364,11 @@ completed=true
       }
     }
     if (scenario.expected) {
-      expect(output).toContain("VECTIS_PREPARATION_FAILED_test step=packages exit=100");
+      expect(output).toContain(
+        `VECTIS_PREPARATION_FAILED_test step=packages exit=${scenario.toolError ? 1 : 100}`,
+      );
+      if (scenario.toolError)
+        expect(output).toContain(`E: Required tool check failed: ${scenario.toolError}.`);
     } else {
       expect(output).not.toContain("VECTIS_PREPARATION_FAILED");
       expect(output).toBe(`${log}powered-off\n`);
