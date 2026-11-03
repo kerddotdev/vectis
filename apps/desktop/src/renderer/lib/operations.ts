@@ -44,6 +44,7 @@ export const commandLabels: Record<string, string> = {
 export const settingLabels: Record<string, string> = {
   "repository.capacity-mode": "Runner capacity mode updated",
   "repository.automatic": "Automatic runners updated",
+  "repository.infra-rerun": "Infrastructure reruns updated",
   "repository.access": "Repository access updated",
   "repository.cache": "Repository cache updated",
   "cache.clear": "Repository cache cleared",

@@ -551,6 +551,13 @@ export function startCloudRelay(
         AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
       );
     },
+    async setInfraRerun(bindingId: string, enabled: boolean) {
+      requireConnection();
+      await interruptible(
+        cloud.mutation(api.repositoryBindings.setInfraRerun, { bindingId, enabled }),
+        AbortSignal.any([abort.signal, AbortSignal.timeout(10000)]),
+      );
+    },
     async setCapacityMode(bindingId: string, capacityMode: CapacityMode) {
       requireConnection();
       await interruptible(

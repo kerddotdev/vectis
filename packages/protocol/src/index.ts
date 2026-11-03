@@ -110,6 +110,7 @@ export const ActivityRepository = Schema.Struct({ id: Schema.Int, name: Schema.N
 export const ActivityJob = Schema.Struct({
   jobId: Schema.Int,
   runId: Schema.optional(Schema.Int),
+  runAttempt: Schema.optional(Schema.Int),
   name: Schema.optional(Schema.String),
   workflowName: Schema.optional(Schema.String),
   htmlUrl: Schema.optional(Schema.String),
@@ -298,6 +299,11 @@ export const Command = Schema.Union([
   Schema.Struct({ type: Schema.Literal("cache.clear"), bindingId: Identifier }),
   Schema.Struct({
     type: Schema.Literal("repository.automatic"),
+    bindingId: Identifier,
+    enabled: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("repository.infra-rerun"),
     bindingId: Identifier,
     enabled: Schema.Boolean,
   }),
@@ -533,6 +539,13 @@ export const capabilities = [
     kind: "command",
     activity: "setting",
     description: "Choose demand scheduling or preview scale set capacity for a repository binding.",
+  },
+  {
+    name: "repository.infra-rerun",
+    kind: "command",
+    activity: "setting",
+    description:
+      "Enable or disable one automatic retry after a repository runner infrastructure failure.",
   },
   {
     name: "repository.automatic",

@@ -187,8 +187,10 @@ export function Repositories() {
                     title="Environments"
                     hint={
                       <Hint label="About automatic runners">
-                        When on, this Mac starts a runner by itself whenever GitHub queues a job for
-                        this repository. Failed jobs are never retried automatically.
+                        Automatic starts a runner on this Mac whenever GitHub queues a job for this
+                        repository. Rerun infra failures asks GitHub once to rerun a run attempt
+                        whose failed jobs all lost their VM to an infrastructure failure, such as a
+                        guest storage error. Workflow failures are never retried.
                       </Hint>
                     }
                   >
@@ -228,6 +230,23 @@ export function Repositories() {
                                       enabled,
                                     },
                                     `Automatic runners ${enabled ? "on" : "off"} for ${first.repositoryName}`,
+                                  )
+                                }
+                              />
+                            </label>
+                            <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                              Rerun infra failures
+                              <Switch
+                                size="sm"
+                                checked={!!binding.infraRerun}
+                                onCheckedChange={(enabled) =>
+                                  void submit(
+                                    {
+                                      type: "repository.infra-rerun",
+                                      bindingId: binding.id,
+                                      enabled,
+                                    },
+                                    `Infrastructure reruns ${enabled ? "on" : "off"} for ${first.repositoryName}`,
                                   )
                                 }
                               />

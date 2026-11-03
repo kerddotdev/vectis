@@ -96,6 +96,7 @@ export const list = query({
       .take(100);
     return bindings.map((binding) => ({
       ...binding,
+      infraRerun: binding.infraRerun ?? false,
       runsOn: workflowLabel(binding.environmentId),
     }));
   },
@@ -122,6 +123,7 @@ export const forMachine = query({
           environmentId: binding.environmentId,
           runsOn: workflowLabel(binding.environmentId),
           automatic: binding.automatic ?? false,
+          infraRerun: binding.infraRerun ?? false,
           capacityMode: binding.capacityMode ?? "demand",
           ...(binding.access ? { access: binding.access } : {}),
         });
@@ -135,7 +137,11 @@ export const disable = mutation({
     const owner = await human(ctx);
     const record = await ctx.db.get("repositoryBindings", args.id);
     if (!record || record.owner !== owner) throw new ConvexError({ code: "binding_missing" });
-    await ctx.db.patch("repositoryBindings", args.id, { enabled: false, automatic: false });
+    await ctx.db.patch("repositoryBindings", args.id, {
+      enabled: false,
+      automatic: false,
+      infraRerun: false,
+    });
     await scheduleScaleSetCleanup(ctx, record._id);
   },
 });
@@ -157,6 +163,26 @@ export const setAutomatic = mutation({
     if (account?.owner !== target.owner)
       throw new ConvexError({ code: "repository_access_denied" });
     await ctx.db.patch("repositoryBindings", binding._id, { automatic: args.enabled });
+  },
+});
+
+export const setInfraRerun = mutation({
+  args: { bindingId: v.string(), enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    const target = await machine(ctx);
+    const id = ctx.db.normalizeId("repositoryBindings", args.bindingId);
+    const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
+    if (
+      !binding ||
+      !binding.enabled ||
+      binding.machineId !== target._id ||
+      binding.owner !== target.owner
+    )
+      throw new ConvexError({ code: "repository_access_denied" });
+    const account = await ctx.db.get("githubAccounts", binding.accountId);
+    if (account?.owner !== target.owner)
+      throw new ConvexError({ code: "repository_access_denied" });
+    await ctx.db.patch("repositoryBindings", binding._id, { infraRerun: args.enabled });
   },
 });
 
@@ -271,7 +297,11 @@ export const disconnectForMachine = mutation({
     const binding = id ? await ctx.db.get("repositoryBindings", id) : null;
     if (!binding || binding.machineId !== target._id || binding.owner !== target.owner)
       throw new ConvexError({ code: "repository_access_denied" });
-    await ctx.db.patch("repositoryBindings", binding._id, { enabled: false, automatic: false });
+    await ctx.db.patch("repositoryBindings", binding._id, {
+      enabled: false,
+      automatic: false,
+      infraRerun: false,
+    });
     await scheduleScaleSetCleanup(ctx, binding._id);
   },
 });
@@ -339,6 +369,7 @@ export const readinessAuthority = internalQuery({
         ? {
             enabled: binding.enabled,
             automatic: binding.automatic ?? false,
+            infraRerun: binding.infraRerun ?? false,
             repositoryId: binding.repositoryId,
             installationId: binding.installationId,
             cacheVolumeEnabled: binding.cacheVolume?.enabled ?? false,

@@ -94,6 +94,7 @@ test("bindings deduplicate and disappear from machine admission when disabled", 
       environmentId: "linux",
       runsOn: "vectis-linux",
       automatic: false,
+      infraRerun: false,
       capacityMode: "demand",
     },
   ]);
@@ -195,5 +196,46 @@ test("machine disconnection is scoped, repeatable, and does not remove another h
   await owner.mutation(api.machines.remove, { id: machineId });
   await expect(
     device.mutation(api.repositoryBindings.disconnectForMachine, { bindingId: id }),
+  ).rejects.toThrow();
+});
+
+test("infrastructure retry defaults off, round-trips and rejects foreign or disabled bindings", async () => {
+  const { t, owner, machineId, accountId } = await setup();
+  const bindingId = await t.mutation(internal.repositoryBindings.save, {
+    owner: identity.tokenIdentifier,
+    machineId,
+    accountId,
+    repositoryId: 42,
+    repositoryName: "sandbox",
+    installationId: 81,
+    environmentId: "linux",
+  });
+  const machine = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: machineId,
+    credentialVersion: 0,
+  });
+  expect((await machine.query(api.repositoryBindings.forMachine, {}))[0]?.infraRerun).toBe(false);
+  for (const enabled of [true, false]) {
+    await machine.mutation(api.repositoryBindings.setInfraRerun, { bindingId, enabled });
+    expect((await machine.query(api.repositoryBindings.forMachine, {}))[0]?.infraRerun).toBe(
+      enabled,
+    );
+  }
+  await expect(
+    owner.mutation(api.repositoryBindings.setInfraRerun, { bindingId, enabled: true }),
+  ).rejects.toThrow();
+  const foreignId = await owner.mutation(api.machines.enroll, { localId: "other", name: "Other" });
+  const foreign = t.withIdentity({
+    issuer: "https://machine.test",
+    subject: foreignId,
+    credentialVersion: 0,
+  });
+  await expect(
+    foreign.mutation(api.repositoryBindings.setInfraRerun, { bindingId, enabled: true }),
+  ).rejects.toThrow();
+  await owner.mutation(api.repositoryBindings.disable, { id: bindingId });
+  await expect(
+    machine.mutation(api.repositoryBindings.setInfraRerun, { bindingId, enabled: true }),
   ).rejects.toThrow();
 });

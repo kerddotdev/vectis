@@ -43,18 +43,25 @@ export function observeRunnerJobs(store: Store, observations: JobObservations) {
   }
 }
 
-export function watchRunnerJobs(store: Store, watchLeases: (ids: readonly string[]) => void) {
+export function watchRunnerJobs(
+  store: Store,
+  watchLeases: (ids: readonly string[]) => void,
+  reconcile: () => boolean = () => false,
+) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pendingChange = false;
   const refresh = () => {
     timer = undefined;
     pendingChange = false;
+    const pendingRetry = reconcile();
     const activities = runnerActivities(store);
     watchLeases([...new Set(activities.map(({ leaseId }) => leaseId))].slice(0, 20));
-    if (activities.length) {
+    if (activities.length || pendingRetry) {
       const expiresAt = Math.min(
         ...activities.map(({ activity }) => Date.parse(activity.createdAt) + observationLifetime),
+        ...(pendingRetry ? [Date.now() + 30000] : []),
       );
+      if (timer) clearTimeout(timer);
       timer = setTimeout(refresh, Math.max(1, expiresAt - Date.now()));
       timer.unref();
     }

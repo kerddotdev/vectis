@@ -12,6 +12,7 @@ export const MachineRepositories = Schema.Array(
     environmentId: Identifier,
     runsOn: Schema.optional(Schema.String),
     automatic: Schema.optional(Schema.Boolean),
+    infraRerun: Schema.optional(Schema.Boolean),
     access: Schema.optional(RepositoryAccess),
     capacityMode: Schema.optional(Schema.Literals(["demand", "scale_set"])),
   }),

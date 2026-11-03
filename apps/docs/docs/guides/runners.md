@@ -211,3 +211,20 @@ A refused assignment retains its policy reason during cleanup. After manual or a
 Runner reconciliation also works when registration stopped before creating a cloud lease. After confirming VM cleanup, Vectis records the request as released in the cloud so a delayed registration cannot create a duplicate runner. If the cloud cannot confirm this, the operation stays unresolved.
 
 Registration failures confirmed to have no remaining cloud registration end as retryable `failed` with `runner_registration_failed`. A lost response is reconciled before retrying; unavailable reconciliation stays `action_required`. Approval-required results retain their existing manual next steps.
+
+## Retry after infrastructure failure
+
+Infrastructure retries are off by default for each repository binding. Enable or disable them with:
+
+```sh
+vectis repository enable-infra-rerun <binding-id>
+vectis repository disable-infra-rerun <binding-id>
+```
+
+`repository list` and the binding snapshot expose `infraRerun`. MCP and remote clients use the setting command `{ type: "repository.infra-rerun", bindingId, enabled }`.
+
+When an assigned job's runner fails with `guest_unavailable`, `runner_offline`, or `storage_io_error`, Vectis waits for GitHub to report the actual job completed with conclusion `failure`. A runner process exit only qualifies as a storage failure when its output explicitly reports an I/O error. Ordinary workflow failures, successful jobs, missing attempt numbers, and cancellations do not trigger retries. Vectis cannot reliably distinguish user cancellations from runner-loss cancellations, so both are excluded.
+
+Vectis submits the existing `run.rerun-failed` command with a durable key `infra-rerun:<bindingId>:<runId>:<attempt>` and an `expectedRunAttempt` guard. If other jobs are still running, it checks again after 30 seconds. A different current attempt stops the request. The request carries `infraJobIds`, the failed jobs verified as infrastructure failures when the decision was saved. Because GitHub's rerun-failed operation retries every failed job, Vectis refuses the automatic request if any failed job is outside that list. Mixed workflow failures, unverified failures, and failures observed only after the decision therefore require manual review.
+
+The decision is saved before submission and survives service restarts. The runner result's `infraRerun: { runId, attempt, operationId }` links to the run-control operation; it records a request, not proof that GitHub started a new attempt. Check that operation for rejection, uncertainty, or GitHub acceptance (`rerun: requested|observed`). The next attempt is reserved against further automatic retries, even if acceptance was uncertain. A later manually created attempt can qualify again. Disabling the policy stops pending submissions; it cannot undo a request already sent to GitHub.

@@ -810,6 +810,30 @@ test("a runner process that exits unsuccessfully reports its output", async () =
   );
 });
 
+test("explicit runner storage I/O failure keeps a distinct infrastructure cause", async () => {
+  const { controls } = fixture();
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "Runner.Listener: Input/output error",
+      truncated: false,
+    });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({
+    status: "failed",
+    code: "storage_io_error",
+    progress: { recoveryCause: { code: "storage_io_error" } },
+  });
+});
+
 test("successful and cancelled runners gather no diagnostics", async () => {
   const { controls } = fixture();
   await runRunnerTask("binding", "key", environment, controls, AbortSignal.timeout(1000));

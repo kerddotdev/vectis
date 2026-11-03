@@ -1,7 +1,13 @@
 import { v } from "convex/values";
 
 export const runControlCommand = v.union(
-  v.object({ type: v.literal("run.rerun-failed"), bindingId: v.string(), runId: v.number() }),
+  v.object({
+    type: v.literal("run.rerun-failed"),
+    bindingId: v.string(),
+    runId: v.number(),
+    expectedRunAttempt: v.optional(v.number()),
+    infraJobIds: v.optional(v.array(v.number())),
+  }),
   v.object({ type: v.literal("run.cancel"), bindingId: v.string(), runId: v.number() }),
   v.object({
     type: v.literal("workflow.dispatch"),

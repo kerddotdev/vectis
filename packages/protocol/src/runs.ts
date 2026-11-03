@@ -43,6 +43,10 @@ const Inputs = Schema.Record(
   ),
 );
 export const RerunFailed = Schema.Struct({
+  expectedRunAttempt: Schema.optionalKey(GitHubId),
+  infraJobIds: Schema.optionalKey(
+    Schema.mutable(Schema.Array(GitHubId)).check(Schema.isMinLength(1), Schema.isMaxLength(256)),
+  ),
   type: Schema.Literal("run.rerun-failed"),
   bindingId: Identifier,
   runId: GitHubId,
