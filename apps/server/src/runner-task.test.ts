@@ -2046,7 +2046,7 @@ test("cache denial reasons from the cloud survive a successful runner lifecycle"
   expect(authorizeWrite).not.toHaveBeenCalled();
 });
 
-test.each(["readiness", "listener", "storage"])(
+test.each(["start", "readiness", "listener", "storage"])(
   "%s failure retains host serial evidence without SSH",
   async (phase) => {
     const { mkdtemp, rm } = await import("node:fs/promises");
@@ -2069,7 +2069,7 @@ test.each(["readiness", "listener", "storage"])(
       else vi.mocked(collectRunnerDiagnostics).mockRejectedValue(new Error("SSH gone"));
       if (phase === "readiness")
         vi.mocked(readyGuest).mockRejectedValue(new GuestUnavailableError("SSH gone"));
-      else
+      else if (phase !== "start")
         vi.mocked(executeGuest)
           .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
           .mockImplementationOnce(async () => {
@@ -2084,7 +2084,18 @@ test.each(["readiness", "listener", "storage"])(
         "binding",
         "key",
         environment,
-        { ...controls, home },
+        {
+          ...controls,
+          home,
+          ...(phase === "start"
+            ? {
+                start: async (onStarting?: (id: string) => void) => {
+                  onStarting?.("instance");
+                  throw new VectisError("runner_control_failed", "VM start failed");
+                },
+              }
+            : {}),
+        },
         AbortSignal.timeout(1000),
       );
       expect(result.status).toBe("failed");
@@ -2092,7 +2103,8 @@ test.each(["readiness", "listener", "storage"])(
       expect(decoded.diagnostics).toContain("== guest serial console");
       expect(decoded.diagnostics).toContain("kernel: I/O error");
       if (phase === "storage") expect(decoded.diagnostics).toContain("ssh evidence");
-      if (phase !== "readiness") expect(decoded.diagnostics).not.toContain("c2VjcmV0");
+      if (phase === "listener" || phase === "storage")
+        expect(decoded.diagnostics).not.toContain("c2VjcmV0");
       expect(decoded.diagnostics?.length).toBeLessThanOrEqual(16384);
     } finally {
       await rm(home, { recursive: true, force: true });

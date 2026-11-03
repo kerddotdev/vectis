@@ -274,7 +274,8 @@ export class VmRuntime {
         ),
       );
       signal?.throwIfAborted();
-      if (environment.os === "linux") serial = await createSerialLog(this.options.home, id);
+      if (environment.os === "linux")
+        serial = await createSerialLog(this.options.home, id).catch(() => undefined);
       signal?.throwIfAborted();
       const child = spawn(
         supervised ? process.execPath : executable,

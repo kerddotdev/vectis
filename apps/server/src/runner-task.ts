@@ -404,6 +404,7 @@ export async function runRunnerTask(
       "storage_io_error",
       "runner_offline",
       "vm_start_failed",
+      "runner_control_failed",
     ].includes(failure.code)
   ) {
     const [ssh, serial] = await Promise.all([

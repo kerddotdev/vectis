@@ -502,3 +502,13 @@ process.stderr.write(output, () => {
     expect(await readSerialTail(home, instance.id)).toContain("kernel: I/O error");
   },
 );
+
+hostTest("Linux starts when serial log creation fails", async () => {
+  const { home, runtime, environment } = await fixture(
+    `process.stderr.write(Buffer.alloc(2 * 1024 * 1024)); process.stdout.write('{"event":"vm.running"}\\n'); setTimeout(() => process.exit(0), 100);`,
+  );
+  await writeFile(join(home, "diagnostics"), "not a directory");
+  const instance = await runtime.start("no-serial", environment, () => {});
+  await instance.settled;
+  expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+});
