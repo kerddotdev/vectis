@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, readdir } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -11,7 +11,10 @@ test("storage preflight reads an image without changing its directory", async ()
   try {
     const image = join(root, "image");
     await writeFile(image, "data");
-    await probeStorage(image, root);
+    await probeStorage(image, root).catch((error: unknown) => {
+      expect(error).toMatchObject({ code: "storage_headroom" });
+    });
+    expect(await readdir(root)).toEqual(["image"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

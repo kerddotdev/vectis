@@ -1664,6 +1664,7 @@ export class Service {
         "runtime_incompatible",
         "storage_unavailable",
         "storage_access_required",
+        "storage_headroom",
         "reconciliation_required",
       ].includes(issue.code)
         ? "action_required"
@@ -1684,9 +1685,13 @@ export class Service {
           result !== null &&
           "code" in result &&
           typeof result.code === "string" &&
-          ["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprepared"].includes(
-            result.code,
-          )
+          [
+            "rosetta_not_installed",
+            "rosetta_unsupported",
+            "rosetta_guest_unprepared",
+            "storage_access_required",
+            "storage_headroom",
+          ].includes(result.code)
         )
           throw new VectisError(
             result.code,
