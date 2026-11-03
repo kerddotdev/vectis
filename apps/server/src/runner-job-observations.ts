@@ -1,5 +1,6 @@
-import { isDeepStrictEqual } from "node:util";
+import { inspect, isDeepStrictEqual } from "node:util";
 import { Schema } from "effect";
+import { redact } from "../../../packages/client/src/redact.js";
 import { ActivityJob } from "../../../packages/protocol/src/index.js";
 import type { JobObservations } from "../../../packages/protocol/src/jobs.js";
 import { RunnerProgress } from "../../../packages/protocol/src/runners.js";
@@ -52,8 +53,13 @@ export function watchRunnerJobs(
   let pendingChange = false;
   const refresh = () => {
     timer = undefined;
+    let pendingRetry = false;
+    try {
+      pendingRetry = reconcile();
+    } catch (error) {
+      console.error("Infrastructure rerun reconciliation failed:", redact(inspect(error)));
+    }
     pendingChange = false;
-    const pendingRetry = reconcile();
     const activities = runnerActivities(store);
     watchLeases([...new Set(activities.map(({ leaseId }) => leaseId))].slice(0, 20));
     if (activities.length || pendingRetry) {
