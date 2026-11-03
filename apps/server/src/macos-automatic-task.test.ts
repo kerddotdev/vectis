@@ -194,8 +194,8 @@ test.each(["success", "tools_failure", "enrollment_failure"])(
         });
         expect(guest).not.toHaveBeenCalled();
       }
-      const password = boot.mock.calls[0]?.[7];
-      expect(password).toBeTruthy();
+      const password = boot.mock.calls[0]?.[6];
+      expect(password).toEqual(expect.stringMatching(/^Vx9!/));
       expect(JSON.stringify(store.snapshot())).not.toContain(password);
     } finally {
       finish(false);

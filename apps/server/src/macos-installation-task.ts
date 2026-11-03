@@ -334,11 +334,52 @@ export async function startMacInstallation(
         bundle,
         build,
       });
-      const supported =
-        !configuration.manualSetup &&
-        (
-          await runProcess(helper, ["provisioning-supported"], signal).catch(() => "false")
-        ).trim() === "true";
+      const automaticSignal = AbortSignal.any([abort.signal, AbortSignal.timeout(3600000)]);
+      const finishAutomaticFailure = () => {
+        const failed = store.snapshot().operations.find((item) => item.id === operation.id);
+        const failedStep = Schema.is(Schema.Struct({ step: Schema.String }))(failed?.result)
+          ? failed.result.step
+          : Schema.is(Schema.Struct({ failedStep: Schema.String }))(failed?.result)
+            ? failed.result.failedStep
+            : "macos.provisioning";
+        const timedOut = automaticSignal.aborted && !abort.signal.aborted;
+        const current = Schema.decodeUnknownSync(MacInstallationRecord)(
+          store.get("macInstallation", record.id),
+        );
+        store.put("macInstallation", record.id, { ...current, phase: "setup_required" });
+        store.update(operation, {
+          status: abort.signal.aborted ? "cancelled" : "action_required",
+          message: abort.signal.aborted
+            ? "Automatic macOS setup stopped. The bundle is preserved."
+            : timedOut
+              ? `Automatic macOS setup timed out at ${failedStep}. The bundle is preserved.`
+              : `Automatic macOS setup needs attention at ${failedStep}. The bundle is preserved.`,
+          result: {
+            setupId: record.id,
+            bundle,
+            build,
+            phase: "setup_required",
+            setupMode: "automatic",
+            failedStep,
+            code: "macos_automatic_setup_incomplete",
+            nextStep:
+              "Open the macOS setup console to inspect the guest. Complete SSH enrollment if needed, install Command Line Tools or full Xcode, then verify and finish this same setup. If the generated account password is needed, reset it using guest macOS Recovery; Vectis does not retain it.",
+          },
+        });
+      };
+      let supported = false;
+      try {
+        supported =
+          !configuration.manualSetup &&
+          (await runProcess(helper, ["provisioning-supported"], automaticSignal)).trim() === "true";
+        automaticSignal.throwIfAborted();
+      } catch {
+        if (!automaticSignal.aborted) supported = false;
+        else {
+          finishAutomaticFailure();
+          return;
+        }
+      }
       if (
         automaticMacSetup(
           supported,
@@ -354,34 +395,10 @@ export async function startMacInstallation(
             { ...record, bundle, build },
             helper,
             bundle,
-            signal,
+            automaticSignal,
           );
         } catch {
-          const failed = store.snapshot().operations.find((item) => item.id === operation.id);
-          const failedStep = Schema.is(Schema.Struct({ step: Schema.String }))(failed?.result)
-            ? failed.result.step
-            : "macos.provisioning";
-          const current = Schema.decodeUnknownSync(MacInstallationRecord)(
-            store.get("macInstallation", record.id),
-          );
-          store.put("macInstallation", record.id, { ...current, phase: "setup_required" });
-          store.update(operation, {
-            status: signal.aborted ? "cancelled" : "action_required",
-            message: signal.aborted
-              ? "Automatic macOS setup stopped. The bundle is preserved."
-              : `Automatic macOS setup needs attention at ${failedStep}. The bundle is preserved.`,
-            result: {
-              setupId: record.id,
-              bundle,
-              build,
-              phase: "setup_required",
-              setupMode: "automatic",
-              failedStep,
-              code: "macos_automatic_setup_incomplete",
-              nextStep:
-                "Open the macOS setup console to inspect the guest. Complete SSH enrollment if needed, install Command Line Tools or full Xcode, then verify and finish this same setup. If the generated account password is needed, reset it using guest macOS Recovery; Vectis does not retain it.",
-            },
-          });
+          finishAutomaticFailure();
         }
         return;
       }
