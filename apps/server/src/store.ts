@@ -218,22 +218,24 @@ export class Store {
     if (current !== undefined)
       this.put("activity", id, update(Schema.decodeUnknownSync(ActivityBase)(current)));
   }
+  preparationBusy() {
+    return (
+      this.list("provision").length > 0 ||
+      [
+        ...this.list("preparation"),
+        ...this.list("macInstallation"),
+        ...this.list("windowsInstallation"),
+      ].some((value) => {
+        const { phase } = Schema.decodeUnknownSync(Schema.Struct({ phase: Schema.String }))(value);
+        return ["downloading", "booting", "installing", "setup_running"].includes(phase);
+      })
+    );
+  }
   snapshot(limits = this.snapshotLimits): Snapshot {
     const machine = Schema.decodeUnknownSync(Machine)(this.get("machine", "self"));
     return {
       revision: `${this.startId}:${this.changes}`,
-      preparationBusy:
-        this.list("provision").length > 0 ||
-        [
-          ...this.list("preparation"),
-          ...this.list("macInstallation"),
-          ...this.list("windowsInstallation"),
-        ].some((value) => {
-          const { phase } = Schema.decodeUnknownSync(Schema.Struct({ phase: Schema.String }))(
-            value,
-          );
-          return ["downloading", "booting", "installing", "setup_running"].includes(phase);
-        }),
+      preparationBusy: this.preparationBusy(),
       protocolVersion: 1,
       machine,
       environments: this.list("environment").map((value) =>

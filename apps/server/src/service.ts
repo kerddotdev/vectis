@@ -74,6 +74,7 @@ import { retainActivities } from "./activity-retention.js";
 import { observeRunnerJobs, watchRunnerJobs } from "./runner-job-observations.js";
 import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
 import { WarmPool } from "./warm-pool.js";
+import { SleepAssertion } from "./sleep-assertion.js";
 
 import type { RepositoryAccess } from "../../../packages/protocol/src/repository-access.js";
 import { jobAccess, restrictiveAccess } from "../../../packages/github/src/access-policy.js";
@@ -82,6 +83,8 @@ const CacheRecord = Schema.Struct({ bindingId: Schema.String, directory: Schema.
 const CacheUse = Schema.Struct({ bindingId: Schema.String, instanceId: Schema.String });
 
 export class Service {
+  private readonly sleepAssertion = new SleepAssertion();
+  private readonly stopWatchingSleep: () => void;
   private readonly cacheVolumes: CacheVolumes;
   private readonly cacheDisks = new Map<string, CacheDisk>();
   private queue: Promise<void> = Promise.resolve();
@@ -130,6 +133,13 @@ export class Service {
   ) {
     this.cacheVolumes = new CacheVolumes(runtime.options.home);
     store.recover();
+    const updateSleep = () =>
+      this.sleepAssertion.update(
+        this.store.instances(0).length +
+          (this.preparing !== undefined || this.store.preparationBusy() ? 1 : 0),
+      );
+    this.stopWatchingSleep = store.onChange(updateSleep);
+    updateSleep();
     this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
     const host = { cpus: cpus().length, memoryBytes: totalmem() };
     this.warmPool = new WarmPool(store, {
@@ -646,6 +656,7 @@ export class Service {
             );
           const active = await startProvision(this.store, this.runtime, operation, command);
           this.preparing = operation.id;
+          this.store.touch();
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
@@ -668,6 +679,7 @@ export class Service {
             this.setupCredentials,
           );
           this.preparing = operation.id;
+          this.store.touch();
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
@@ -721,6 +733,7 @@ export class Service {
             throw new VectisError("preparation_busy", "An image preparation is already active.");
           const active = await startMacInstallation(this.store, this.runtime, operation, command);
           this.preparing = operation.id;
+          this.store.touch();
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
@@ -744,6 +757,7 @@ export class Service {
             throw new VectisError("preparation_busy", "An image preparation is already active.");
           const active = await startPreparation(this.store, this.runtime, operation, command);
           this.preparing = active.setupId;
+          this.store.touch();
           const done = active.done.finally(() => {
             this.preparing = undefined;
             this.tasks.delete(operation.id);
@@ -1727,17 +1741,22 @@ export class Service {
   }
   async close() {
     this.closing = true;
-    const poolClosed = this.warmPool.close().catch((error: unknown) => ({ error }));
-    this.stopWatchingJobs();
-    await this.scaleSetListener.close();
-    if (this.retentionTimer) clearInterval(this.retentionTimer);
-    if (this.cleanupTimer) clearInterval(this.cleanupTimer);
-    this.cleanupAbort.abort();
-    for (const task of this.tasks.values()) task.abort.abort();
-    await Promise.all([this.queue, this.cleanupSweep]);
-    await Promise.all([...this.tasks.values()].map((task) => task.done));
-    const poolResult = await poolClosed;
-    await this.runtime.close();
-    if (poolResult) throw poolResult.error;
+    try {
+      const poolClosed = this.warmPool.close().catch((error: unknown) => ({ error }));
+      this.stopWatchingJobs();
+      await this.scaleSetListener.close();
+      if (this.retentionTimer) clearInterval(this.retentionTimer);
+      if (this.cleanupTimer) clearInterval(this.cleanupTimer);
+      this.cleanupAbort.abort();
+      for (const task of this.tasks.values()) task.abort.abort();
+      await Promise.all([this.queue, this.cleanupSweep]);
+      await Promise.all([...this.tasks.values()].map((task) => task.done));
+      const poolResult = await poolClosed;
+      await this.runtime.close();
+      if (poolResult) throw poolResult.error;
+    } finally {
+      this.stopWatchingSleep();
+      this.sleepAssertion.close();
+    }
   }
 }

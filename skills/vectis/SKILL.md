@@ -42,6 +42,8 @@ Every change is an operation: `accepted`, `running`, `action_required`, `succeed
 
 ## Service
 
+- On macOS, the service prevents idle sleep while it owns non-stopped VMs or active image preparations; failures are logged. Lid-close and explicit sleep are not prevented.
+
 - `vectis status --json` shows the bounded machine snapshot, environments, VMs, operations, activities, cloud connection and service version. MCP `vectis_status` returns a compact summary with runner capacity, non-stopped instances, counts within that window and the newest 20 slim operations/activities, without full results. Use `vectis_activities`, `vectis_activity` and `vectis_operation` for details. MCP returns tool data once in `structuredContent` with an empty `content` array.
 - Status includes a `revision` for detecting changes and cached `repositories` when paired. Repository and job updates change the revision; job data stays available through `job list`.
 - `vectis service install|start|stop [--if-idle]|status|uninstall`. MCP: `vectis_service`. `--if-idle` refuses to interrupt VMs or operations.
