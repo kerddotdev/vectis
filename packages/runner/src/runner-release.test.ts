@@ -13,6 +13,43 @@ const macosTrust = {
   openssl: "openssl",
 };
 
+test("macOS runner starts with standard tool directories on PATH", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-runner-path-"));
+  try {
+    const directory = join(home, "vectis-actions-runner");
+    await mkdir(join(directory, "bin"), { recursive: true });
+    await writeFile(
+      join(directory, "bin/Runner.Listener"),
+      '#!/bin/bash\nprintf "%s\\n" "$PATH"\n',
+      {
+        mode: 0o700,
+      },
+    );
+    const inheritedPath = process.env.PATH ?? "";
+    const macosResult = spawnSync(
+      "bash",
+      ["-c", runnerStartScript("macos", "c2VjcmV0", access, { macosTrust })],
+      {
+        env: { ...process.env, HOME: home, PATH: inheritedPath },
+        encoding: "utf8",
+      },
+    );
+    expect(macosResult.status, macosResult.stderr).toBe(0);
+    expect(macosResult.stdout.trim()).toBe(
+      `/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:${inheritedPath}`,
+    );
+
+    const linuxResult = spawnSync("bash", ["-c", runnerStartScript("linux", "c2VjcmV0", access)], {
+      env: { ...process.env, HOME: home, PATH: inheritedPath },
+      encoding: "utf8",
+    });
+    expect(linuxResult.status, linuxResult.stderr).toBe(0);
+    expect(linuxResult.stdout.trim()).toBe(inheritedPath);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test.each(["linux", "macos"] as const)(
   "the baked %s runner runs in the guest home while the assignment gate retains its stable private path",
   async (os) => {

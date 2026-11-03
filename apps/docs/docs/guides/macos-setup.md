@@ -63,7 +63,7 @@ A macOS guest is whatever you install in its setup console. Vectis restores Appl
 
 One thing is not optional. Without a developer toolchain the guest has no working `git`, so `actions/checkout` fails on its first step and almost no workflow gets further. Verification refuses such a guest and tells you what to install. While the setup console is open, either run `xcode-select --install` for Apple's Command Line Tools, which bring `git`, `clang`, `make` and the macOS SDK, or install the full Xcode and open it once to accept its license. Jobs that build with Xcode, sign, or need a specific Xcode version need the full install, not the Command Line Tools.
 
-Everything else follows the same rule as the other guests: `actions/setup-*` actions download toolchains at job time, and anything your jobs always need, such as Homebrew formulas or a specific Ruby, can be installed once into a [derived environment](/docs/guides/environments) with `environment.provision`, or installed in a workflow step.
+Everything else follows the same rule as the other guests: `actions/setup-*` actions download toolchains at job time, and anything your jobs always need, such as Homebrew formulas or a specific Ruby, can be installed once into a [derived environment](/docs/guides/environments) with `environment.provision`, or installed in a workflow step. Jobs start with `/opt/homebrew/bin`, `/opt/homebrew/sbin` and `/usr/local/bin` ahead of the guest's default `PATH`, as on GitHub-hosted macOS runners, so tools installed there are found without full paths.
 
 ## Guest TLS trust
 
