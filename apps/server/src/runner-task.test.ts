@@ -834,6 +834,33 @@ test("explicit runner storage I/O failure keeps a distinct infrastructure cause"
   });
 });
 
+test("a runner storage I/O failure collects diagnostics", async () => {
+  const { controls } = fixture();
+  vi.mocked(executeGuest)
+    .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+    .mockResolvedValueOnce({
+      exitCode: 1,
+      stdout: "",
+      stderr: "Input/output error",
+      truncated: false,
+    });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    AbortSignal.timeout(1000),
+  );
+  expect(result).toMatchObject({
+    status: "failed",
+    code: "storage_io_error",
+    progress: { recoveryCause: { code: "storage_io_error" }, diagnostics: "collected" },
+  });
+  expect(collectRunnerDiagnostics).toHaveBeenCalledWith(
+    expect.objectContaining({ listener: expect.stringContaining("Input/output error") }),
+  );
+});
+
 test("successful and cancelled runners gather no diagnostics", async () => {
   const { controls } = fixture();
   await runRunnerTask("binding", "key", environment, controls, AbortSignal.timeout(1000));

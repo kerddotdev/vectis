@@ -396,7 +396,7 @@ export async function runRunnerTask(
     connection &&
     !signal.aborted &&
     failure instanceof VectisError &&
-    ["guest_unavailable", "runner_process_failed"].includes(failure.code)
+    ["guest_unavailable", "runner_process_failed", "storage_io_error"].includes(failure.code)
   )
     update({
       diagnostics: await collectRunnerDiagnostics({
