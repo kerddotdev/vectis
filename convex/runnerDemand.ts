@@ -143,34 +143,34 @@ export async function scheduleRunnerDemand(
         ? 1
         : 0);
   if (free <= 0) return;
-  const queues: Array<{ binding: Doc<"repositoryBindings">; jobs: Doc<"githubJobs">[] }> = [];
+  const queues: Array<{
+    binding: Doc<"repositoryBindings">;
+    environment: NonNullable<Doc<"machines">["environments"]>[number];
+    jobs: AsyncIterator<Doc<"githubJobs">>;
+    remaining: number;
+  }> = [];
   for (const binding of bindings ?? (await automaticBindings(ctx, machineId))) {
     if (binding.owner !== target.owner || binding.capacityMode === "scale_set") continue;
     const environment = target.environments?.find(
       (item) => item.id === binding.environmentId && item.state === "ready",
     );
     if (!environment) continue;
-    const jobs = (
-      await ctx.db
-        .query("githubJobs")
-        .withIndex("by_repository_queue", (q) =>
-          q
-            .eq("installationId", binding.installationId)
-            .eq("repositoryId", binding.repositoryId)
-            .eq("status", "queued"),
-        )
-        .take(50)
-    ).filter(
-      (job) =>
-        jobAccess(binding.access, job) === undefined &&
-        matchesRunnerLabels(job.labels, environment.os, environment.id),
-    );
-    if (!jobs.length) continue;
     const account = await ctx.db.get("githubAccounts", binding.accountId);
     if (account?.owner !== target.owner) continue;
-    queues.push({ binding, jobs });
+    const jobs = ctx.db
+      .query("githubJobs")
+      .withIndex("by_repository_queue", (q) =>
+        q
+          .eq("installationId", binding.installationId)
+          .eq("repositoryId", binding.repositoryId)
+          .eq("status", "queued"),
+      );
+    queues.push({ binding, environment, jobs: jobs[Symbol.asyncIterator](), remaining: 0 });
   }
   if (!queues.length) return;
+  // Bounded per binding so one ineligible queue cannot starve others or exceed transaction reads.
+  const scanBudget = Math.max(50, Math.floor(2000 / queues.length));
+  for (const queue of queues) queue.remaining = scanBudget;
   for (const phase of ["accepted", "claimed", "running"] as const) {
     const operations = await ctx.db
       .query("operations")
@@ -212,12 +212,20 @@ export async function scheduleRunnerDemand(
   }
   while (free > 0) {
     let scheduled = false;
-    for (const { binding, jobs } of queues) {
+    for (const queue of queues) {
+      const { binding, environment, jobs } = queue;
       if (free <= 0) break;
       if (environmentSlots && (environmentSlots.get(binding.environmentId) ?? 0) <= 0) continue;
-      while (jobs.length > 0) {
-        const job = jobs.shift();
-        if (!job) break;
+      while (queue.remaining > 0) {
+        const next = await jobs.next();
+        if (next.done) break;
+        queue.remaining--;
+        const job = next.value;
+        if (
+          jobAccess(binding.access, job) !== undefined ||
+          !matchesRunnerLabels(job.labels, environment.os, environment.id)
+        )
+          continue;
         const demand = await ctx.db
           .query("runnerDemands")
           .withIndex("by_job", (q) =>
