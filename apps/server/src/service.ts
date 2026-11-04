@@ -267,7 +267,11 @@ export class Service {
   }
   observeJobs(observations: JobObservations) {
     observeRunnerJobs(this.store, observations);
-    this.reconcileInfraReruns();
+    try {
+      this.reconcileInfraReruns();
+    } catch (error) {
+      console.error("Infrastructure rerun reconciliation failed:", redact(inspect(error)));
+    }
   }
   private readonly infraRetryAt = new Map<string, number>();
   private readonly resumedInfraReruns = new Set<string>();

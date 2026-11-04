@@ -154,6 +154,45 @@ test.each([
   },
 );
 
+test("observeJobs contains and redacts infrastructure rerun reconciliation errors", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-infra-observe-error-"));
+  const store = new Store(join(home, "state.sqlite"));
+  const connection = broker();
+  const privateValue = "ghp_abcdefghijklmnopqrstuvwxyz";
+  const service = new Service(
+    store,
+    new VmRuntime({ home }),
+    () => connection,
+    undefined,
+    () => {
+      throw new Error(`authorization: Bearer ${privateValue}`);
+    },
+  );
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    seed(store, "runner", "guest_unavailable");
+    expect(() => service.observeJobs([{ leaseId: "runner", job }])).not.toThrow();
+    expect(
+      store
+        .activitySummaries()
+        .some(
+          (activity) =>
+            activity.subject.type === "runner" && activity.subject.actualJob?.jobId === job.jobId,
+        ),
+    ).toBe(true);
+    expect(log).toHaveBeenCalledWith(
+      "Infrastructure rerun reconciliation failed:",
+      expect.stringContaining("authorization: Bearer [redacted]"),
+    );
+    expect(log.mock.calls.flat().join(" ")).not.toContain(privateValue);
+  } finally {
+    log.mockRestore();
+    await service.close();
+    store.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("policy toggle uses the setting command contract and returns the stored setting", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-infra-toggle-"));
   const store = new Store(join(home, "state.sqlite"));
