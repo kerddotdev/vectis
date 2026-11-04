@@ -271,7 +271,9 @@ export async function runRunnerTask(
     let job: RunnerPhase | undefined;
     let listenerExitedAt: number | undefined;
     let guestStartObserved = false;
+    let listenerReportedJobStart = false;
     const jobStarted = (reportedAt?: number) => {
+      if (reportedAt !== undefined) listenerReportedJobStart = true;
       if (
         guestStartObserved ||
         (reportedAt === undefined && (job || listenerExitedAt !== undefined))
@@ -304,9 +306,14 @@ export async function runRunnerTask(
     };
     const listening = new AbortController();
     const listeningSignal = AbortSignal.any([signal, listening.signal]);
-    const watcher = watchIdleRunner(grant.id, watchedControls, listening, listeningSignal, () => {
-      jobStarted();
-    });
+    const watcher = watchIdleRunner(
+      grant.id,
+      watchedControls,
+      listening,
+      listeningSignal,
+      () => jobStarted(),
+      () => listenerReportedJobStart,
+    );
     const execution = await executeRunnerListener(
       connection,
       environment.os,
@@ -593,6 +600,7 @@ async function watchIdleRunner(
   listening: AbortController,
   signal: AbortSignal,
   onBusy: () => void,
+  listenerReportedJobStart: () => boolean,
 ) {
   const now = controls.now ?? Date.now;
   const timeoutMs = controls.idleTimeoutMs ?? idleTimeoutMs;
@@ -601,6 +609,7 @@ async function watchIdleRunner(
   let idleSince = now();
   let offlineSince: number | undefined;
   let failureSince: number | undefined;
+  let observedBusy = false;
   const offline = () =>
     listening.abort(
       new VectisError(
@@ -617,7 +626,8 @@ async function watchIdleRunner(
       if (!signal.aborted) {
         failureSince ??= now();
         offlineSince = undefined;
-        if (now() - failureSince >= failureTimeout) offline();
+        if (!observedBusy && !listenerReportedJobStart() && now() - failureSince >= failureTimeout)
+          offline();
       }
       return undefined;
     }
@@ -638,6 +648,7 @@ async function watchIdleRunner(
     if (signal.aborted) return;
     if (!status) continue;
     if ("busy" in status && status.busy) {
+      observedBusy = true;
       onBusy();
       idleSince = now();
       offlineSince = undefined;
@@ -649,7 +660,7 @@ async function watchIdleRunner(
       continue;
     }
     offlineSince = undefined;
-    if (now() - idleSince < timeoutMs) continue;
+    if (listenerReportedJobStart() || now() - idleSince < timeoutMs) continue;
     try {
       if (controls.needed && (await controls.needed(signal))) continue;
     } catch {
@@ -661,6 +672,7 @@ async function watchIdleRunner(
     if (signal.aborted) return;
     if (!confirmed) continue;
     if ("busy" in confirmed && confirmed.busy) {
+      observedBusy = true;
       onBusy();
       idleSince = now();
       continue;
@@ -669,6 +681,7 @@ async function watchIdleRunner(
       offlineSince ??= now();
       continue;
     }
+    if (listenerReportedJobStart()) continue;
     listening.abort(
       new VectisError(
         "runner_idle",

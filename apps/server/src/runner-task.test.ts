@@ -915,6 +915,41 @@ test("a job assigned during the demand read prevents drain", async () => {
   expect(await done).toMatchObject({ status: "succeeded" });
 });
 
+test("a listener job start during the confirmation status read prevents drain", async () => {
+  const { broker, controls, events, needed, done, complete } = await listeningFixture();
+  needed.mockResolvedValue(false);
+  let resolveConfirmation!: (status: { busy: false; status: "online" }) => void;
+  let confirmationStarted = false;
+  let statusReads = 0;
+  broker.runnerStatus.mockImplementation(async () => {
+    statusReads += 1;
+    if (statusReads === 11) {
+      confirmationStarted = true;
+      return await new Promise((resolve) => {
+        resolveConfirmation = resolve;
+      });
+    }
+    return { busy: false, status: "online" };
+  });
+
+  await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+  expect(confirmationStarted).toBe(true);
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 0,
+    stdout: `${jobStartedMarker}\n${Date.now()}\n`,
+    stderr: "",
+    truncated: false,
+  });
+  await vi.advanceTimersByTimeAsync(10000);
+  resolveConfirmation({ busy: false, status: "online" });
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(controls.stop).not.toHaveBeenCalled();
+  expect(events).toEqual([]);
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
 test.each(["stop", "release"] as const)(
   "idle drain with failed %s cleanup needs reconciliation",
   async (step) => {
@@ -1504,6 +1539,57 @@ test.each(["idle", "offline", "errors"] as const)(
     expect(vi.getTimerCount()).toBe(0);
   },
 );
+
+test("status failures do not abort a runner after it was observed busy", async () => {
+  const { broker, done, complete, controls } = await listeningFixture(false, {
+    pollIntervalMs: 10,
+    statusFailureTimeoutMs: 30,
+    now: () => Date.now(),
+  });
+  broker.runnerStatus.mockResolvedValue({ busy: true, status: "online" });
+  await vi.advanceTimersByTimeAsync(10);
+  broker.runnerStatus.mockRejectedValue(new Error("Unavailable"));
+  await vi.advanceTimersByTimeAsync(50);
+  expect(controls.stop).not.toHaveBeenCalled();
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
+test("listener-reported job start prevents status failures from aborting the runner", async () => {
+  const { broker, done, complete, controls } = await listeningFixture(false, {
+    pollIntervalMs: 10000,
+    statusFailureTimeoutMs: 20000,
+  });
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 0,
+    stdout: `${jobStartedMarker}\n${Date.now()}\n`,
+    stderr: "",
+    truncated: false,
+  });
+  broker.runnerStatus.mockRejectedValue(new Error("Unavailable"));
+  await vi.advanceTimersByTimeAsync(30000);
+  expect(controls.stop).not.toHaveBeenCalled();
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
+
+test("listener-reported job start prevents idle release", async () => {
+  const { broker, done, complete, controls } = await listeningFixture(false, {
+    pollIntervalMs: 10000,
+    idleTimeoutMs: 20000,
+  });
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 0,
+    stdout: `${jobStartedMarker}\n${Date.now()}\n`,
+    stderr: "",
+    truncated: false,
+  });
+  broker.runnerStatus.mockResolvedValue({ busy: false, status: "online" });
+  await vi.advanceTimersByTimeAsync(40000);
+  expect(controls.stop).not.toHaveBeenCalled();
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+});
 
 test("offline failure survives unconfirmed VM cleanup", async () => {
   const { controls, broker, done } = await listeningFixture(false, {
