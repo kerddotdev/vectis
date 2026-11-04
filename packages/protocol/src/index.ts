@@ -39,6 +39,7 @@ export type LinuxPreparation = typeof LinuxPreparation.Type;
 export const MacInstallation = Schema.Struct({
   ...LinuxPreparation.fields,
   restorePath: Schema.optional(Schema.NonEmptyString),
+  manualSetup: Schema.optional(Schema.Literal(true)),
 });
 export type MacInstallation = typeof MacInstallation.Type;
 export const WindowsInstallation = Schema.Struct({

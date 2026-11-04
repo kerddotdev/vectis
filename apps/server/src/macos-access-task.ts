@@ -30,6 +30,10 @@ export const macToolchainProbe =
   "swift=$(/usr/bin/swift --version 2>/dev/null | /usr/bin/head -1 || true)\n" +
   'printf \'%s|%s|%s|%s\\n\' "${developer:-none}" "${git:-none}" "${clang:-none}" "${swift:-none}"';
 
+export const macSetupVerification =
+  'set -eu\nprintf \'%s %s\\n\' "$(uname -m)" "$(date -u +%s)"\n/usr/bin/fdesetup status\n/usr/bin/sw_vers -productVersion\n' +
+  macToolchainProbe;
+
 export function verifyMacSetupOutput(output: string) {
   const lines = output
     .trim()
@@ -143,12 +147,7 @@ export async function startMacGuestAccess(
       });
       return;
     }
-    const result = await executeGuest(
-      connection,
-      'set -eu\nprintf \'%s %s\\n\' "$(uname -m)" "$(date -u +%s)"\n/usr/bin/fdesetup status\n/usr/bin/sw_vers -productVersion\n' +
-        macToolchainProbe,
-      { signal },
-    );
+    const result = await executeGuest(connection, macSetupVerification, { signal });
     if (result.exitCode !== 0)
       throw new VectisError(
         "guest_verification_failed",

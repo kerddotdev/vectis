@@ -5,11 +5,75 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import * as macInstallation from "../../../packages/runner/src/macos-installation.js";
+import * as process from "../../../packages/runner/src/process.js";
 import { Store } from "./store.js";
 import {
   hasUnconfirmedMacInstallation,
   recoverMacInstallations,
 } from "./macos-installation-task.js";
+
+test("automatic setup timeout preserves the bundle and requires attention", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mac-setup-timeout-"));
+  const bundle = join(home, "base.bundle");
+  const store = new Store(":memory:");
+  const runtime = new VmRuntime({ home, appleHelper: join(home, "synthetic-helper") });
+  const service = new Service(store, runtime);
+  const validate = vi.spyOn(macInstallation, "validateMacInstallation").mockResolvedValue();
+  const install = vi.spyOn(macInstallation, "installMacGuest").mockResolvedValue({
+    bundle,
+    build: "26B123",
+  });
+  const runProcess = vi
+    .spyOn(process, "runProcess")
+    .mockImplementation(async (_path, _args, signal) => {
+      signal?.throwIfAborted();
+      return "true\n";
+    });
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  let timeoutCalls = 0;
+  const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) => {
+    timeoutCalls++;
+    return timeoutCalls === 2 ? AbortSignal.abort() : timeout(milliseconds);
+  });
+  try {
+    await mkdir(bundle);
+    await writeFile(join(bundle, "installation.json"), JSON.stringify({ majorVersion: 27 }));
+    const operation = service.submit("setup-timeout", {
+      type: "environment.install-macos",
+      id: "mac",
+      name: "Mac",
+      cpu: 2,
+      memoryMiB: 4096,
+      diskGiB: 64,
+      imageDirectory: home,
+      storagePath: home,
+    });
+    await service.drain();
+    expect(store.operation(operation.id)).toMatchObject({
+      status: "action_required",
+      message: "Automatic macOS setup timed out at macos.provisioning. The bundle is preserved.",
+      result: {
+        bundle,
+        phase: "setup_required",
+        setupMode: "automatic",
+        failedStep: "macos.provisioning",
+      },
+    });
+    expect(store.get("macInstallation", operation.id)).toMatchObject({
+      phase: "setup_required",
+      bundle,
+    });
+    expect(store.snapshot().environments).toHaveLength(0);
+  } finally {
+    await service.close();
+    store.close();
+    validate.mockRestore();
+    install.mockRestore();
+    runProcess.mockRestore();
+    timeoutSpy.mockRestore();
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("recovery preserves a completed restore instead of installing it twice", async () => {
   const directory = await mkdtemp(join(tmpdir(), "vectis-mac-recovery-"));

@@ -51,7 +51,7 @@ const summaries = {
   linux:
     "Downloads verified Ubuntu 24.04 ARM64 and prepares SSH, Git, Docker and runner dependencies.",
   macos:
-    "Downloads the verified macOS 27 image from Apple, or uses an existing macOS 26 or 27 IPSW. Setup Assistant and guest SSH configuration are separate steps; this does not register a ready runner.",
+    "Downloads the verified macOS 27 image from Apple, or uses an existing macOS 26 or 27 IPSW. On a macOS 27 host, a macOS 27 guest is set up without Setup Assistant: Vectis creates the guest account, enables SSH, installs Command Line Tools and registers the environment. macOS 26 guests and manual setup still finish with Setup Assistant.",
   windows:
     "Experimental. Installs Windows 11 ARM64 from your official ISO with separate driver media, UEFI firmware and TPM state, and needs QEMU and swtpm installed. Activation and required licenses remain your responsibility.",
 } as const;
@@ -128,6 +128,7 @@ export function PrepareEnvironment({ onDone }: { onDone: () => void }) {
     firmwareVarsPath: "",
   });
   const [acceptLicense, setAcceptLicense] = useState(false);
+  const [manualSetup, setManualSetup] = useState(false);
   const [issue, setIssue] = useState("");
   const [pending, setPending] = useState(false);
   const preset = defaults[os];
@@ -165,6 +166,7 @@ export function PrepareEnvironment({ onDone }: { onDone: () => void }) {
                 ...Schema.decodeUnknownSync(MacInstallation)({
                   ...fields,
                   ...(restorePath ? { restorePath } : {}),
+                  ...(manualSetup ? { manualSetup: true } : {}),
                 }),
               };
       setPending(true);
@@ -269,6 +271,18 @@ export function PrepareEnvironment({ onDone }: { onDone: () => void }) {
               max="2048"
             />
           </div>
+          {os === "macos" && (
+            <Field orientation="horizontal">
+              <Checkbox
+                id="manual-setup"
+                checked={manualSetup}
+                onCheckedChange={(checked) => setManualSetup(checked === true)}
+              />
+              <FieldLabel htmlFor="manual-setup" className="font-normal">
+                Set up the guest manually with Setup Assistant
+              </FieldLabel>
+            </Field>
+          )}
           {os === "windows" && (
             <Field orientation="horizontal">
               <Checkbox
