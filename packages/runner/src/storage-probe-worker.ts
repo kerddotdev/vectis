@@ -1,4 +1,4 @@
-import { access, mkdir, open, opendir } from "node:fs/promises";
+import { access, mkdir, open, opendir, statfs } from "node:fs/promises";
 import { constants } from "node:fs";
 
 const [, , source, directory, create] = process.argv;
@@ -18,4 +18,5 @@ try {
 } finally {
   await file.close();
 }
-process.stdout.write("accessible");
+const { bavail, bsize } = await statfs(directory);
+process.stdout.write(String(bavail * bsize));

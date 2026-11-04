@@ -1551,7 +1551,8 @@ export class Service {
               });
             } catch (error) {
               const remaining =
-                error instanceof VectisError && error.code === "storage_access_required"
+                error instanceof VectisError &&
+                ["storage_access_required", "storage_headroom"].includes(error.code)
                   ? false
                   : await this.runtime.hasWorkDirectory(id, record.directory).catch(() => true);
               this.store.put("instance", id, {
@@ -1663,6 +1664,7 @@ export class Service {
         "runtime_incompatible",
         "storage_unavailable",
         "storage_access_required",
+        "storage_headroom",
         "reconciliation_required",
       ].includes(issue.code)
         ? "action_required"
@@ -1683,9 +1685,13 @@ export class Service {
           result !== null &&
           "code" in result &&
           typeof result.code === "string" &&
-          ["rosetta_not_installed", "rosetta_unsupported", "rosetta_guest_unprepared"].includes(
-            result.code,
-          )
+          [
+            "rosetta_not_installed",
+            "rosetta_unsupported",
+            "rosetta_guest_unprepared",
+            "storage_access_required",
+            "storage_headroom",
+          ].includes(result.code)
         )
           throw new VectisError(
             result.code,

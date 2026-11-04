@@ -169,43 +169,44 @@ test("an interrupted instance reserves its own resources while another VM can st
   }
 });
 
-test("failed storage preflight releases capacity without reading an inaccessible work path", async () => {
-  const { VectisError } = await import("../../../packages/protocol/src/index.js");
-  const home = await mkdtemp(join(tmpdir(), "vectis-access-start-"));
-  const store = new Store(":memory:");
-  const runtime = new VmRuntime({ home });
-  const service = new Service(store, runtime);
-  const start = vi
-    .spyOn(runtime, "start")
-    .mockRejectedValue(
-      new VectisError("storage_access_required", "Access denied", "Allow the selected volume."),
-    );
-  const inspect = vi.spyOn(runtime, "hasWorkDirectory");
-  store.put("environment", "test", {
-    id: "test",
-    name: "Test",
-    os: "linux",
-    state: "ready",
-    basePath: join(home, "base.img"),
-    cpu: 1,
-    memoryMiB: 512,
-  });
-  try {
-    const operation = service.submit("start", { type: "environment.start", id: "test" });
-    await service.drain();
-    await vi.waitFor(() =>
-      expect(store.snapshot().operations.find((item) => item.id === operation.id)).toMatchObject({
-        status: "action_required",
-        result: { code: "storage_access_required", nextStep: "Allow the selected volume." },
-      }),
-    );
-    expect(store.snapshot().instances[0]).toMatchObject({ status: "stopped", pid: 0 });
-    expect(inspect).not.toHaveBeenCalled();
-  } finally {
-    await service.close();
-    start.mockRestore();
-    inspect.mockRestore();
-    store.close();
-    await rm(home, { recursive: true, force: true });
-  }
-});
+test.each(["storage_access_required", "storage_headroom"])(
+  "failed %s preflight releases capacity without reading the work path",
+  async (code) => {
+    const { VectisError } = await import("../../../packages/protocol/src/index.js");
+    const home = await mkdtemp(join(tmpdir(), "vectis-access-start-"));
+    const store = new Store(":memory:");
+    const runtime = new VmRuntime({ home });
+    const service = new Service(store, runtime);
+    const start = vi
+      .spyOn(runtime, "start")
+      .mockRejectedValue(new VectisError(code, "Storage unavailable", "Fix the selected volume."));
+    const inspect = vi.spyOn(runtime, "hasWorkDirectory");
+    store.put("environment", "test", {
+      id: "test",
+      name: "Test",
+      os: "linux",
+      state: "ready",
+      basePath: join(home, "base.img"),
+      cpu: 1,
+      memoryMiB: 512,
+    });
+    try {
+      const operation = service.submit("start", { type: "environment.start", id: "test" });
+      await service.drain();
+      await vi.waitFor(() =>
+        expect(store.snapshot().operations.find((item) => item.id === operation.id)).toMatchObject({
+          status: "action_required",
+          result: { code, nextStep: "Fix the selected volume." },
+        }),
+      );
+      expect(store.snapshot().instances[0]).toMatchObject({ status: "stopped", pid: 0 });
+      expect(inspect).not.toHaveBeenCalled();
+    } finally {
+      await service.close();
+      start.mockRestore();
+      inspect.mockRestore();
+      store.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
