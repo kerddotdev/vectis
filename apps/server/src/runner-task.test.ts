@@ -101,6 +101,31 @@ function fixture(os: Environment["os"] = "linux") {
   return { controls, broker, events };
 }
 
+test("persists an infrastructure failure before uncertain cleanup", async () => {
+  const { controls } = fixture();
+  const cause = new VectisError("storage_io_error", "Guest disk I/O failed.");
+  vi.mocked(readyGuest).mockRejectedValueOnce(cause);
+  controls.stop.mockImplementationOnce(async () => {
+    expect(controls.progress).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recoveryCause: { code: cause.code, message: cause.message },
+      }),
+    );
+    throw new Error("stop uncertain");
+  });
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    controls,
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({
+    status: "action_required",
+    progress: { recoveryCause: { code: cause.code, message: cause.message } },
+  });
+});
+
 test.each(["linux", "macos", "windows"] as const)(
   "%s cache privilege failure stops before installation and registration and discards the fork",
   async (os) => {
@@ -261,6 +286,17 @@ test("a failed warm health command stops the claim before a cold start", async (
     stderr: "",
     truncated: false,
   });
+  controls.stop.mockImplementationOnce(async () => {
+    expect(controls.progress).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        recoveryCause: {
+          code: "guest_unavailable",
+          message: "The warm VM failed its SSH health check.",
+        },
+      }),
+    );
+    events.push("stop");
+  });
   controls.start.mockImplementationOnce(async () => {
     expect(events).toEqual(["stop"]);
     expect(broker.prepareRunner).not.toHaveBeenCalled();
@@ -281,6 +317,7 @@ test("a failed warm health command stops the claim before a cold start", async (
   );
   expect(result.status).toBe("succeeded");
   expect(result.progress.instanceId).toBe("cold");
+  expect(result.progress.recoveryCause).toBeUndefined();
   expect(result.progress.phases?.map((phase) => phase.name)).toEqual([
     "queued_locally",
     "warm_takeover",
@@ -297,6 +334,38 @@ test("a failed warm health command stops the claim before a cold start", async (
   expect(controls.stop).toHaveBeenCalledTimes(2);
 });
 
+test("a warm health check timeout is persisted as unavailable when cleanup fails", async () => {
+  const { controls } = fixture();
+  vi.mocked(executeGuest).mockRejectedValueOnce(
+    new VectisError("guest_cancelled", "Guest command cancelled."),
+  );
+  controls.stop.mockRejectedValue(new Error("unconfirmed"));
+  const result = await runRunnerTask(
+    "binding",
+    "key",
+    environment,
+    {
+      ...controls,
+      claimWarm: () => ({
+        instance: { id: "warm", environmentId: "test", status: "running", pid: 0, createdAt: "" },
+        connection: {
+          host: "192.0.2.1",
+          port: 22,
+          user: "test",
+          identityFile: "/unused/key",
+          knownHostsFile: "/unused/hosts",
+          hostKeyAlias: "warm",
+        },
+      }),
+    },
+    new AbortController().signal,
+  );
+  expect(result).toMatchObject({
+    status: "action_required",
+    progress: { recoveryCause: { code: "guest_unavailable" } },
+  });
+});
+
 test("unconfirmed warm cleanup prevents cold fallback and JIT registration", async () => {
   const { controls, broker } = fixture();
   const connection = {
@@ -307,7 +376,8 @@ test("unconfirmed warm cleanup prevents cold fallback and JIT registration", asy
     knownHostsFile: "/unused/hosts",
     hostKeyAlias: "warm",
   };
-  vi.mocked(executeGuest).mockRejectedValueOnce(new GuestUnavailableError("SSH lost"));
+  const cause = new GuestUnavailableError("SSH lost");
+  vi.mocked(executeGuest).mockRejectedValueOnce(cause);
   controls.stop.mockRejectedValue(new Error("unconfirmed"));
   const result = await runRunnerTask(
     "binding",
@@ -325,7 +395,10 @@ test("unconfirmed warm cleanup prevents cold fallback and JIT registration", asy
   expect(result).toMatchObject({
     status: "action_required",
     code: "runner_cleanup_required",
-    progress: { instanceId: "warm" },
+    progress: {
+      instanceId: "warm",
+      recoveryCause: { code: cause.code, message: cause.message },
+    },
   });
   expect(controls.start).not.toHaveBeenCalled();
   expect(broker.prepareRunner).not.toHaveBeenCalled();
@@ -1409,6 +1482,19 @@ test("cancellation stops an in-flight marker check and releases all monitoring t
   expect(vi.getTimerCount()).toBe(0);
 });
 
+test.each(["storage_io_error", "guest_unavailable"])(
+  "a witnessed %s stays failed if cancellation arrives during cleanup",
+  async (code) => {
+    const { controls } = fixture();
+    const abort = new AbortController();
+    const cause = new VectisError(code, "Infrastructure failure.");
+    vi.mocked(readyGuest).mockRejectedValueOnce(cause);
+    controls.stop.mockImplementation(async () => abort.abort());
+    const result = await runRunnerTask("binding", "key", environment, controls, abort.signal);
+    expect(result).toMatchObject({ status: "failed", code, message: cause.message });
+  },
+);
+
 test("a witnessed policy rejection stays failed if cancellation arrives during cleanup", async () => {
   const { controls } = fixture();
   const abort = new AbortController();
@@ -1628,7 +1714,7 @@ test("offline failure survives unconfirmed VM cleanup", async () => {
   expect(await done).toMatchObject({
     status: "action_required",
     code: "runner_cleanup_required",
-    recoveryCause: { code: "runner_offline" },
+    progress: { recoveryCause: { code: "runner_offline" } },
   });
   expect(broker.releaseRunner).not.toHaveBeenCalled();
 });

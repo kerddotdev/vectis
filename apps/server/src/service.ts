@@ -542,17 +542,7 @@ export class Service {
       }
     }
     const progress = Schema.decodeUnknownSync(RunnerProgress)(interrupted.result);
-    const recoveryCause = Schema.is(
-      Schema.Struct({
-        recoveryCause: Schema.Struct({
-          code: Schema.Literal("runner_offline"),
-          message: Schema.String,
-        }),
-      }),
-    )(interrupted.result)
-      ? interrupted.result.recoveryCause
-      : undefined;
-    const cause = progress.cause ?? recoveryCause;
+    const cause = progress.cause ?? progress.recoveryCause;
     const instanceId = progress.instanceId ?? start?.id;
     const instance = instanceId === undefined ? undefined : this.store.instance(instanceId);
     if (instance && instance.status !== "stopped")

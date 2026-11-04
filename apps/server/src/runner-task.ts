@@ -161,9 +161,15 @@ export async function runRunnerTask(
             throw new VectisError("guest_unavailable", "The warm VM failed its SSH health check.");
           connection = warm.connection;
         });
-      } catch {
+      } catch (error) {
         signal.throwIfAborted();
+        const cause =
+          error instanceof VectisError && error.code !== "guest_cancelled"
+            ? error
+            : new VectisError("guest_unavailable", "The warm VM failed its SSH health check.");
+        update({ recoveryCause: { code: cause.code, message: cause.message } });
         await controls.stop();
+        update({ recoveryCause: undefined });
         instance = await start();
         update({ instanceId: instance.id });
       }
@@ -366,6 +372,25 @@ export async function runRunnerTask(
     failure = error;
   }
   if (
+    failure instanceof VectisError &&
+    ![
+      "runner_idle",
+      "job_not_queued",
+      "guest_cancelled",
+      "public_runner_approval_required",
+      "private_runner_approval_required",
+      "rosetta_not_installed",
+      "rosetta_unsupported",
+      "rosetta_guest_unprepared",
+    ].includes(failure.code) &&
+    (!signal.aborted ||
+      failure.code === "runner_offline" ||
+      failure.code === "runner_assignment_rejected")
+  )
+    update({
+      recoveryCause: progress.recoveryCause ?? { code: failure.code, message: failure.message },
+    });
+  if (
     connection &&
     !signal.aborted &&
     failure instanceof VectisError &&
@@ -411,9 +436,6 @@ export async function runRunnerTask(
             ? "Vectis refused the assigned job. VM cleanup is unconfirmed and GitHub runner cleanup is waiting."
             : "VM cleanup is unconfirmed. The runner registration was retained.",
           code: "runner_cleanup_required",
-          ...(failure instanceof VectisError && failure.code === "runner_offline"
-            ? { recoveryCause: { code: failure.code, message: failure.message } }
-            : {}),
         };
       }
     }
@@ -429,9 +451,6 @@ export async function runRunnerTask(
             ? "Vectis refused the assigned job. The VM is stopped and cleanup is waiting for GitHub to release the runner."
             : "The VM is stopped, but GitHub runner cleanup is waiting for reconciliation.",
           code: "runner_cleanup_required",
-          ...(failure instanceof VectisError && failure.code === "runner_offline"
-            ? { recoveryCause: { code: failure.code, message: failure.message } }
-            : {}),
         };
       }
     }
@@ -481,6 +500,7 @@ export async function runRunnerTask(
     return { status: "cancelled" as const, progress, message: failure.message };
   if (
     signal.aborted &&
+    !progress.recoveryCause &&
     !(
       failure instanceof VectisError &&
       ["runner_assignment_rejected", "runner_offline"].includes(failure.code)

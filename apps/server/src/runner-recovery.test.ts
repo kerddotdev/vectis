@@ -87,6 +87,41 @@ async function fixture() {
   });
   return { store, service, broker, interrupted, runtime: service.runtime };
 }
+test.each(["storage_io_error", "guest_unavailable"])(
+  "preserves %s through recovery and reconciliation",
+  async (code) => {
+    const { store, service, interrupted } = await fixture();
+    const message = `Infrastructure failure: ${code}`;
+    try {
+      store.update(interrupted, {
+        status: "running",
+        result: {
+          bindingId: "binding",
+          environmentId: "test",
+          leaseKey: interrupted.id,
+          instanceId: "instance",
+          stage: "cleaning",
+          recoveryCause: { code, message },
+        },
+      });
+      store.recover();
+      service.submit("recover", { type: "runner.reconcile", id: interrupted.id });
+      await service.drain();
+      expect(store.get("operation", interrupted.id)).toMatchObject({
+        status: "failed",
+        message,
+        result: { code, recoveryCause: { code, message } },
+      });
+      expect(store.snapshot().activities?.find((item) => item.id === interrupted.id)).toMatchObject(
+        { status: "failed", message },
+      );
+    } finally {
+      await service.close();
+      store.close();
+    }
+  },
+);
+
 test("reconciles a lost registration response without preparing another runner", async () => {
   const { store, service, broker, interrupted } = await fixture();
   try {
