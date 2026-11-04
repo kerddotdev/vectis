@@ -558,7 +558,10 @@ async function executeRunnerListener(
       if (rejection) listening.abort();
       else if (result.exitCode === 0) {
         const startedAt = guestJobStartedAt(result.stdout);
-        if (startedAt !== undefined) onJobStarted(startedAt);
+        if (startedAt !== undefined) {
+          clearInterval(timer);
+          onJobStarted(startedAt);
+        }
       }
     } catch {
       // A transient guest connection failure is not evidence of policy rejection.

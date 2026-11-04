@@ -1186,7 +1186,33 @@ test.each([
       endedAt: new Date(base + finishAt).toISOString(),
     },
   ]);
-  expect(executeGuest).toHaveBeenCalledTimes(3 + Math.floor(finishAt / 10000));
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("gate polling stops after job start and still checks after listener exit", async () => {
+  const { done, complete } = await listeningFixture();
+  await vi.advanceTimersByTimeAsync(20000);
+  expect(executeGuest).toHaveBeenCalledTimes(4);
+
+  vi.mocked(executeGuest).mockResolvedValue({
+    exitCode: 0,
+    stdout: `${jobStartedMarker}\n1234\n`,
+    stderr: "",
+    truncated: false,
+  });
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(executeGuest).toHaveBeenCalledTimes(5);
+  await vi.advanceTimersByTimeAsync(40000);
+  expect(executeGuest).toHaveBeenCalledTimes(5);
+
+  complete();
+  expect(await done).toMatchObject({ status: "succeeded" });
+  expect(executeGuest).toHaveBeenCalledTimes(6);
+  expect(executeGuest).toHaveBeenLastCalledWith(
+    expect.anything(),
+    expect.stringContaining("job-started"),
+    expect.anything(),
+  );
   expect(vi.getTimerCount()).toBe(0);
 });
 
