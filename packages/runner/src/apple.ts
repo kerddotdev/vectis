@@ -2,6 +2,12 @@ import type { ChildProcess } from "node:child_process";
 import { VectisError } from "../../protocol/src/index.js";
 import { requestVmCommand } from "./vm-command.js";
 
+const vmProcesses = new Map<number, number>();
+
+export function appleVmProcessPid(helperPid: number): number | undefined {
+  return vmProcesses.get(helperPid);
+}
+
 export function requestAppleVmShutdown(child: ChildProcess, timeoutMs = 5000) {
   return requestVmCommand(
     child,
@@ -19,9 +25,10 @@ export function requestAppleVmShutdown(child: ChildProcess, timeoutMs = 5000) {
 export function waitForAppleVm(
   child: ChildProcess,
   timeoutMs = 30000,
-): Promise<{ macAddress?: string }> {
+): Promise<{ macAddress?: string; vmPid?: number }> {
   return new Promise((resolve, reject) => {
     let buffer = "";
+    let vmPid: number | undefined;
     const cleanup = () => {
       clearTimeout(timer);
       child.stdout?.off("data", data);
@@ -51,6 +58,17 @@ export function waitForAppleVm(
         }
         if (typeof event !== "object" || event === null || !("event" in event))
           return fail("The Apple helper returned an invalid event.");
+        if (event.event === "vm.process") {
+          if (
+            !("pid" in event) ||
+            typeof event.pid !== "number" ||
+            !Number.isSafeInteger(event.pid) ||
+            event.pid <= 0 ||
+            event.pid === child.pid
+          )
+            return fail("The Apple helper returned an invalid VM process.");
+          vmPid = event.pid;
+        }
         if (event.event === "vm.running") {
           if (
             "macAddress" in event &&
@@ -59,11 +77,17 @@ export function waitForAppleVm(
           )
             return fail("The Apple helper returned an invalid network address.");
           cleanup();
-          resolve(
-            "macAddress" in event && typeof event.macAddress === "string"
+          if (child.pid !== undefined && vmPid !== undefined) {
+            const helperPid = child.pid;
+            vmProcesses.set(helperPid, vmPid);
+            child.once("close", () => vmProcesses.delete(helperPid));
+          }
+          resolve({
+            ...("macAddress" in event && typeof event.macAddress === "string"
               ? { macAddress: event.macAddress }
-              : {},
-          );
+              : {}),
+            ...(vmPid !== undefined ? { vmPid } : {}),
+          });
           return;
         }
         if (event.event === "vm.error" && "code" in event) {

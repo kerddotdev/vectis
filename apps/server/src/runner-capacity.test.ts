@@ -4,7 +4,7 @@ import { Snapshot as SnapshotSchema } from "../../../packages/protocol/src/index
 import type { Environment, Snapshot, Operation } from "../../../packages/protocol/src/index.js";
 import { instanceAdmissionError as admit, runnerCapacity as capacity } from "./runner-capacity.js";
 import { estimatedVmMemoryMiB } from "../../../packages/runner/src/memory.js";
-import type { ResourceProbe } from "./resource-probe.js";
+import { createResourceProbe, type ResourceProbe } from "./resource-probe.js";
 
 const probe: ResourceProbe = (instances) => ({
   footprintsMiB: new Map(
@@ -415,3 +415,27 @@ test("a directly looked-up start keeps unresolved cleanup reserved alongside rec
     budget: { memoryCommittedMiB: 4096 },
   });
 });
+
+test.each(["unidentified Apple process", "missing XPC row", "ps failure"])(
+  "%s reserves configured memory and refuses excess admission",
+  async (mode) => {
+    const state = snapshot();
+    state.instances = [{ ...running(), pid: 123 }];
+    state.machine.memoryBudgetMiB = environment.memoryMiB;
+    const read = vi.fn(async (file: string) => {
+      if (file !== "/bin/ps") return "1";
+      if (mode === "ps failure") throw new Error("ps unavailable");
+      return "123 1 21504";
+    });
+    const measured = createResourceProbe(read, Date.now, () =>
+      mode === "missing XPC row" ? 500 : undefined,
+    );
+    capacity(state, host, { probe: measured });
+    await vi.waitFor(() => expect(read).toHaveResolvedTimes(mode === "ps failure" ? 1 : 2));
+    expect(capacity(state, host, { probe: measured })).toMatchObject({
+      available: 0,
+      budget: { memoryCommittedMiB: environment.memoryMiB },
+    });
+    expect(admit(state, environment, host, 1, measured)?.code).toBe("memory_budget_exceeded");
+  },
+);
