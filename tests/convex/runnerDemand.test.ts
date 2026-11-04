@@ -129,6 +129,136 @@ test("a fork repository or incompatible labels cannot inherit the upstream capac
   await heartbeat(0);
   expect(await operations()).toHaveLength(0);
 });
+test("queued jobs with incompatible labels do not hide newer eligible demand", async () => {
+  const { t, jobId, heartbeat } = await fixture();
+  await t.run(async (ctx) => {
+    await ctx.db.patch("githubJobs", jobId, { labels: ["self-hosted", "vectis-linux"] });
+    for (let i = 0; i < 50; i++) {
+      await ctx.db.insert("githubJobs", {
+        installationId: 3,
+        repositoryId: 2,
+        jobId: 100 + i,
+        runId: 5,
+        name: "Build",
+        status: "queued",
+        conclusion: null,
+        labels: ["self-hosted", "vectis-linux"],
+        runnerId: null,
+        runnerName: null,
+        updatedAt: 1,
+      });
+    }
+    await ctx.db.insert("githubJobs", {
+      installationId: 3,
+      repositoryId: 2,
+      jobId: 999,
+      runId: 5,
+      name: "Build",
+      status: "queued",
+      conclusion: null,
+      labels: ["self-hosted", "macOS", "ARM64", "vectis-mac"],
+      runnerId: null,
+      runnerName: null,
+      updatedAt: 1,
+    });
+  });
+  await heartbeat(0);
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").collect())).toMatchObject([
+    { jobId: 999 },
+  ]);
+});
+test("an ineligible queue does not starve another binding", async () => {
+  const { t, hosts, accountId, jobId, heartbeat } = await fixture();
+  const host = hosts[0]!;
+  await t.run(async (ctx) => {
+    await ctx.db.patch("githubJobs", jobId, { labels: ["vectis-linux"] });
+    for (let i = 0; i < 500; i++) {
+      await ctx.db.insert("githubJobs", {
+        installationId: 3,
+        repositoryId: 2,
+        jobId: 1000 + i,
+        runId: 5,
+        name: "Build",
+        status: "queued",
+        conclusion: null,
+        labels: ["vectis-linux"],
+        runnerId: null,
+        runnerName: null,
+        updatedAt: 1,
+      });
+    }
+    await ctx.db.insert("repositoryBindings", {
+      owner: "owner",
+      accountId,
+      machineId: host.machineId,
+      repositoryId: 99,
+      repositoryName: "other",
+      installationId: 3,
+      environmentId: "mac",
+      enabled: true,
+      automatic: true,
+      verifiedAt: 1,
+    });
+    await ctx.db.insert("githubJobs", {
+      installationId: 3,
+      repositoryId: 99,
+      jobId: 999,
+      runId: 5,
+      name: "Build",
+      status: "queued",
+      conclusion: null,
+      labels: ["self-hosted", "macOS", "ARM64", "vectis-mac"],
+      runnerId: null,
+      runnerName: null,
+      updatedAt: 1,
+    });
+  });
+  await heartbeat(0);
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").collect())).toMatchObject([
+    { repositoryId: 99, jobId: 999 },
+  ]);
+});
+test("an exhausted earlier binding queue does not block later queued demand", async () => {
+  const { t, hosts, accountId, jobId, heartbeat } = await fixture();
+  const machineId = hosts[0]!.machineId;
+  await t.run(async (ctx) => {
+    await ctx.db.patch("githubJobs", jobId, { repositoryId: 98 });
+    await ctx.db.insert("repositoryBindings", {
+      owner: "owner",
+      accountId,
+      machineId,
+      repositoryId: 99,
+      repositoryName: "later",
+      installationId: 3,
+      environmentId: "mac",
+      enabled: true,
+      automatic: true,
+      verifiedAt: 1,
+    });
+    for (const queuedJobId of [100, 101]) {
+      await ctx.db.insert("githubJobs", {
+        installationId: 3,
+        repositoryId: 99,
+        jobId: queuedJobId,
+        runId: 5,
+        name: "Build",
+        status: "queued",
+        conclusion: null,
+        labels: ["self-hosted", "macOS", "ARM64", "vectis-mac"],
+        runnerId: null,
+        runnerName: null,
+        updatedAt: 1,
+      });
+    }
+  });
+
+  await heartbeat(0, false, true, 2);
+
+  expect(await t.run((ctx) => ctx.db.query("runnerDemands").collect())).toMatchObject([
+    { repositoryId: 99, jobId: 100 },
+    { repositoryId: 99, jobId: 101 },
+  ]);
+});
 test("revoked account ownership prevents automatic scheduling", async () => {
   const { t, accountId, heartbeat, operations } = await fixture();
   await t.run(async (ctx) => ctx.db.patch("githubAccounts", accountId, { owner: "other" }));
