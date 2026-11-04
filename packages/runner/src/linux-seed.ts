@@ -31,6 +31,8 @@ const runnerPackages = [
   // g++ pulls in libatomic1, but a job that could not start pnpm without it is why this list
   // exists at all, so it stays named.
   "libatomic1",
+  // Hosted-runner workflow tools, installed from Ubuntu's archive to avoid extra trust roots.
+  "gh docker-compose-v2 docker-buildx",
 ].join(" ");
 
 export function linuxSeed(input: { id: string; publicKey: string }) {
@@ -121,6 +123,17 @@ begin_step packages
 apt_get update
 apt_get install -y ca-certificates curl git openssh-server docker.io
 apt_get install -y --no-install-recommends ${runnerPackages}
+verify_tool() {
+  local name=$1
+  shift
+  if ! "$@" >/dev/null 2>&1; then
+    printf 'E: Required tool check failed: %s.\\n' "$name" >&2
+    return 1
+  fi
+}
+verify_tool 'GitHub CLI (gh --version)' gh --version
+verify_tool 'Docker Compose v2 (docker compose version)' docker compose version
+verify_tool 'Docker Buildx (docker buildx version)' docker buildx version
 usermod -aG docker vectis
 systemctl enable ssh docker
 systemctl start docker
