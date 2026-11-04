@@ -162,7 +162,7 @@ chmod 700 "$gate/job-started.sh"
 rm -f "$gate/assignment-rejected" "$gate/job-started" "$gate/job-started.tmp"
 export ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE=1
 export ACTIONS_RUNNER_HOOK_JOB_STARTED="$gate/job-started.sh"
-${os === "macos" ? macosFilteredCaBundleScript(options.macosTrust?.source, options.macosTrust?.openssl) : ""}umask "$job_umask"
+${os === "macos" ? `${macosFilteredCaBundleScript(options.macosTrust?.source, options.macosTrust?.openssl)}export PATH="/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:$PATH"\n` : ""}umask "$job_umask"
 cd "${target ?? "$HOME/vectis-actions-runner"}"
 runner_exit=0
 ./bin/Runner.Listener run --jitconfig '${jitConfig}' || runner_exit=$?
