@@ -106,7 +106,13 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
         } else {
             throw HelperError(message: "Only linux and macos guests use the Apple helper.")
         }
-        let attachment = try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false)
+        let attachment: VZDiskImageStorageDeviceAttachment
+        if os == "linux" {
+            // Explicit cached writes with full sync avoid Linux guest filesystem I/O errors.
+            attachment = try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false, cachingMode: .cached, synchronizationMode: .full)
+        } else {
+            attachment = try VZDiskImageStorageDeviceAttachment(url: disk, readOnly: false)
+        }
         configuration.storageDevices = [VZVirtioBlockDeviceConfiguration(attachment: attachment)]
         if arguments.count == 8 && arguments[7] != "--console" {
             guard os == "linux" else { throw HelperError(message: "A setup seed is supported only for Linux.") }
@@ -116,7 +122,7 @@ final class Controller: NSObject, VZVirtualMachineDelegate, NSWindowDelegate {
         if let cachePath {
             let cacheURL = URL(fileURLWithPath: cachePath).standardizedFileURL
             guard cacheURL != disk.standardizedFileURL else { throw HelperError(message: "The cache disk must differ from the boot disk.") }
-            let cacheAttachment = try VZDiskImageStorageDeviceAttachment(url: cacheURL, readOnly: false)
+            let cacheAttachment = try VZDiskImageStorageDeviceAttachment(url: cacheURL, readOnly: false, cachingMode: .cached, synchronizationMode: .full)
             let cache = VZVirtioBlockDeviceConfiguration(attachment: cacheAttachment)
             cache.blockDeviceIdentifier = "VECTISCACHE"
             configuration.storageDevices.append(cache)
