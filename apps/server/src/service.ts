@@ -83,7 +83,7 @@ const CacheRecord = Schema.Struct({ bindingId: Schema.String, directory: Schema.
 const CacheUse = Schema.Struct({ bindingId: Schema.String, instanceId: Schema.String });
 
 export class Service {
-  private readonly sleepAssertion = new SleepAssertion();
+  private readonly sleepAssertion: SleepAssertion | undefined;
   private readonly stopWatchingSleep: () => void;
   private readonly cacheVolumes: CacheVolumes;
   private readonly cacheDisks = new Map<string, CacheDisk>();
@@ -130,16 +130,24 @@ export class Service {
     readonly runnerCleanup: { intervalMs?: number; connected: () => boolean } = {
       connected: () => false,
     },
+    idleSleepAssertion = false,
   ) {
     this.cacheVolumes = new CacheVolumes(runtime.options.home);
     store.recover();
-    const updateSleep = () =>
-      this.sleepAssertion.update(
-        this.store.instances(0).length +
-          (this.preparing !== undefined || this.store.preparationBusy() ? 1 : 0),
-      );
-    this.stopWatchingSleep = store.onChange(updateSleep);
-    updateSleep();
+    if (idleSleepAssertion) {
+      const assertion = new SleepAssertion();
+      this.sleepAssertion = assertion;
+      const updateSleep = () =>
+        assertion.update(
+          this.store.instances(0).length +
+            (this.preparing !== undefined || this.store.preparationBusy() ? 1 : 0),
+        );
+      this.stopWatchingSleep = store.onChange(updateSleep);
+      updateSleep();
+    } else {
+      this.sleepAssertion = undefined;
+      this.stopWatchingSleep = () => {};
+    }
     this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
     const host = { cpus: cpus().length, memoryBytes: totalmem() };
     this.warmPool = new WarmPool(store, {
@@ -1756,7 +1764,7 @@ export class Service {
       if (poolResult) throw poolResult.error;
     } finally {
       this.stopWatchingSleep();
-      this.sleepAssertion.close();
+      this.sleepAssertion?.close();
     }
   }
 }

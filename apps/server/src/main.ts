@@ -10,6 +10,7 @@ const program = Effect.scoped(
       Effect.promise(() =>
         startService({
           home,
+          idleSleepAssertion: true,
           onShutdown: () => process.emit("SIGTERM"),
           ...(process.env.VECTIS_APPLE_HELPER
             ? { appleHelper: process.env.VECTIS_APPLE_HELPER }

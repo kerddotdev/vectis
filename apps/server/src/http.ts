@@ -58,6 +58,7 @@ export async function startService(
       port?: number;
       token?: string;
       keychainHelper?: string;
+      idleSleepAssertion?: boolean;
       onShutdown?: () => void;
     },
 ) {
@@ -111,6 +112,7 @@ export async function startService(
     () => relay?.repositorySnapshot,
     (ids) => relay?.watchLeases(ids),
     { connected: () => cloud.state === "connected" },
+    options.idleSleepAssertion,
   );
   let cloud: CloudStatus = { state: "unconfigured" };
   let relay: Awaited<ReturnType<typeof configuredRelay>>;
