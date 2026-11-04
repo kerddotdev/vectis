@@ -111,6 +111,7 @@ export default defineSchema({
     installationId: v.number(),
     environmentId: v.string(),
     enabled: v.boolean(),
+    infraRerun: v.optional(v.boolean()),
     automatic: v.optional(v.boolean()),
     capacityMode: v.optional(v.union(v.literal("demand"), v.literal("scale_set"))),
     access: v.optional(repositoryAccess),

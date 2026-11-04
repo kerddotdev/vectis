@@ -349,7 +349,9 @@ export async function runRunnerTask(
     if (execution.exitCode !== 0) {
       listener = `exit ${execution.exitCode}\n${execution.stdout}\n${execution.stderr}`;
       throw new VectisError(
-        "runner_process_failed",
+        /input\/output error|\bEIO\b/i.test(`${execution.stdout}\n${execution.stderr}`)
+          ? "storage_io_error"
+          : "runner_process_failed",
         "The runner process exited unsuccessfully.",
         "Inspect the GitHub Actions run and the base image prerequisites.",
       );
@@ -394,7 +396,7 @@ export async function runRunnerTask(
     connection &&
     !signal.aborted &&
     failure instanceof VectisError &&
-    ["guest_unavailable", "runner_process_failed"].includes(failure.code)
+    ["guest_unavailable", "runner_process_failed", "storage_io_error"].includes(failure.code)
   )
     update({
       diagnostics: await collectRunnerDiagnostics({

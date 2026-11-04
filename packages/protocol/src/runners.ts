@@ -2,6 +2,12 @@ import { Schema } from "effect";
 import { RunnerAccess } from "./repository-access.js";
 import { GuestOS, Identifier } from "./index.js";
 
+export const infrastructureFailureCodes: readonly string[] = [
+  "guest_unavailable",
+  "runner_offline",
+  "storage_io_error",
+];
+
 const CacheReason = Schema.String.check(Schema.isMaxLength(256));
 
 export const RunnerGrant = Schema.Union([
@@ -82,6 +88,13 @@ export const RunnerProgress = Schema.Struct({
     }),
   ),
   diagnostics: Schema.optional(Schema.String.check(Schema.isMaxLength(16384))),
+  infraRerun: Schema.optional(
+    Schema.Struct({
+      runId: Schema.Int,
+      attempt: Schema.Int,
+      operationId: Identifier,
+    }),
+  ),
   recoveryCause: Schema.optional(Schema.Struct({ code: Schema.String, message: Schema.String })),
   cause: Schema.optional(
     Schema.Struct({

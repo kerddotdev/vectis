@@ -8,6 +8,8 @@ import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { activityFor } from "./activities.js";
 import { Service } from "./service.js";
 import { Store } from "./store.js";
+import { reconcileInfraReruns } from "./infra-rerun.js";
+import { watchRunnerJobs } from "./runner-job-observations.js";
 
 afterEach(() => vi.useRealTimers());
 
@@ -44,6 +46,82 @@ const job: Job = {
   runnerName: "vectis-lease-runner",
   updatedAt: 1,
 };
+
+test.each([false, true])(
+  "reconciliation writes preserve change debouncing with pending retry=%s",
+  async (pendingRetry) => {
+    vi.useFakeTimers();
+    const home = await mkdtemp(join(tmpdir(), "vectis-watch-reconcile-"));
+    const store = new Store(join(home, "state.sqlite"));
+    const watch = vi.fn();
+    const reconcile = vi
+      .fn(() => pendingRetry)
+      .mockImplementationOnce(() => {
+        store.put("infra-rerun", "decision", { settled: true });
+        return pendingRetry;
+      });
+    seed(store, "first", "succeeded");
+    const stop = watchRunnerJobs(store, watch, reconcile);
+    try {
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(watch).toHaveBeenLastCalledWith(["lease-first"]);
+      expect(vi.getTimerCount()).toBe(1);
+      seed(store, "second", "succeeded");
+      store.touch();
+      await vi.advanceTimersByTimeAsync(999);
+      expect(watch).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(watch).toHaveBeenCalledTimes(2);
+      expect(watch.mock.lastCall?.[0]).toEqual(
+        expect.arrayContaining(["lease-first", "lease-second"]),
+      );
+      expect(vi.getTimerCount()).toBe(1);
+    } finally {
+      stop();
+      expect(vi.getTimerCount()).toBe(0);
+      store.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
+
+test("malformed rerun decisions do not stop lease watching or observation expiry", async () => {
+  vi.useFakeTimers();
+  const home = await mkdtemp(join(tmpdir(), "vectis-watch-reconcile-error-"));
+  const store = new Store(join(home, "state.sqlite"));
+  const watch = vi.fn();
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  const submit = vi.fn(() => {
+    throw new Error("No rerun should be submitted");
+  });
+  seed(store, "first", "succeeded");
+  store.put("infra-rerun", "malformed", {});
+  const stop = watchRunnerJobs(store, watch, () => {
+    reconcileInfraReruns(store, [], submit);
+    return false;
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(log).toHaveBeenCalledOnce();
+    expect(log.mock.lastCall?.[0]).toBe("Infrastructure rerun reconciliation failed:");
+    expect(watch).toHaveBeenLastCalledWith(["lease-first"]);
+    seed(store, "second", "succeeded");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(log).toHaveBeenCalledTimes(2);
+    expect(watch.mock.lastCall?.[0]).toEqual(
+      expect.arrayContaining(["lease-first", "lease-second"]),
+    );
+    await vi.advanceTimersByTimeAsync(48 * 60 * 60 * 1000);
+    expect(watch).toHaveBeenLastCalledWith([]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(submit).not.toHaveBeenCalled();
+  } finally {
+    stop();
+    log.mockRestore();
+    store.close();
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("job observation still follows a retained runner outside both status windows", async () => {
   vi.useFakeTimers();

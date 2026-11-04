@@ -161,6 +161,8 @@ Repositories and jobs
   repository connect <name>     Connect with --account <id> and --environment <id>, optional --owner <org>
   repository enable-auto <id>   Start runners automatically for matching queued jobs
   repository disable-auto <id>  Stop starting runners automatically
+  repository enable-infra-rerun <id>   Retry failed jobs once after infrastructure failure
+  repository disable-infra-rerun <id>  Disable infrastructure failure retries
   repository capacity-mode <id> demand|scale-set  Choose runner capacity mode (scale sets are preview)
   repository disconnect <id>    Stop future runners without interrupting running jobs
   runner run <binding-id>       Start one disposable runner, optionally only for --job-id <id>
@@ -636,6 +638,16 @@ Documentation: https://vectis.kerd.dev/docs
       type: "repository.automatic",
       bindingId: id,
       enabled: subcommand === "enable-auto",
+    });
+  else if (
+    command === "repository" &&
+    (subcommand === "enable-infra-rerun" || subcommand === "disable-infra-rerun") &&
+    id
+  )
+    request = decodeCommand({
+      type: "repository.infra-rerun",
+      bindingId: id,
+      enabled: subcommand === "enable-infra-rerun",
     });
   else if (command === "repository" && subcommand === "cache" && positionals[3]) {
     const bindingId = positionals[3];

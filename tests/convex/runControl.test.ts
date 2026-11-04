@@ -16,6 +16,7 @@ import {
 import type { RunControlCommand } from "../../packages/protocol/src/runs.js";
 
 const modules = {
+  "../../convex/repositoryBindings.ts": () => import("../../convex/repositoryBindings.js"),
   "../../convex/githubRuns.ts": () => import("../../convex/githubRuns.js"),
   "../../convex/runReceipts.ts": () => import("../../convex/runReceipts.js"),
   "../../convex/runnerLeases.ts": () => import("../../convex/runnerLeases.js"),
@@ -110,7 +111,7 @@ async function fixture() {
     if (url.includes("/jobs?"))
       return Response.json({
         total_count: 1,
-        jobs: [{ conclusion: failedJobs ? "failure" : "success" }],
+        jobs: [{ id: 1, conclusion: failedJobs ? "failure" : "success" }],
       });
     if (url.endsWith("/actions/runs/5")) return Response.json(run);
     throw new Error(`Unexpected request: ${url}`);
@@ -488,102 +489,116 @@ test("binding access is rechecked immediately before POST", async () => {
   expect(f.posts()).toHaveLength(0);
 });
 
-test("remote replay after a lost local response and lost local database still POSTs only once", async () => {
-  const f = await fixture();
-  const home = await mkdtemp(join(tmpdir(), "vectis-run-replay-"));
-  let store = new Store(join(home, "state.sqlite"));
-  const broker = {
-    controlRun: (command: RunControlCommand, key: string, _signal: AbortSignal) =>
-      f.device.action(api.githubRuns.control, { command, key }),
-    analyzeMigration: async () => {
-      throw new Error("unused");
-    },
-    publishMigration: async () => {
-      throw new Error("unused");
-    },
-    repositories: async () => [],
-    connectRepository: async () => "unused",
-    disconnectRepository: async () => {},
-    setAutomatic: async () => {},
-    scanJobs: async () => ({ runs: 0, jobs: 0, complete: true }),
-    refreshJob: async () => {
-      throw new Error("unused");
-    },
-    reconcileRunner: async () => {
-      throw new Error("unused");
-    },
-    runnerStatus: async () => ({ busy: false, status: "online" as const }),
-    jobLogs: async () => {
-      throw new Error("unused");
-    },
-    setAccess: async () => {},
-    prepareRunner: async () => ({ state: "released" as const, id: "unused" }),
-    releaseRunner: async () => {},
-  };
-  let service = new Service(store, new VmRuntime({ home }), () => broker);
-  const owner = f.t.withIdentity({
-    issuer: "https://clerk.test",
-    subject: "owner",
-    tokenIdentifier: "owner",
-  });
-  const id = await owner.mutation(api.operations.submit, {
-    machineId: f.machineId,
-    key: "remote-rerun",
-    commandJson: JSON.stringify(f.command),
-  });
-  const pending = async () => {
-    const [operation] = await f.device.query(api.operations.pending, {});
-    if (!operation) throw new Error("Missing remote operation");
-    return operation;
-  };
-  const acknowledge = (args: Acknowledgement) =>
-    f.device.mutation(api.operations.acknowledge, args);
-  const local = {
-    submit: async (command: Parameters<Service["submit"]>[1], key: string) =>
-      service.submit(key, command),
-    operationByKey: async (key: string) => store.operationByKey(key),
-  };
-  const signal = new AbortController().signal;
-  try {
-    await advanceRemoteOperation(await pending(), local, acknowledge, signal);
-    await expect(
-      advanceRemoteOperation(
-        await pending(),
-        {
-          ...local,
-          submit: async (command, key) => {
-            service.submit(key, command);
-            throw new Error("Local response lost");
-          },
-        },
-        acknowledge,
-        signal,
+test.each(["rerun", "infra-toggle"])(
+  "%s remote replay survives lost responses and local database",
+  async (kind) => {
+    const f = await fixture();
+    const home = await mkdtemp(join(tmpdir(), "vectis-run-replay-"));
+    let store = new Store(join(home, "state.sqlite"));
+    const broker = {
+      controlRun: (command: RunControlCommand, key: string, _signal: AbortSignal) =>
+        f.device.action(api.githubRuns.control, { command, key }),
+      analyzeMigration: async () => {
+        throw new Error("unused");
+      },
+      publishMigration: async () => {
+        throw new Error("unused");
+      },
+      repositories: async () => [],
+      connectRepository: async () => "unused",
+      disconnectRepository: async () => {},
+      setAutomatic: async () => {},
+      setInfraRerun: async (bindingId: string, enabled: boolean) => {
+        await f.device.mutation(api.repositoryBindings.setInfraRerun, { bindingId, enabled });
+      },
+      scanJobs: async () => ({ runs: 0, jobs: 0, complete: true }),
+      refreshJob: async () => {
+        throw new Error("unused");
+      },
+      reconcileRunner: async () => {
+        throw new Error("unused");
+      },
+      runnerStatus: async () => ({ busy: false, status: "online" as const }),
+      jobLogs: async () => {
+        throw new Error("unused");
+      },
+      setAccess: async () => {},
+      prepareRunner: async () => ({ state: "released" as const, id: "unused" }),
+      releaseRunner: async () => {},
+    };
+    let service = new Service(store, new VmRuntime({ home }), () => broker);
+    const owner = f.t.withIdentity({
+      issuer: "https://clerk.test",
+      subject: "owner",
+      tokenIdentifier: "owner",
+    });
+    const id = await owner.mutation(api.operations.submit, {
+      machineId: f.machineId,
+      key: "remote-rerun",
+      commandJson: JSON.stringify(
+        kind === "rerun"
+          ? f.command
+          : { type: "repository.infra-rerun", bindingId: f.bindingId, enabled: true },
       ),
-    ).rejects.toThrow("Local response lost");
-    await service.drain();
-    await vi.waitFor(() =>
-      expect(
-        store.snapshot().operations.find((operation) => operation.key === `remote:${id}`)?.status,
-      ).toBe("succeeded"),
-    );
-    await service.close();
-    store.close();
-    await rm(join(home, "state.sqlite"));
-    store = new Store(join(home, "state.sqlite"));
-    service = new Service(store, new VmRuntime({ home }), () => broker);
-    await advanceRemoteOperation(await pending(), local, acknowledge, signal);
-    await service.drain();
-    await vi.waitFor(() => expect(store.snapshot().operations[0]?.status).toBe("succeeded"));
-    await advanceRemoteOperation(await pending(), local, acknowledge, signal);
-    await advanceRemoteOperation(await pending(), local, acknowledge, signal);
-    expect((await owner.query(api.operations.get, { id })).phase).toBe("succeeded");
-    expect(f.posts()).toHaveLength(1);
-  } finally {
-    await service.close();
-    store.close();
-    await rm(home, { recursive: true, force: true });
-  }
-});
+    });
+    const pending = async () => {
+      const [operation] = await f.device.query(api.operations.pending, {});
+      if (!operation) throw new Error("Missing remote operation");
+      return operation;
+    };
+    const acknowledge = (args: Acknowledgement) =>
+      f.device.mutation(api.operations.acknowledge, args);
+    const local = {
+      submit: async (command: Parameters<Service["submit"]>[1], key: string) =>
+        service.submit(key, command),
+      operationByKey: async (key: string) => store.operationByKey(key),
+    };
+    const signal = new AbortController().signal;
+    try {
+      await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+      await expect(
+        advanceRemoteOperation(
+          await pending(),
+          {
+            ...local,
+            submit: async (command, key) => {
+              service.submit(key, command);
+              throw new Error("Local response lost");
+            },
+          },
+          acknowledge,
+          signal,
+        ),
+      ).rejects.toThrow("Local response lost");
+      await service.drain();
+      await vi.waitFor(() =>
+        expect(
+          store.snapshot().operations.find((operation) => operation.key === `remote:${id}`)?.status,
+        ).toBe("succeeded"),
+      );
+      await service.close();
+      store.close();
+      await rm(join(home, "state.sqlite"));
+      store = new Store(join(home, "state.sqlite"));
+      service = new Service(store, new VmRuntime({ home }), () => broker);
+      await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+      await service.drain();
+      await vi.waitFor(() => expect(store.snapshot().operations[0]?.status).toBe("succeeded"));
+      await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+      await advanceRemoteOperation(await pending(), local, acknowledge, signal);
+      expect((await owner.query(api.operations.get, { id })).phase).toBe("succeeded");
+      expect(f.posts()).toHaveLength(kind === "rerun" ? 1 : 0);
+      if (kind === "infra-toggle")
+        expect(
+          (await f.t.run((ctx) => ctx.db.get("repositoryBindings", f.bindingId)))?.infraRerun,
+        ).toBe(true);
+    } finally {
+      await service.close();
+      store.close();
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);
 
 test("a binding on another machine rejects this machine before API access", async () => {
   const f = await fixture();
@@ -686,4 +701,64 @@ test("202 cancellation acceptance does not depend on parsing the response body",
     }),
   ).toMatchObject({ state: "accepted", cancellation: "observed" });
   expect(f.posts()).toHaveLength(1);
+});
+
+test("attempt-scoped retries wait without reserving a POST, reject stale attempts and retain receipts", async () => {
+  const f = await fixture();
+  await f.t.run((ctx) => ctx.db.patch("repositoryBindings", f.bindingId, { infraRerun: true }));
+  const command = { ...f.command, expectedRunAttempt: 1, infraJobIds: [1] };
+  f.run.status = "in_progress";
+  expect(
+    await f.device.action(api.githubRuns.control, { key: "infra-wait", command }),
+  ).toMatchObject({ state: "rejected", code: "run_not_ready" });
+  expect(f.posts()).toHaveLength(0);
+  expect(await f.t.run((ctx) => ctx.db.query("runCommandReceipts").collect())).toHaveLength(0);
+  f.run.status = "completed";
+  expect(
+    await f.device.action(api.githubRuns.control, { key: "infra-wait", command }),
+  ).toMatchObject({ state: "accepted", rerun: "observed", runAttempt: 2 });
+  expect(
+    await f.device.action(api.githubRuns.control, { key: "infra-wait", command }),
+  ).toMatchObject({ state: "accepted", rerun: "observed", runAttempt: 2 });
+  f.run.status = "completed";
+  expect(
+    await f.device.action(api.githubRuns.control, { key: "infra-stale", command }),
+  ).toMatchObject({ state: "rejected", code: "run_attempt_changed" });
+  expect(f.posts()).toHaveLength(1);
+});
+
+test("disabling infrastructure retry prevents a pending attempt-scoped POST", async () => {
+  const f = await fixture();
+  expect(
+    await f.device.action(api.githubRuns.control, {
+      key: "infra-disabled",
+      command: { ...f.command, expectedRunAttempt: 1 },
+    }),
+  ).toMatchObject({ state: "rejected", code: "repository_access_denied" });
+  expect(f.posts()).toHaveLength(0);
+});
+
+test("automatic retries refuse a run with unrelated workflow failures", async () => {
+  const f = await fixture();
+  await f.t.run((ctx) => ctx.db.patch("repositoryBindings", f.bindingId, { infraRerun: true }));
+  const original = f.fetch.getMockImplementation();
+  if (!original) throw new Error("Missing fetch");
+  f.fetch.mockImplementation(async (url, init) =>
+    url.includes("/jobs?")
+      ? Response.json({
+          total_count: 2,
+          jobs: [
+            { id: 1, conclusion: "failure" },
+            { id: 2, conclusion: "failure" },
+          ],
+        })
+      : original(url, init),
+  );
+  expect(
+    await f.device.action(api.githubRuns.control, {
+      key: "infra-mixed",
+      command: { ...f.command, expectedRunAttempt: 1, infraJobIds: [1] },
+    }),
+  ).toMatchObject({ state: "rejected", code: "run_has_workflow_failures" });
+  expect(f.posts()).toHaveLength(0);
 });

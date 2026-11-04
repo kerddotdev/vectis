@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { internalMutation } from "./_generated/server.js";
+import { internalMutation, internalQuery } from "./_generated/server.js";
 import { bindingAuthority } from "./runnerLeases.js";
 import { machine } from "./auth.js";
 import { runControlOutcome } from "./runCommands.js";
@@ -48,5 +48,19 @@ export const finish = internalMutation({
       outcome: args.outcome,
       updatedAt: Date.now(),
     });
+  },
+});
+
+export const lookup = internalQuery({
+  args: { bindingId: v.string(), key: v.string(), requestHash: v.string() },
+  handler: async (ctx, args) => {
+    const { target, binding } = await bindingAuthority(ctx, args.bindingId, false);
+    const receipt = await ctx.db
+      .query("runCommandReceipts")
+      .withIndex("by_machine_key", (q) => q.eq("machineId", target._id).eq("key", args.key))
+      .unique();
+    if (receipt && (receipt.bindingId !== binding._id || receipt.requestHash !== args.requestHash))
+      throw new ConvexError({ code: "idempotency_conflict" });
+    return receipt;
   },
 });

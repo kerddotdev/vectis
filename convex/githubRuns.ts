@@ -28,7 +28,9 @@ const Run = Schema.Struct({
 });
 const JobsPage = Schema.Struct({
   total_count: Schema.Int,
-  jobs: Schema.Array(Schema.Struct({ conclusion: Schema.NullOr(Schema.String) })),
+  jobs: Schema.Array(
+    Schema.Struct({ id: Schema.optional(Schema.Int), conclusion: Schema.NullOr(Schema.String) }),
+  ),
 });
 const DispatchDetails = Schema.Struct({
   workflow_run_id: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -85,13 +87,17 @@ export const control = action({
           }
         : command;
     const requestHash = createHash("sha256").update(JSON.stringify(canonical)).digest("hex");
-    const { fresh, receipt } = await ctx.runMutation(internal.runReceipts.claim, {
-      bindingId: command.bindingId,
-      key: args.key,
-      requestHash,
-    });
-    // A submitted receipt may belong to a live action or a crashed one. Neither permits another POST.
-    if (!fresh) return receipt.outcome ?? unconfirmedRunCommand(command);
+    const attemptScoped =
+      command.type === "run.rerun-failed" && command.expectedRunAttempt !== undefined;
+    const receiptArgs = { bindingId: command.bindingId, key: args.key, requestHash };
+    const previous = attemptScoped
+      ? await ctx.runQuery(internal.runReceipts.lookup, receiptArgs)
+      : null;
+    if (previous) return previous.outcome ?? unconfirmedRunCommand(command);
+    let claimed = attemptScoped
+      ? undefined
+      : await ctx.runMutation(internal.runReceipts.claim, receiptArgs);
+    if (claimed && !claimed.fresh) return claimed.receipt.outcome ?? unconfirmedRunCommand(command);
     let posted = false;
     let responseReceived = false;
     let acceptedOutcome: Extract<RunControlOutcome, { state: "accepted" }> | undefined;
@@ -143,6 +149,21 @@ export const control = action({
           nextStep: "Select an active run.",
         });
       if (before && command.type === "run.rerun-failed") {
+        if (
+          command.expectedRunAttempt !== undefined &&
+          before.run_attempt !== command.expectedRunAttempt
+        )
+          throw new ConvexError({
+            code: "run_attempt_changed",
+            message: "A different run attempt is now current.",
+            nextStep: "Inspect the current run on GitHub.",
+          });
+        if (before.status !== "completed" && attemptScoped)
+          return rejected(
+            "run_not_ready",
+            "The job finished; other jobs in this run are still active.",
+            "Vectis will check this attempt again before requesting its retry.",
+          );
         if (before.status !== "completed")
           throw new ConvexError({
             code: "run_not_rerunnable",
@@ -157,10 +178,23 @@ export const control = action({
               `${access.path}/actions/runs/${before.id}/attempts/${before.run_attempt}/jobs?per_page=100&page=${page}`,
             ),
           );
-          failed = jobs.jobs.some(
+          if (
+            command.infraJobIds &&
+            jobs.jobs.some(
+              (job) =>
+                ["failure", "timed_out"].includes(job.conclusion ?? "") &&
+                (job.id === undefined || !command.infraJobIds?.includes(job.id)),
+            )
+          )
+            throw new ConvexError({
+              code: "run_has_workflow_failures",
+              message: "Some failed jobs do not have a verified infrastructure failure.",
+              nextStep: "Inspect the workflow failures before manually rerunning jobs.",
+            });
+          failed ||= jobs.jobs.some(
             (job) => job.conclusion === "failure" || job.conclusion === "timed_out",
           );
-          if (failed || page * 100 >= jobs.total_count) break;
+          if ((!command.infraJobIds && failed) || page * 100 >= jobs.total_count) break;
           if (!jobs.jobs.length || page === 10)
             throw new ConvexError({
               code: "run_jobs_unverified",
@@ -181,6 +215,7 @@ export const control = action({
       });
       if (
         !current.binding.enabled ||
+        (attemptScoped && !current.binding.infraRerun) ||
         current.binding.repositoryId !== access.repositoryId ||
         current.binding.installationId !== access.installationId ||
         current.account._id !== authority.account._id
@@ -190,6 +225,8 @@ export const control = action({
           message: "Repository access changed before submission.",
           nextStep: "Check the binding and GitHub App access before retrying.",
         });
+      claimed ??= await ctx.runMutation(internal.runReceipts.claim, receiptArgs);
+      if (!claimed.fresh) return claimed.receipt.outcome ?? unconfirmedRunCommand(command);
       posted = true;
       if (command.type === "workflow.dispatch") {
         // API 2026-03-10 always returns run details; return_run_details was removed.
@@ -313,8 +350,9 @@ export const control = action({
               "Check repository access and run state before retrying with a new operation key.",
             );
     }
+    if (!claimed) return outcome;
     try {
-      await ctx.runMutation(internal.runReceipts.finish, { id: receipt._id, outcome });
+      await ctx.runMutation(internal.runReceipts.finish, { id: claimed.receipt._id, outcome });
     } catch (error) {
       if (posted) return unconfirmedRunCommand(command);
       throw error;

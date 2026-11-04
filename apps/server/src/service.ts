@@ -71,6 +71,7 @@ import { VmRuntime } from "../../../packages/runner/src/runtime.js";
 import { Store } from "./store.js";
 import { activityFor, decidingMember, type ActivityLink } from "./activities.js";
 import { retainActivities } from "./activity-retention.js";
+import { reconcileInfraReruns } from "./infra-rerun.js";
 import { observeRunnerJobs, watchRunnerJobs } from "./runner-job-observations.js";
 import { instanceAdmissionError, runnerCapacity } from "./runner-capacity.js";
 import { WarmPool } from "./warm-pool.js";
@@ -112,6 +113,7 @@ export class Service {
         connectRepository(input: RepositoryConnection, signal: AbortSignal): Promise<string>;
         disconnectRepository(bindingId: string): Promise<void>;
         setAutomatic(bindingId: string, enabled: boolean): Promise<void>;
+        setInfraRerun?(bindingId: string, enabled: boolean): Promise<void>;
         setCacheVolume?(
           bindingId: string,
           settings: { enabled: boolean; sizeGiB?: number },
@@ -148,7 +150,7 @@ export class Service {
       this.sleepAssertion = undefined;
       this.stopWatchingSleep = () => {};
     }
-    this.stopWatchingJobs = watchRunnerJobs(store, watchLeases);
+    this.stopWatchingJobs = watchRunnerJobs(store, watchLeases, () => this.reconcileInfraReruns());
     const host = { cpus: cpus().length, memoryBytes: totalmem() };
     this.warmPool = new WarmPool(store, {
       start: (environment, key, signal) => this.startWarm(environment, key, signal),
@@ -265,6 +267,44 @@ export class Service {
   }
   observeJobs(observations: JobObservations) {
     observeRunnerJobs(this.store, observations);
+    try {
+      this.reconcileInfraReruns();
+    } catch (error) {
+      console.error("Infrastructure rerun reconciliation failed:", redact(inspect(error)));
+    }
+  }
+  private readonly infraRetryAt = new Map<string, number>();
+  private readonly resumedInfraReruns = new Set<string>();
+  private reconcileInfraReruns() {
+    if (this.closing) return false;
+    let pendingRetry = false;
+    reconcileInfraReruns(this.store, this.repositorySnapshot() ?? [], (key, command) => {
+      let existing: Operation | undefined;
+      try {
+        existing = this.store.operationByKey(key);
+      } catch (error) {
+        if (!(error instanceof VectisError && error.code === "operation_missing")) throw error;
+      }
+      const notReady =
+        existing?.status === "failed" &&
+        Schema.is(Schema.Struct({ code: Schema.Literal("run_not_ready") }))(existing.result);
+      if (notReady) pendingRetry = true;
+      const retryAt = this.infraRetryAt.get(key) ?? 0;
+      if (
+        existing &&
+        ((notReady && Date.now() >= retryAt) ||
+          (existing.status === "action_required" && !this.resumedInfraReruns.has(key)))
+      ) {
+        this.resumedInfraReruns.add(key);
+        this.infraRetryAt.set(key, Date.now() + 30000);
+        const retry = existing;
+        this.queue = this.queue.then(() => this.execute(retry, command));
+      }
+      if (existing) return existing;
+      this.infraRetryAt.set(key, Date.now() + 30000);
+      return this.submit(key, command);
+    });
+    return pendingRetry;
   }
   private state(): Snapshot {
     const current = this.store.snapshot();
@@ -961,6 +1001,17 @@ export class Service {
             );
           await broker.setCapacityMode(command.bindingId, command.mode);
           result = { bindingId: command.bindingId, capacityMode: command.mode };
+          break;
+        }
+        case "repository.infra-rerun": {
+          const broker = this.runnerConnection();
+          if (!broker.setInfraRerun)
+            throw new VectisError(
+              "unsupported",
+              "The cloud connection cannot change infrastructure retry settings.",
+            );
+          await broker.setInfraRerun(command.bindingId, command.enabled);
+          result = { bindingId: command.bindingId, infraRerun: command.enabled };
           break;
         }
         case "repository.automatic": {
