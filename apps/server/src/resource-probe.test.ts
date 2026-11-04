@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { totalmem } from "node:os";
 import { waitForAppleVm, appleVmProcessPid } from "../../../packages/runner/src/apple.js";
 import { expect, test, vi } from "vitest";
 import type { Environment, Instance } from "../../../packages/protocol/src/index.js";
-import { createResourceProbe } from "./resource-probe.js";
+import { createResourceProbe, parseCompressorRatio, parseSwapUsedRatio } from "./resource-probe.js";
 
 const instance: Instance = {
   id: "owned",
@@ -36,25 +37,77 @@ test("probes share in-flight work and cache results for five seconds", async () 
   const probe = createProbe(read, () => time);
   expect(probe([instance])).toMatchObject({ pressure: "normal", pressureKnown: false });
   probe([instance]);
-  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenCalledTimes(3);
   await vi.waitFor(() => expect(probe([instance]).pressureKnown).toBe(true));
   expect(probe([instance]).footprintsMiB.get(instance.id)).toBe(3072);
   expect(read).toHaveBeenCalledWith("/bin/ps", ["-A", "-o", "pid=,ppid=,rss="]);
   expect(read).toHaveBeenCalledWith("/usr/sbin/sysctl", [
     "-n",
     "kern.memorystatus_vm_pressure_level",
+    "vm.swapusage",
   ]);
   time = 4999;
   probe([instance]);
-  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenCalledTimes(3);
   time = 5000;
   rss = "123 1 4194304";
   pressure = "2";
   probe([instance]);
   probe([instance]);
-  expect(read).toHaveBeenCalledTimes(4);
+  expect(read).toHaveBeenCalledTimes(6);
   await vi.waitFor(() => expect(probe([instance]).pressure).toBe("warning"));
   expect(probe([instance]).footprintsMiB.get(instance.id)).toBe(4096);
+});
+
+test("primes compressor measurement and reports compressor and swap ratios", async () => {
+  const read = vi.fn(async (file: string) => {
+    if (file === "/usr/bin/vm_stat")
+      return "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages occupied by compressor: 1192728.";
+    if (file === "/usr/sbin/sysctl")
+      return "2\ntotal = 8192.00M  used = 7475.20M  free = 716.80M  (encrypted)";
+    return "123 1 1024";
+  });
+  const probe = createProbe(read);
+  expect(read).toHaveBeenCalledWith("/usr/bin/vm_stat", []);
+  expect(probe([instance]).compressorRatio).toBeUndefined();
+  await vi.waitFor(() => {
+    const usage = probe([instance]);
+    expect(usage.compressorRatio).toBeCloseTo((1192728 * 16384) / totalmem());
+    expect(usage.swapUsedRatio).toBeCloseTo(7475.2 / 8192);
+    expect(usage.pressure).toBe("warning");
+  });
+});
+
+test("expired compressor measurements stay unknown until the refresh completes", async () => {
+  let time = 0;
+  let refresh: ((value: string) => void) | undefined;
+  let vmStatsReads = 0;
+  const pageSize = 16384;
+  const sample = (ratio: number) =>
+    `Mach Virtual Memory Statistics: (page size of ${pageSize} bytes)\nPages occupied by compressor: ${Math.floor((totalmem() * ratio) / pageSize)}.`;
+  const high = sample(0.5);
+  const low = sample(0.05);
+  const read = vi.fn((file: string) => {
+    if (file !== "/usr/bin/vm_stat") return Promise.resolve("1");
+    vmStatsReads += 1;
+    if (vmStatsReads === 1) return Promise.resolve(high);
+    return new Promise<string>((resolve) => {
+      refresh = resolve;
+    });
+  });
+  const probe = createProbe(read, () => time);
+
+  await vi.waitFor(() => expect(probe([instance]).compressorRatio).toBeGreaterThanOrEqual(0.25));
+  time = 5000;
+  const expired = probe([instance]);
+  expect(expired.compressorRatio).toBeUndefined();
+  expect(expired.compressorRatio !== undefined && expired.compressorRatio >= 0.25).toBe(false);
+
+  refresh?.(low);
+  await vi.waitFor(() => expect(probe([instance]).compressorRatio).toBeDefined());
+  expect(probe([instance]).compressorRatio).toBeCloseTo(
+    (Math.floor((totalmem() * 0.05) / pageSize) * pageSize) / totalmem(),
+  );
 });
 
 test("PID changes and stopped instances cannot reuse another process footprint", async () => {
@@ -65,7 +118,7 @@ test("PID changes and stopped instances cannot reuse another process footprint",
   expect(probe([instance]).pressure).toBe("critical");
   expect(probe([{ ...instance, pid: 456 }]).footprintsMiB.size).toBe(0);
   expect(probe([{ ...instance, status: "stopped" }]).footprintsMiB.size).toBe(0);
-  expect(read).toHaveBeenCalledTimes(2);
+  expect(read).toHaveBeenCalledTimes(3);
 });
 
 test.each(["", "garbage", "-10", "1.5", "Infinity"])(
@@ -74,13 +127,13 @@ test.each(["", "garbage", "-10", "1.5", "Infinity"])(
     const read = vi.fn(async () => output);
     const probe = createProbe(read);
     probe([instance, { ...instance, id: "new", pid: 0, status: "starting" }]);
-    await vi.waitFor(() => expect(read).toHaveResolvedTimes(2));
+    await vi.waitFor(() => expect(read).toHaveResolvedTimes(3));
     expect(probe([instance])).toEqual({
       footprintsMiB: new Map(),
       pressure: "normal",
       pressureKnown: false,
     });
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledTimes(3);
   },
 );
 
@@ -95,10 +148,10 @@ test("failed probes are cached and replace stale data with unknown", async () =>
   probe([instance]);
   await vi.waitFor(() => expect(probe([instance]).pressureKnown).toBe(false));
   expect(probe([instance]).footprintsMiB.size).toBe(0);
-  expect(read).toHaveBeenCalledTimes(4);
+  expect(read).toHaveBeenCalledTimes(6);
   time = 9999;
   probe([instance]);
-  expect(read).toHaveBeenCalledTimes(4);
+  expect(read).toHaveBeenCalledTimes(6);
 });
 
 test("one process snapshot includes supervisor, QEMU, swtpm and nested descendants for every VM", async () => {
@@ -170,4 +223,18 @@ test("vm.process events reach accounting and their mapping is released when the 
     child.stdin.end();
     await closed;
   }
+});
+
+test("parses macOS swap and compressor measurements", () => {
+  const stats = `Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free: 7000.
+Pages occupied by compressor: 1192728.
+Pages stored in compressor: 1753266.`;
+  expect(parseCompressorRatio(stats, 48 * 1024 ** 3)).toBe((1192728 * 16384) / (48 * 1024 ** 3));
+  expect(
+    parseSwapUsedRatio("total = 8192.00M  used = 7475.20M  free = 716.80M  (encrypted)"),
+  ).toBeCloseTo(7.3 / 8);
+  expect(parseSwapUsedRatio("total = 0.00M  used = 0.00M  free = 0.00M")).toBeUndefined();
+  expect(parseSwapUsedRatio("unavailable")).toBeUndefined();
+  expect(parseCompressorRatio("unavailable", 1024)).toBeUndefined();
 });

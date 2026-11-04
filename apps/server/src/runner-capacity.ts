@@ -12,6 +12,9 @@ import { Schema } from "effect";
 import { estimatedVmMemoryMiB } from "../../../packages/runner/src/memory.js";
 import { resourceProbe, type ResourceProbe } from "./resource-probe.js";
 
+// Swap stays occupied long after pressure ends, so only the compressor gates admission.
+const COMPRESSOR_RATIO_LIMIT = 0.25;
+
 type Host = { cpus: number; memoryBytes: number };
 
 function memoryBudget(snapshot: Snapshot, host: Host, probe: ResourceProbe) {
@@ -38,6 +41,8 @@ function memoryBudget(snapshot: Snapshot, host: Host, probe: ResourceProbe) {
     hostMemoryMiB,
     pressure: usage.pressure,
     pressureKnown: usage.pressureKnown,
+    ...(usage.swapUsedRatio === undefined ? {} : { swapUsedRatio: usage.swapUsedRatio }),
+    ...(usage.compressorRatio === undefined ? {} : { compressorRatio: usage.compressorRatio }),
   };
 }
 
@@ -62,6 +67,12 @@ export function instanceAdmissionError(
       "memory_pressure",
       `Host memory pressure is ${budget.pressure}; new VMs cannot start.`,
       "Stop an idle VM or free host memory, then retry when memory pressure is normal.",
+    );
+  if (budget.compressorRatio !== undefined && budget.compressorRatio >= COMPRESSOR_RATIO_LIMIT)
+    return new VectisError(
+      "memory_pressure",
+      "Host memory is heavily compressed; new VMs cannot start.",
+      "Stop an idle VM or free host memory, then retry.",
     );
   if (
     budget.memoryCommittedMiB + estimatedVmMemoryMiB(environment) * count >
