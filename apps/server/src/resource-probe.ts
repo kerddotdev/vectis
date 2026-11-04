@@ -129,8 +129,9 @@ export function createResourceProbe(
     const level = value?.split("\n")[0];
     const swapUsedRatio = value === undefined ? undefined : parseSwapUsedRatio(value);
     const stats = cached(vmStats, "/usr/bin/vm_stat", []);
+    const currentStats = now() >= vmStats.expiresAt ? undefined : stats;
     const compressorRatio =
-      stats === undefined ? undefined : parseCompressorRatio(stats, totalmem());
+      currentStats === undefined ? undefined : parseCompressorRatio(currentStats, totalmem());
     return {
       footprintsMiB,
       pressure: level === "2" ? "warning" : level === "4" ? "critical" : "normal",

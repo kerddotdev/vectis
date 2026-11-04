@@ -78,6 +78,35 @@ test("primes compressor measurement and reports compressor and swap ratios", asy
   });
 });
 
+test("expired compressor measurements stay unknown until the refresh completes", async () => {
+  let time = 0;
+  let refresh: ((value: string) => void) | undefined;
+  let vmStatsReads = 0;
+  const high =
+    "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages occupied by compressor: 1000000.";
+  const low =
+    "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages occupied by compressor: 1.";
+  const read = vi.fn((file: string) => {
+    if (file !== "/usr/bin/vm_stat") return Promise.resolve("1");
+    vmStatsReads += 1;
+    if (vmStatsReads === 1) return Promise.resolve(high);
+    return new Promise<string>((resolve) => {
+      refresh = resolve;
+    });
+  });
+  const probe = createProbe(read, () => time);
+
+  await vi.waitFor(() => expect(probe([instance]).compressorRatio).toBeGreaterThanOrEqual(0.25));
+  time = 5000;
+  const expired = probe([instance]);
+  expect(expired.compressorRatio).toBeUndefined();
+  expect(expired.compressorRatio !== undefined && expired.compressorRatio >= 0.25).toBe(false);
+
+  refresh?.(low);
+  await vi.waitFor(() => expect(probe([instance]).compressorRatio).toBeDefined());
+  expect(probe([instance]).compressorRatio).toBeCloseTo(16384 / totalmem());
+});
+
 test("PID changes and stopped instances cannot reuse another process footprint", async () => {
   const read = vi.fn(async (file: string) => (file === "/bin/ps" ? "123 1 1048576" : "4"));
   const probe = createProbe(read);
