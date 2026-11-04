@@ -161,6 +161,9 @@ printf '${ubuntuImage.revision}\\n' > /etc/vectis/image-revision
 # The downloaded archives go, the package lists stay: a job that runs apt-get install should not
 # have to run apt-get update first.
 apt_get clean
+begin_step kernel-diagnostics
+update-grub
+sysctl --system
 begin_step boot-services
 install -m 0644 /opt/vectis/vectis-rosetta.service /etc/systemd/system/vectis-rosetta.service
 systemctl enable vectis-rosetta.service
@@ -199,6 +202,17 @@ completed=true
         disable_root: true,
         ssh_pwauth: false,
         write_files: [
+          {
+            path: "/etc/default/grub.d/99-vectis-console.cfg",
+            permissions: "0644",
+            content: 'GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT console=hvc0"\n',
+          },
+          {
+            path: "/etc/sysctl.d/99-vectis-diagnostics.conf",
+            permissions: "0644",
+            content:
+              "kernel.hung_task_timeout_secs = 60\nkernel.hung_task_warnings = -1\nkernel.hung_task_panic = 0\nkernel.printk = 7 4 1 7\n",
+          },
           {
             path: "/usr/local/sbin/vectis-instance-identity",
             permissions: "0700",

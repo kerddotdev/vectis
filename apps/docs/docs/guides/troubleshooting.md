@@ -87,6 +87,14 @@ Repository connections are not restored automatically; connect the repositories 
 - VMs on an external drive need the drive connected and macOS permission for Vectis to access it.
 - An interrupted VM blocks new ones until it is reconciled; see [Recover after a crash](/docs/guides/runners#recover-after-a-crash).
 
+## Linux guest connection or storage failures
+
+Apple-helper Linux instances always retain their serial console outside the disposable VM directory, under `<home>/diagnostics/serial/<instanceId>.log` and `<instanceId>.log.1`. Instance IDs contain only letters, digits, hyphens, and underscores. Each instance retains two segments of at most 512 KiB each (1 MiB total); creating a log prunes the collection to the newest 50 instances, keeping or removing both segments together. If host storage cannot keep up, pending output is bounded to the newest 1 MiB and older pending bytes are dropped. Host write failures stop recording while the console continues to drain. The home is the service's configured `--home` or `VECTIS_HOME` directory. If the log file cannot be created, for example because the home volume is full or not writable, the VM still starts without serial capture.
+
+Runners that fail because the guest connection was lost, the runner went offline, the runner process failed, storage I/O failed, or the VM failed, errored or timed out while starting retain up to 8 KiB of host-read serial output alongside existing SSH diagnostics in the operation's `diagnostics`, within the existing 16384-character total limit. This evidence survives instance cleanup and does not require SSH. Raw serial files may contain sensitive guest output; review them before sharing.
+
+Newly prepared Linux images send kernel messages up to info level to `hvc0`, so hung-task stack traces are kept, and report tasks hung for 60 seconds without panicking. Existing images still work and their console is captured, but kernel console configuration requires preparing a new image. macOS and Windows serial consoles are not covered.
+
 ## Reporting a problem
 
 Open an issue on [GitHub](https://github.com/kerddotdev/vectis/issues/new/choose) with `vectis --version`, `vectis doctor --json` and the relevant part of `vectis logs`. Remove anything private first. Report security problems privately as described in the [security policy](https://github.com/kerddotdev/vectis/blob/main/SECURITY.md).

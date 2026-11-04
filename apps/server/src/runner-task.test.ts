@@ -2045,3 +2045,72 @@ test("cache denial reasons from the cloud survive a successful runner lifecycle"
   });
   expect(authorizeWrite).not.toHaveBeenCalled();
 });
+
+test.each(["start", "timeout", "readiness", "listener", "storage"])(
+  "%s failure retains host serial evidence without SSH",
+  async (phase) => {
+    const { mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { createSerialLog } = await import("../../../packages/runner/src/serial-log.js");
+    const { PassThrough } = await import("node:stream");
+    const home = await mkdtemp(join(tmpdir(), "vectis-runner-serial-"));
+    try {
+      const log = await createSerialLog(home, "instance");
+      const console = new PassThrough();
+      log.attach(console);
+      console.end(`${"old output\n".repeat(3000)}kernel: I/O error c2VjcmV0\n`);
+      await log.close();
+      const { controls } = fixture();
+      if (phase === "storage")
+        vi.mocked(collectRunnerDiagnostics).mockResolvedValue(
+          "ssh evidence\n".repeat(2000).slice(0, 16000),
+        );
+      else vi.mocked(collectRunnerDiagnostics).mockRejectedValue(new Error("SSH gone"));
+      if (phase === "readiness")
+        vi.mocked(readyGuest).mockRejectedValue(new GuestUnavailableError("SSH gone"));
+      else if (phase !== "start")
+        vi.mocked(executeGuest)
+          .mockResolvedValueOnce({ exitCode: 0, stdout: "", stderr: "", truncated: false })
+          .mockImplementationOnce(async () => {
+            if (phase === "listener") throw new GuestUnavailableError("SSH gone");
+            return { exitCode: 1, stdout: "", stderr: "Input/output error", truncated: false };
+          });
+      controls.stop.mockImplementation(async () => {
+        const { readSerialTail } = await import("../../../packages/runner/src/serial-log.js");
+        expect(await readSerialTail(home, "instance")).toContain("kernel: I/O error");
+      });
+      const result = await runRunnerTask(
+        "binding",
+        "key",
+        environment,
+        {
+          ...controls,
+          home,
+          ...(phase === "start" || phase === "timeout"
+            ? {
+                start: async (onStarting?: (id: string) => void) => {
+                  onStarting?.("instance");
+                  throw new VectisError(
+                    phase === "timeout" ? "runner_control_timeout" : "runner_control_failed",
+                    "VM start failed",
+                  );
+                },
+              }
+            : {}),
+        },
+        AbortSignal.timeout(1000),
+      );
+      expect(result.status).toBe("failed");
+      const decoded = Schema.decodeUnknownSync(RunnerProgress)(result.progress);
+      expect(decoded.diagnostics).toContain("== guest serial console");
+      expect(decoded.diagnostics).toContain("kernel: I/O error");
+      if (phase === "storage") expect(decoded.diagnostics).toContain("ssh evidence");
+      if (phase === "listener" || phase === "storage")
+        expect(decoded.diagnostics).not.toContain("c2VjcmV0");
+      expect(decoded.diagnostics?.length).toBeLessThanOrEqual(16384);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+);

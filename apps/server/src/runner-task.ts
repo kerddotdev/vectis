@@ -1,3 +1,5 @@
+import { readSerialTail } from "../../../packages/runner/src/serial-log.js";
+import { redact } from "../../../packages/client/src/redact.js";
 import {
   VectisError,
   type Environment,
@@ -35,6 +37,7 @@ const idleTimeoutMs = 5 * 60 * 1000;
 const pollIntervalMs = 30000;
 
 interface Controls {
+  home?: string;
   cache?: {
     sizeGiB: number;
     authorizeWrite(): void;
@@ -393,20 +396,44 @@ export async function runRunnerTask(
       recoveryCause: progress.recoveryCause ?? { code: failure.code, message: failure.message },
     });
   if (
-    connection &&
     !signal.aborted &&
     failure instanceof VectisError &&
-    ["guest_unavailable", "runner_process_failed", "storage_io_error"].includes(failure.code)
-  )
+    [
+      "guest_unavailable",
+      "runner_process_failed",
+      "storage_io_error",
+      "runner_offline",
+      "vm_start_failed",
+      "runner_control_failed",
+      "runner_control_timeout",
+    ].includes(failure.code)
+  ) {
+    const [ssh, serial] = await Promise.all([
+      connection &&
+      ["guest_unavailable", "runner_process_failed", "storage_io_error"].includes(failure.code)
+        ? collectRunnerDiagnostics({
+            connection,
+            os: environment.os,
+            listener,
+            secrets: [secret],
+            preinstalled: environment.image?.runnerVersion === runnerVersion,
+          }).catch(() => undefined)
+        : undefined,
+      environment.os === "linux" && controls.home && progress.instanceId
+        ? readSerialTail(controls.home, progress.instanceId).catch(() => undefined)
+        : undefined,
+    ]);
+    const serialEvidence = serial
+      ? `== guest serial console\n${redact(serial, [secret]).slice(-8192)}`
+      : undefined;
     update({
-      diagnostics: await collectRunnerDiagnostics({
-        connection,
-        os: environment.os,
-        listener,
-        secrets: [secret],
-        preinstalled: environment.image?.runnerVersion === runnerVersion,
-      }).catch(() => undefined),
+      diagnostics: serialEvidence
+        ? [ssh?.slice(0, 16384 - serialEvidence.length - 1), serialEvidence]
+            .filter(Boolean)
+            .join("\n")
+        : ssh,
     });
+  }
   const cleanupResult = await timed("cleanup", async () => {
     update({
       stage: "cleaning",

@@ -483,3 +483,32 @@ test.each(["linux", "macos", "windows"] as const)(
     expect(await runtime.hasWorkDirectory("invalid-provision")).toBe(false);
   },
 );
+
+hostTest(
+  "Linux helper stderr is drained during startup and survives instance cleanup",
+  async () => {
+    const { home, runtime, environment } = await fixture(`
+const output = Buffer.alloc(2 * 1024 * 1024, 'x');
+process.stderr.write(output, () => {
+  process.stderr.write('kernel: I/O error\\n');
+  process.stdout.write('{"event":"vm.running"}\\n');
+  setTimeout(() => process.exit(0), 100);
+});
+`);
+    const instance = await runtime.start("serial", environment, () => {});
+    await instance.settled;
+    expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+    const { readSerialTail } = await import("./serial-log.js");
+    expect(await readSerialTail(home, instance.id)).toContain("kernel: I/O error");
+  },
+);
+
+hostTest("Linux starts when serial log creation fails", async () => {
+  const { home, runtime, environment } = await fixture(
+    `process.stderr.write(Buffer.alloc(2 * 1024 * 1024)); process.stdout.write('{"event":"vm.running"}\\n'); setTimeout(() => process.exit(0), 100);`,
+  );
+  await writeFile(join(home, "diagnostics"), "not a directory");
+  const instance = await runtime.start("no-serial", environment, () => {});
+  await instance.settled;
+  expect(await runtime.hasWorkDirectory(instance.id)).toBe(false);
+});
