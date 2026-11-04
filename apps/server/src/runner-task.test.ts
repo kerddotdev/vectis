@@ -2046,7 +2046,7 @@ test("cache denial reasons from the cloud survive a successful runner lifecycle"
   expect(authorizeWrite).not.toHaveBeenCalled();
 });
 
-test.each(["start", "readiness", "listener", "storage"])(
+test.each(["start", "timeout", "readiness", "listener", "storage"])(
   "%s failure retains host serial evidence without SSH",
   async (phase) => {
     const { mkdtemp, rm } = await import("node:fs/promises");
@@ -2087,11 +2087,14 @@ test.each(["start", "readiness", "listener", "storage"])(
         {
           ...controls,
           home,
-          ...(phase === "start"
+          ...(phase === "start" || phase === "timeout"
             ? {
                 start: async (onStarting?: (id: string) => void) => {
                   onStarting?.("instance");
-                  throw new VectisError("runner_control_failed", "VM start failed");
+                  throw new VectisError(
+                    phase === "timeout" ? "runner_control_timeout" : "runner_control_failed",
+                    "VM start failed",
+                  );
                 },
               }
             : {}),

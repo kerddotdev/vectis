@@ -445,6 +445,6 @@ test("kernel console setup preserves existing GRUB arguments and configures nonf
   const sysctl = content("/etc/sysctl.d/99-vectis-diagnostics.conf");
   expect(sysctl).toContain("kernel.hung_task_timeout_secs = 60");
   expect(sysctl).toContain("kernel.hung_task_panic = 0");
-  expect(sysctl).toContain("kernel.printk = 5 4 1 7");
+  expect(sysctl).toContain("kernel.printk = 7 4 1 7");
   expect(content("/opt/vectis/prepare.sh")).toContain("update-grub\nsysctl --system");
 });

@@ -211,7 +211,7 @@ completed=true
             path: "/etc/sysctl.d/99-vectis-diagnostics.conf",
             permissions: "0644",
             content:
-              "kernel.hung_task_timeout_secs = 60\nkernel.hung_task_warnings = -1\nkernel.hung_task_panic = 0\nkernel.printk = 5 4 1 7\n",
+              "kernel.hung_task_timeout_secs = 60\nkernel.hung_task_warnings = -1\nkernel.hung_task_panic = 0\nkernel.printk = 7 4 1 7\n",
           },
           {
             path: "/usr/local/sbin/vectis-instance-identity",
