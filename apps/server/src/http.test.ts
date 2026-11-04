@@ -7,6 +7,7 @@ import { tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { startService } from "./http.js";
+import { SleepAssertion } from "./sleep-assertion.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { Snapshot, VectisError } from "../../../packages/protocol/src/index.js";
 import { Schema } from "effect";
@@ -18,6 +19,7 @@ const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => {
   for (const close of cleanup.reverse()) await close();
   cleanup.length = 0;
+  vi.restoreAllMocks();
 });
 async function fixture(options: StoreOptions = {}) {
   const home = await mkdtemp(join(tmpdir(), "vectis-test-"));
@@ -26,6 +28,18 @@ async function fixture(options: StoreOptions = {}) {
   cleanup.push(server.close);
   return { home, server, client: new VectisClient(server.connection) };
 }
+test("idle sleep assertion is opt-in for startService", async () => {
+  const update = vi.spyOn(SleepAssertion.prototype, "update").mockImplementation(() => {});
+  await fixture();
+  expect(update).not.toHaveBeenCalled();
+
+  const home = await mkdtemp(join(tmpdir(), "vectis-test-"));
+  cleanup.push(() => rm(home, { recursive: true, force: true }));
+  const server = await startService({ home, idleSleepAssertion: true });
+  cleanup.push(server.close);
+  expect(update).toHaveBeenCalled();
+});
+
 test("an unpaired status snapshot decodes with a stable revision and no repositories", async () => {
   const { client, server } = await fixture();
   const snapshot = await client.status();

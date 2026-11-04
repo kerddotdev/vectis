@@ -5,6 +5,8 @@ description: Automatic and manual runners, reading job results, cancelling and r
 
 Every job runs on its own runner in its own VM. Vectis boots a copy of the environment or takes over an unused warm VM, registers a GitHub runner that accepts exactly one job, runs it, then deletes the VM and the registration.
 
+On macOS, Vectis prevents idle sleep while it owns a non-stopped VM or is preparing an image. If the assertion cannot be held, the service logs the failure. This does not prevent sleep caused by closing the lid or an explicit sleep request.
+
 ## Optional warm pool
 
 Keep up to four pre-booted, SSH-ready VMs per environment to skip cloning, booting and waiting for SSH when a job arrives. The pool is opt-in and defaults to zero on Linux, macOS and Windows:
