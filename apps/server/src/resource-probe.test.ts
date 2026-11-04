@@ -82,10 +82,11 @@ test("expired compressor measurements stay unknown until the refresh completes",
   let time = 0;
   let refresh: ((value: string) => void) | undefined;
   let vmStatsReads = 0;
-  const high =
-    "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages occupied by compressor: 1000000.";
-  const low =
-    "Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages occupied by compressor: 1.";
+  const pageSize = 16384;
+  const sample = (ratio: number) =>
+    `Mach Virtual Memory Statistics: (page size of ${pageSize} bytes)\nPages occupied by compressor: ${Math.floor((totalmem() * ratio) / pageSize)}.`;
+  const high = sample(0.5);
+  const low = sample(0.05);
   const read = vi.fn((file: string) => {
     if (file !== "/usr/bin/vm_stat") return Promise.resolve("1");
     vmStatsReads += 1;
@@ -104,7 +105,9 @@ test("expired compressor measurements stay unknown until the refresh completes",
 
   refresh?.(low);
   await vi.waitFor(() => expect(probe([instance]).compressorRatio).toBeDefined());
-  expect(probe([instance]).compressorRatio).toBeCloseTo(16384 / totalmem());
+  expect(probe([instance]).compressorRatio).toBeCloseTo(
+    (Math.floor((totalmem() * 0.05) / pageSize) * pageSize) / totalmem(),
+  );
 });
 
 test("PID changes and stopped instances cannot reuse another process footprint", async () => {
