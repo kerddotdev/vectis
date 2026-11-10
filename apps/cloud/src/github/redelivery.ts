@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { createGitHubAppJwt, GitHubApiError } from "../../../../packages/github/src/app-client.js";
+import { githubUserAgent } from "../../../../packages/github/src/api-request.js";
 import type { Sweep } from "../context.js";
 import { loadApp } from "./app.js";
 import { CloudError } from "../errors.js";
@@ -50,6 +51,7 @@ export const sweepRedelivery: Sweep = async (env, now) => {
   const headers = {
     Authorization: `Bearer ${createGitHubAppJwt(state.app)}`,
     Accept: "application/vnd.github+json",
+    "User-Agent": githubUserAgent,
     "X-GitHub-Api-Version": "2026-03-10",
   };
   let fetches = 0;

@@ -1,3 +1,4 @@
+import { githubUserAgent } from "../../../../packages/github/src/api-request.js";
 import { sha256Hex as digest } from "../ids.js";
 import { CloudError } from "../errors.js";
 import { Schema } from "effect";
@@ -116,11 +117,9 @@ const Installations = Schema.Struct({
   ),
 });
 async function json(url: string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
-  const response = await fetch(url, {
-    ...init,
-    redirect: "error",
-    signal,
-  });
+  const headers = new Headers(init.headers);
+  headers.set("User-Agent", githubUserAgent);
+  const response = await fetch(url, { ...init, headers, redirect: "manual", signal });
   if (!response.ok) {
     await response.body?.cancel();
     throw new Error("GitHub request failed.");

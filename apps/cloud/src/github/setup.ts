@@ -4,6 +4,7 @@ import type { Env } from "../env.js";
 import type { GitHubAppSetupRow } from "../db.js";
 import { readJson } from "../http.js";
 import { appManifest } from "../../../../packages/github/src/manifest.js";
+import { githubUserAgent } from "../../../../packages/github/src/api-request.js";
 import { appConfig, webhookUrl } from "./app.js";
 async function inspect(env: Env, digest: string) {
   return env.DB.prepare(
@@ -76,8 +77,12 @@ export const manifestCallback: RawHandler = async ({ env }, request) => {
       `https://api.github.com/app-manifests/${encodeURIComponent(code)}/conversions`,
       {
         method: "POST",
-        headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10" },
-        redirect: "error",
+        headers: {
+          Accept: "application/vnd.github+json",
+          "User-Agent": githubUserAgent,
+          "X-GitHub-Api-Version": "2026-03-10",
+        },
+        redirect: "manual",
         signal: AbortSignal.timeout(15000),
       },
     );
