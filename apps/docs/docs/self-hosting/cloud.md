@@ -12,7 +12,7 @@ The hosted service at `vectis.kerd.dev` is one deployment of the code in this re
 | Site Worker  | `apps/web`: serves the website, the docs, and `/connect`, and forwards GitHub browser callbacks to the cloud Worker          |
 | GitHub App   | Repository access and just-in-time runner registration                                                                       |
 
-Both Workers fit Cloudflare's Workers Free plan at small scale. Each connected Mac holds one WebSocket to its own Durable Object; keep-alive pings are answered without waking it, and the cloud only does work when something changes.
+Run the cloud Worker on the Workers Paid plan. Most requests stay under the Free plan's 10 ms CPU limit, but workflow migration previews and job scans parse whole workflow files and runs and take tens of milliseconds. Each connected Mac holds one WebSocket to its own Durable Object; keep-alive pings are answered without waking it, and the cloud only does work when something changes.
 
 Vectis builds come in two flavors. **Development** builds (every source checkout) read `.env.local`, use `~/.vectis-dev`, and are named Vectis Dev. **Production** builds are packaged with `--flavor production`, read `.env.production.local` at package time, and use `~/.vectis`. Keep one set of Workers, D1 database, Clerk instance, and GitHub App per flavor; never point a development build at production data.
 
