@@ -43,22 +43,21 @@ Rulesets need a public repository on the free plan. After the repository is publ
 | Secret   | `APPLE_API_KEY_P8`                     | Contents of the App Store Connect API key (`.p8`)                   |
 | Variable | `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | The API key ID and issuer ID                                        |
 | Variable | `MACOS_SIGNING_IDENTITY`               | For example `Developer ID Application: Name (TEAMID)`               |
-| Variable | `CONVEX_URL`, `VECTIS_WEB_URL`         | The production deployment baked into the apps                       |
+| Variable | `VECTIS_CLOUD_URL`, `VECTIS_WEB_URL`   | The production deployment baked into the apps                       |
 
 `production` (deployment branches and tags: `main`, `v*`):
 
-| Kind     | Name                                                     | Value                                           |
-| -------- | -------------------------------------------------------- | ----------------------------------------------- |
-| Secret   | `CONVEX_DEPLOY_KEY`                                      | Production deploy key from the Convex dashboard |
-| Secret   | `CLOUDFLARE_API_TOKEN`                                   | Token that can deploy Workers on the account    |
-| Variable | `CLOUDFLARE_ACCOUNT_ID`                                  | Cloudflare account ID                           |
-| Variable | `CONVEX_URL`, `CONVEX_SITE_URL`, `CLERK_PUBLISHABLE_KEY` | Production values for the website build         |
+| Kind     | Name                                        | Value                                                  |
+| -------- | ------------------------------------------- | ------------------------------------------------------ |
+| Secret   | `CLOUDFLARE_API_TOKEN`                      | Token that can deploy Workers and migrate D1 databases |
+| Variable | `CLOUDFLARE_ACCOUNT_ID`                     | Cloudflare account ID                                  |
+| Variable | `VECTIS_CLOUD_URL`, `CLERK_PUBLISHABLE_KEY` | Production values for the website build                |
 
 ## Cut a release
 
 1. Open a pull request titled `chore(release): vX.Y.Z` that only changes `version` in the root `package.json`. Merge it.
 2. Tag the merge commit and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. A tag with a hyphen, such as `v0.2.0-rc.1`, becomes a prerelease.
-3. Approve the `release` deployment. The workflow checks the tag against the version, runs `check`, deploys the Convex backend, builds, signs and notarizes the app in the macOS VM, publishes the GitHub release with generated notes, and redeploys the website so the changelog and download pick up the release.
+3. Approve the `release` deployment. The workflow checks the tag against the version, runs `check`, applies D1 migrations and deploys the cloud Worker, builds, signs and notarizes the app in the macOS VM, publishes the GitHub release with generated notes, and redeploys the website so the changelog and download pick up the release.
 4. Installed apps find the update within four hours.
 
 Backend changes must keep working with the previous release, because installed apps update at their own pace.

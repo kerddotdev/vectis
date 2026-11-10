@@ -1,3 +1,6 @@
+// GitHub refuses API requests without a User-Agent, and fetch in Workers sends none by default.
+export const githubUserAgent = "Vectis";
+
 export class GitHubApiError extends Error {
   constructor(readonly status: number) {
     super(`GitHub API request failed (${status}).`);
@@ -118,11 +121,12 @@ export async function githubRequest(input: {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: "application/vnd.github+json",
+          "User-Agent": githubUserAgent,
           "X-GitHub-Api-Version": "2026-03-10",
           "Content-Type": "application/json",
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        redirect: "error",
+        redirect: "manual",
         signal: signal ? AbortSignal.any([signal, abort.signal]) : abort.signal,
       });
       if (response.status === 401) input.invalidate();

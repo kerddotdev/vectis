@@ -3,7 +3,7 @@ title: Remote control
 description: Control your own Vectis machines through the desktop, CLI, or MCP.
 ---
 
-The host service keeps ownership of VMs and jobs. Remote clients send commands through Convex; hosts connect outward and do not need a public port. A remote controller can manage machines owned by the same Vectis account. Connect each Mac to your account first, as in the [quickstart](/docs/get-started/quickstart#2-connect-this-mac-to-your-account).
+The host service keeps ownership of VMs and jobs. Remote clients send commands through the Vectis cloud; hosts connect outward and do not need a public port. A remote controller can manage machines owned by the same Vectis account. Connect each Mac to your account first, as in the [quickstart](/docs/get-started/quickstart#2-connect-this-mac-to-your-account).
 
 ## Sign in from the CLI
 

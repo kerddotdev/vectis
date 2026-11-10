@@ -1,4 +1,4 @@
-import { GitHubApiError } from "./api-request.js";
+import { GitHubApiError, githubUserAgent } from "./api-request.js";
 import type { JobLogs } from "../../protocol/src/jobs.js";
 
 export const jobLogWindowBytes = 4 * 1024 * 1024;
@@ -40,6 +40,7 @@ export async function downloadJobLog(token: string, path: string, after?: number
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/vnd.github+json",
+      "User-Agent": githubUserAgent,
       "X-GitHub-Api-Version": "2026-03-10",
     },
     redirect: "manual",
@@ -51,7 +52,7 @@ export async function downloadJobLog(token: string, path: string, after?: number
   const fetchBlob = (range: string) =>
     fetch(url, {
       headers: { Range: range, "Accept-Encoding": "identity" },
-      redirect: "error",
+      redirect: "manual",
       signal,
     });
   const fetchPage = async (from: number) => {

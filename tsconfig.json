@@ -20,9 +20,6 @@
     "packages/*/src/**/*.ts",
     "scripts/**/*.ts",
     "apps/mcp/src/**/*.ts",
-    "convex/**/*.ts",
-    "convex/_generated/*.js",
-    "tests/**/*.ts",
     "apps/desktop/src/main.ts",
     "apps/desktop/src/bridge.ts"
   ],

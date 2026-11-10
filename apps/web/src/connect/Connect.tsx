@@ -1,8 +1,5 @@
 import { StrictMode, useState, type ReactNode } from "react";
 import { ClerkProvider, SignIn, UserButton, useAuth } from "@clerk/react";
-import { ConvexReactClient, useConvexAuth } from "convex/react";
-import { ConvexProviderWithClerk } from "convex/react-clerk";
-import { ConvexError } from "convex/values";
 import { CircleCheckIcon, LaptopIcon, MonitorSmartphoneIcon, FolderGit2Icon } from "lucide-react";
 import {
   ControllerApproval,
@@ -13,18 +10,9 @@ import {
 import { site } from "@vectis/design/site";
 import { Dashboard } from "./dashboard.js";
 import { Pending, TipProvider } from "./ui.js";
+import { CloudProvider, cloudUrl } from "./cloud.js";
 
-const deploymentUrl = import.meta.env.VECTIS_CONVEX_URL || undefined;
 const publishableKey = import.meta.env.VECTIS_CLERK_PUBLISHABLE_KEY || undefined;
-
-export function errorCode(issue: unknown) {
-  return issue instanceof ConvexError &&
-    typeof issue.data === "object" &&
-    issue.data !== null &&
-    "code" in issue.data
-    ? String(issue.data.code)
-    : "";
-}
 
 function resolveColor(name: string) {
   const probe = document.createElement("span");
@@ -183,9 +171,11 @@ export function Approved({
 }
 
 function Route() {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  const [pairing, setPairing] = useState(() => readPairingRequest(deploymentUrl));
-  const [controller, setController] = useState(() => readControllerRequest(deploymentUrl));
+  const { isLoaded, isSignedIn } = useAuth();
+  const isLoading = !isLoaded;
+  const isAuthenticated = isSignedIn === true;
+  const [pairing, setPairing] = useState(() => readPairingRequest(cloudUrl));
+  const [controller, setController] = useState(() => readControllerRequest(cloudUrl));
   const context = pairing
     ? `Connect ${pairing.name} to your account.`
     : controller
@@ -209,8 +199,7 @@ function Route() {
 }
 
 export default function Connect() {
-  const [convex] = useState(() => (deploymentUrl ? new ConvexReactClient(deploymentUrl) : null));
-  if (!convex || !publishableKey)
+  if (!cloudUrl || !publishableKey)
     return (
       <Shell signedIn={false}>
         <div className="mx-auto max-w-[560px] px-5 py-24">
@@ -242,11 +231,11 @@ export default function Connect() {
           },
         }}
       >
-        <ConvexProviderWithClerk client={convex} useAuth={useAuth}>
+        <CloudProvider url={cloudUrl}>
           <TipProvider>
             <Route />
           </TipProvider>
-        </ConvexProviderWithClerk>
+        </CloudProvider>
       </ClerkProvider>
     </StrictMode>
   );

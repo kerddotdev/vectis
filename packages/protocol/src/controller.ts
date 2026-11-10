@@ -1,11 +1,12 @@
 import { Schema } from "effect";
+import { CloudUrl } from "./cloud-url.js";
 import { Command, Identifier } from "./index.js";
 import { RepositoryReadinessInput } from "./readiness.js";
 import { JobLogRequest } from "./jobs.js";
 import { LogRequest } from "./logs.js";
 
 export const ControllerApproval = Schema.Struct({
-  deploymentUrl: Schema.String.check(Schema.isPattern(/^https:\/\/[a-z0-9-]+\.convex\.cloud$/)),
+  deploymentUrl: CloudUrl,
   requestDigest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
   credentialDigest: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
   name: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),

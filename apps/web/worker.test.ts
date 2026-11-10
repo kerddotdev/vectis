@@ -18,10 +18,14 @@ const asset = (body: string | null = html, status = 200) =>
       "X-Content-Type-Options": "nosniff",
     },
   });
+const cloud = vi.fn(
+  async (_request: Request) =>
+    new Response("upstream", { status: 202, headers: { "X-Upstream": "kept" } }),
+);
 function serve(request: Request, fetch = vi.fn(async (_request: Request) => asset())) {
   return worker.fetch(request, {
     ASSETS: { fetch },
-    VECTIS_CONVEX_SITE: "https://backend.example",
+    CLOUD: { fetch: cloud },
   });
 }
 afterEach(() => vi.unstubAllGlobals());
@@ -139,11 +143,7 @@ test("HTML without a staged policy has a restrictive fallback", async () => {
 
 test("API allowlist and proxy preserve routing, body and confidential header boundary", async () => {
   const assets = vi.fn(async () => asset());
-  const upstream = vi.fn(
-    async (_target: URL, _options: RequestInit) =>
-      new Response("upstream", { status: 202, headers: { "X-Upstream": "kept" } }),
-  );
-  vi.stubGlobal("fetch", upstream);
+  cloud.mockClear();
   expect((await serve(new Request("https://site.example/api/unknown"), assets)).status).toBe(404);
   expect((await serve(new Request("https://site.example/api/github/webhook"), assets)).status).toBe(
     405,
@@ -159,12 +159,11 @@ test("API allowlist and proxy preserve routing, body and confidential header bou
   expect(response.status).toBe(202);
   expect(response.headers.has("content-security-policy")).toBe(false);
   expect(response.headers.get("x-upstream")).toBe("kept");
-  expect(upstream.mock.calls[0]?.[0]).toEqual(
-    new URL("https://backend.example/github/webhook?x=1"),
-  );
-  const options = upstream.mock.calls[0]?.[1];
-  expect(new Headers(options?.headers).get("x-github-event")).toBe("push");
-  expect(new Headers(options?.headers).has("x-private")).toBe(false);
-  expect(new Headers(options?.headers).has("cf-connecting-ip")).toBe(false);
+  const forwarded = cloud.mock.calls[0]?.[0];
+  expect(forwarded?.url).toBe("https://cloud.internal/github/webhook?x=1");
+  expect(await forwarded?.text()).toBe("payload");
+  expect(forwarded?.headers.get("x-github-event")).toBe("push");
+  expect(forwarded?.headers.has("x-private")).toBe(false);
+  expect(forwarded?.headers.has("cf-connecting-ip")).toBe(false);
   expect(assets).not.toHaveBeenCalled();
 });

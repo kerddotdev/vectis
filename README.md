@@ -69,7 +69,7 @@ A background service on your Mac owns the VMs, disks and credentials. When GitHu
 
 ## Self-hosting and building from source
 
-Vectis is MIT licensed and every part of it is in this repository: the service, the apps, the Convex backend, the website and the GitHub App manifest. See [Build from source](https://vectis.kerd.dev/docs/self-hosting/build-from-source) and [Run your own cloud](https://vectis.kerd.dev/docs/self-hosting/cloud).
+Vectis is MIT licensed and every part of it is in this repository: the service, the apps, the cloud Worker, the website and the GitHub App manifest. See [Build from source](https://vectis.kerd.dev/docs/self-hosting/build-from-source) and [Run your own cloud](https://vectis.kerd.dev/docs/self-hosting/cloud).
 
 ```sh
 pnpm install

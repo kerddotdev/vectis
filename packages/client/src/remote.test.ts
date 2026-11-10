@@ -4,10 +4,25 @@ import { RemoteClient } from "./remote.js";
 import type { ActivityDetail } from "../../protocol/src/index.js";
 import type { RunnerProgress } from "../../protocol/src/runners.js";
 
+vi.mock("node:timers/promises", () => ({
+  setTimeout: (ms: number, _value: undefined, options: { signal: AbortSignal }) =>
+    new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        options.signal.removeEventListener("abort", cancel);
+        resolve();
+      }, ms);
+      function cancel() {
+        clearTimeout(timer);
+        reject(options.signal.reason);
+      }
+      options.signal.addEventListener("abort", cancel, { once: true });
+    }),
+}));
+
 function fixture() {
   const controller = new ControllerClient(
     {
-      deploymentUrl: "https://isolated-test.convex.cloud",
+      deploymentUrl: "https://isolated-test.example.com",
       controllerId: "controller1",
       expiresAt: Date.now() + 100000,
     },
@@ -19,7 +34,7 @@ function fixture() {
   };
 }
 const record = {
-  _id: "remote1",
+  id: "remote1",
   machineId: "machine1",
   key: "stable",
   commandJson: '{"type":"machine.pause","paused":true}',
@@ -532,3 +547,71 @@ test.each([
     });
   },
 );
+
+test("polling backs off, resets on operation progress, and stops on cancellation", async () => {
+  vi.useFakeTimers();
+  try {
+    const { request, client } = fixture();
+    const abort = new AbortController();
+    request.mockResolvedValue(record);
+    const waiting = client.wait("remote1", abort.signal);
+    const rejected = expect(waiting).rejects.toMatchObject({ code: "wait_cancelled" });
+    await vi.advanceTimersByTimeAsync(0);
+    for (const [interval, count] of [
+      [1000, 2],
+      [2000, 3],
+      [4000, 4],
+      [5000, 5],
+      [5000, 6],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(interval - 1);
+      expect(request).toHaveBeenCalledTimes(count - 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(request).toHaveBeenCalledTimes(count);
+    }
+    request.mockResolvedValue({ ...record, updatedAt: 2000 });
+    await vi.advanceTimersByTimeAsync(5000);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(request).toHaveBeenCalledTimes(7);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(request).toHaveBeenCalledTimes(8);
+    abort.abort();
+    await rejected;
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(request).toHaveBeenCalledTimes(8);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("inspection polling backs off to its cap and stops on cancellation", async () => {
+  vi.useFakeTimers();
+  try {
+    const { request, client } = fixture();
+    const abort = new AbortController();
+    request
+      .mockResolvedValueOnce({ queryId: "query" })
+      .mockResolvedValue({ pending: true, responseJson: null });
+    const waiting = client.status(abort.signal);
+    const rejected = expect(waiting).rejects.toMatchObject({ code: "remote_query_timeout" });
+    await vi.advanceTimersByTimeAsync(0);
+    for (const [interval, count] of [
+      [250, 3],
+      [500, 4],
+      [1000, 5],
+      [2000, 6],
+      [2000, 7],
+    ] as const) {
+      await vi.advanceTimersByTimeAsync(interval - 1);
+      expect(request).toHaveBeenCalledTimes(count - 1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(request).toHaveBeenCalledTimes(count);
+    }
+    abort.abort();
+    await rejected;
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(request).toHaveBeenCalledTimes(7);
+  } finally {
+    vi.useRealTimers();
+  }
+});

@@ -15,7 +15,6 @@
     "dist/apps/mcp/src",
     "dist/apps/desktop/src",
     "dist/packages",
-    "dist/convex/_generated/api.js",
     "apps/desktop/renderer",
     "apps/desktop/preload.cjs",
     "skills/vectis",
@@ -25,12 +24,12 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit && pnpm --filter @vectis/web exec tsc --noEmit && pnpm --filter @vectis/web exec tsc -p tsconfig.worker.json --noEmit && pnpm --filter @vectis/desktop exec tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm --filter @vectis/web exec tsc --noEmit && pnpm --filter @vectis/web exec tsc -p tsconfig.worker.json --noEmit && pnpm --filter @vectis/desktop exec tsc --noEmit && pnpm --filter @vectis/cloud exec tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
-    "lint": "oxlint --deny-warnings apps packages scripts convex tests",
+    "lint": "oxlint --deny-warnings apps packages scripts",
     "vectis": "node dist/apps/cli/src/main.js",
     "proof:linux": "node dist/scripts/prove-linux.js",
     "mcp": "node dist/apps/mcp/src/main.js",
@@ -52,7 +51,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
-    "convex": "1.46.0",
     "effect": "4.0.0-rc.117",
     "electron-updater": "6.8.9",
     "yaml": "2.9.1"
@@ -61,7 +59,6 @@
     "@cloudflare/workers-types": "5.20260929.1",
     "@electron/packager": "20.3.0",
     "@types/node": "24.13.4",
-    "convex-test": "0.0.60",
     "oxfmt": "0.71.0",
     "oxlint": "1.86.0",
     "typescript": "7.0.2",

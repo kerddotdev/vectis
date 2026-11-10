@@ -1,3 +1,4 @@
+import { ControllerPairingResult } from "../../protocol/src/cloud.js";
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile, rm, link } from "node:fs/promises";
 import { join } from "node:path";
@@ -32,7 +33,7 @@ export async function beginControllerLogin(
   name: string,
   credentials: Credentials,
 ) {
-  const deploymentUrl = deployment.convexUrl;
+  const deploymentUrl = deployment.cloudUrl;
   controllerEndpoint(deploymentUrl);
   await mkdir(home, { recursive: true, mode: 0o700 });
   try {
@@ -137,12 +138,8 @@ export async function finishControllerLogin(
       "cloud_unavailable",
       "Cannot check login approval. Retry the same request.",
     );
-  const value: unknown = await response.json();
-  if (Schema.is(Schema.Struct({ state: Schema.Literal("pending") }))(value))
-    return { state: "pending" };
-  const approved = Schema.decodeUnknownSync(
-    Schema.Struct({ controllerId: Schema.NonEmptyString, expiresAt: Schema.Number }),
-  )(value);
+  const approved = Schema.decodeUnknownSync(ControllerPairingResult)(await response.json());
+  if ("state" in approved) return { state: "pending" };
   const connection: ControllerConnection = { ...approved, deploymentUrl: request.deploymentUrl };
   await credentials.set(controllerAccount(connection), secrets.credential);
   await new ControllerClient(connection, credentials).request({ type: "machines.list" }, signal);

@@ -5,7 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { beginPairing, disconnectPairing, finishPairing } from "./pairing.js";
 import { startService } from "../../../apps/server/src/http.js";
 
-const cloud = { convexUrl: "https://pairing-test.convex.cloud", webUrl: "https://vectis.test" };
+const cloud = { cloudUrl: "https://pairing-test.example.com", webUrl: "https://vectis.test" };
 afterEach(() => vi.unstubAllGlobals());
 test("pairing retries preserve the local secret and approval links never contain raw credentials", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-pair-client-"));
@@ -35,16 +35,28 @@ test("pairing retries preserve the local secret and approval links never contain
     );
     const actualFetch = globalThis.fetch;
     let approved = false;
+    let revoked = false;
     vi.stubGlobal("fetch", async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input);
-      if (url === "https://pairing-test.convex.site/machine/pairing")
+      if (url === "https://pairing-test.example.com/machine/pairing")
         return Response.json(
           approved
             ? { machineId: "test-machine", localId: descriptor.localId }
             : { state: "pending" },
         );
-      if (url === "https://pairing-test.convex.site/machine/token")
-        return Response.json({ token: "test-token", expiresAt: Date.now() + 300000 });
+      if (url === "https://pairing-test.example.com/machine/sync") {
+        if (revoked) return Response.json({ code: "machine_revoked" }, { status: 401 });
+        expect(new Headers(init?.headers).get("Authorization")).toBe(
+          `Bearer test-machine.${secrets.credential}`,
+        );
+        return Response.json({
+          operations: [],
+          inspections: [],
+          repositories: [],
+          observations: [],
+          jobMarkers: {},
+        });
+      }
       return actualFetch(input, init);
     });
     expect(await finishPairing(home, credentials)).toEqual({ state: "pending" });
@@ -52,6 +64,11 @@ test("pairing retries preserve the local secret and approval links never contain
     const result = await finishPairing(home, credentials);
     expect(result.state).toBe("linked");
     expect((await finishPairing(home, credentials)).state).toBe("linked");
+    revoked = true;
+    await expect(finishPairing(home, credentials)).rejects.toMatchObject({
+      code: "machine_revoked",
+    });
+    revoked = false;
     expect(stored.size).toBe(1);
     expect(await readFile(join(home, "cloud.json"), "utf8")).not.toContain("test-token");
     expect(service.store.snapshot().machine.id).toBe(descriptor.localId);

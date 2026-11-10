@@ -2,7 +2,7 @@
 title: Privacy Policy
 description: What the Vectis website and hosted account service collect, why, where it goes, how long it is kept, and your rights.
 summary: Vectis runs your CI on your own Mac. This policy explains the small amount of data the website and the hosted account service handle to connect that Mac to GitHub, and what you can ask us to do with it.
-effective: September 19, 2026
+effective: November 10, 2026
 ---
 
 ## 1. Who we are
@@ -138,11 +138,10 @@ On the account page, Clerk sets the cookies it needs to keep you signed in, and 
 
 We use these providers to run the service. They process personal data on our behalf, under data processing terms, and only to provide their services to us:
 
-| Provider                                                      | What it does                                            | Data it handles                                                               |
-| ------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Clerk, Inc.](https://clerk.com/legal/privacy)                | Sign-in and session management                          | Account and session data (section 5.1)                                        |
-| [Convex, Inc.](https://www.convex.dev/legal/privacy)          | Cloud backend and database                              | Everything in sections 5.2 to 5.6                                             |
-| [Cloudflare, Inc.](https://www.cloudflare.com/privacypolicy/) | Website hosting, network delivery and attack protection | Request data of website and account page visits, and GitHub sign-in callbacks |
+| Provider                                                      | What it does                                                                        | Data it handles                                                                        |
+| ------------------------------------------------------------- | ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [Clerk, Inc.](https://clerk.com/legal/privacy)                | Sign-in and session management                                                      | Account and session data (section 5.1)                                                 |
+| [Cloudflare, Inc.](https://www.cloudflare.com/privacypolicy/) | Cloud backend and database, website hosting, network delivery and attack protection | Everything in sections 5.2 to 5.6, and request data of website and account page visits |
 
 **GitHub** is not our processor. When you install the Vectis GitHub App or link your GitHub account, you share data between GitHub and us under [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement). We send GitHub the requests needed to verify your access, register runners, read job states and, when you ask, open pull requests.
 

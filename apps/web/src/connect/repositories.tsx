@@ -1,9 +1,8 @@
 import { useState, type FormEvent } from "react";
-import { useAction, useMutation } from "convex/react";
 import { Collapsible } from "@base-ui/react/collapsible";
 import { ChevronRightIcon, EllipsisIcon, PlusIcon, SearchIcon } from "lucide-react";
-import { api } from "../../../../convex/_generated/api.js";
-import { errorCode } from "./Connect.js";
+import { errorCode, useCloud } from "./cloud.js";
+import type { HumanRequest } from "../../../../packages/protocol/src/cloud.js";
 import { Header, online, type Bindings, type Identity, type Machines } from "./dashboard.js";
 import {
   ActionMenu,
@@ -37,7 +36,8 @@ export function RepositoriesTab({
   identity: Identity | undefined;
   machines: Machines | undefined;
 }) {
-  const disable = useMutation(api.repositoryBindings.disable);
+  const { call } = useCloud();
+  const disable = (input: { id: string }) => call("/repositories/disable", input);
   const [connecting, setConnecting] = useState(false);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState("all");
@@ -149,14 +149,14 @@ export function RepositoriesTab({
                             <ul className="flex flex-col divide-y divide-hairline rounded-2xl ring-1 ring-hairline ring-inset">
                               {items.map((binding) => {
                                 const machine = machines?.find(
-                                  (item) => item._id === binding.machineId,
+                                  (item) => item.id === binding.machineId,
                                 );
                                 const environment = machine?.environments?.find(
                                   (item) => item.id === binding.environmentId,
                                 );
                                 return (
                                   <li
-                                    key={binding._id}
+                                    key={binding.id}
                                     className="flex items-center gap-3 py-2 pr-2 pl-4"
                                   >
                                     {environment ? (
@@ -193,7 +193,7 @@ export function RepositoriesTab({
                                             label: "Disable connection",
                                             danger: true,
                                             onSelect: () =>
-                                              void disable({ id: binding._id })
+                                              void disable({ id: binding.id })
                                                 .then(() =>
                                                   setMessage({
                                                     tone: "success",
@@ -258,7 +258,9 @@ function ConnectForm({
   machines: Machines | undefined;
   onDone: (repository: string) => void;
 }) {
-  const enable = useAction(api.githubRepositories.enable);
+  const { call } = useCloud();
+  const enable = (input: HumanRequest<"/repositories/enable">) =>
+    call("/repositories/enable", input);
   const [accountId, setAccountId] = useState("");
   const [owner, setOwner] = useState("");
   const [repository, setRepository] = useState("");
@@ -268,7 +270,7 @@ function ConnectForm({
   const [error, setError] = useState("");
   const accounts = identity?.accounts ?? [];
   const account = accounts.find((item) => item.id === accountId);
-  const machine = machines?.find((item) => item._id === machineId);
+  const machine = machines?.find((item) => item.id === machineId);
   const environments = machine?.environments ?? [];
   const ready = environments.some((item) => item.id === environmentId && item.state === "ready");
   async function submit(event: FormEvent) {
@@ -279,7 +281,7 @@ function ConnectForm({
     try {
       await enable({
         accountId: account.id,
-        machineId: machine._id,
+        machineId: machine.id,
         repositoryName: repository,
         ...(owner ? { repositoryOwner: owner } : {}),
         environmentId,
@@ -341,7 +343,7 @@ function ConnectForm({
             }}
             placeholder="Choose a Mac"
             options={(machines ?? []).map((item) => ({
-              value: item._id,
+              value: item.id,
               label: item.name,
               detail: online(item) ? "Online" : "Offline",
             }))}

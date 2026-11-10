@@ -1,6 +1,6 @@
 # Vectis
 
-Vectis runs repository-scoped GitHub Actions runners in disposable local virtual machines. A local background service owns processes, virtual machines, credentials, and durable execution state. The desktop app, CLI, and MCP server are clients of the same local contract. A Convex backend owns cloud identity, the GitHub App, and remote commands. CI execution always stays on the host.
+Vectis runs repository-scoped GitHub Actions runners in disposable local virtual machines. A local background service owns processes, virtual machines, credentials, and durable execution state. The desktop app, CLI, and MCP server are clients of the same local contract. A Cloudflare Worker (`apps/cloud`, D1 and one Durable Object per machine) owns cloud identity, the GitHub App, and remote commands. CI execution always stays on the host.
 
 ## What we never compromise on
 
@@ -51,7 +51,7 @@ Before calling a change done, walk this list and say which entries applied:
 
 - **Contract.** Commands are variants of `Command` in `packages/protocol/src/index.ts` and are listed in `capabilities`. Read-only remote queries go through `LocalQuery` in `packages/protocol/src/controller.ts`.
 - **Service.** `apps/server/src/service.ts` handles each command; local HTTP endpoints live in `apps/server/src/http.ts` with a matching `VectisClient` method in `packages/client/src/index.ts`.
-- **Cloud.** Cloud-backed commands go through `packages/client/src/cloud-relay.ts` and a Convex function in `convex/`. Regenerate `convex/_generated` after changing Convex functions.
+- **Cloud.** Cloud-backed commands go through `packages/client/src/cloud-relay.ts` and a route of the cloud Worker in `apps/cloud`. Machine and human routes are typed in `packages/protocol/src/cloud.ts`; schema changes are new files in `apps/cloud/migrations`.
 - **CLI.** Help text and parsing in `apps/cli/src/main.ts`. The help text also generates the public CLI reference.
 - **Desktop.** `apps/desktop/src/renderer/lib/operations.ts` (labels, cancellable and preparation commands) and the relevant view in `apps/desktop/src/renderer/views`.
 - **MCP.** `vectis_command` derives its schema from `Command` and usually needs no change. New tools belong in `apps/mcp/src/server.ts`.
@@ -63,19 +63,19 @@ Before calling a change done, walk this list and say which entries applied:
 ## Development
 
 - Node 24 and pnpm (`packageManager` in `package.json`) with the committed lockfile. `pnpm install` installs.
-- `pnpm build` compiles the headless apps, packages, Convex code, and scripts into `dist/`. Anything run from `dist/` needs a fresh build.
+- `pnpm build` compiles the headless apps, packages, and scripts into `dist/`. Anything run from `dist/` needs a fresh build.
 - `pnpm vectis --help` runs the built CLI. `pnpm mcp` runs the built MCP server. Pass `--home "$(mktemp -d)"`.
 - `pnpm desktop:start` launches the development desktop (`Vectis Dev`) with a standalone Node runtime for the background service. Set `VECTIS_HOME` first.
 - `pnpm web:dev` runs the Astro website. `pnpm docs:dev` runs the Blume documentation. `pnpm site:build` builds both and stages them into `apps/web/site` with the docs under `/docs`.
 - Web, docs, and desktop builds download General Sans from Fontshare into the gitignored `packages/design/fonts`. Its license forbids committing the font files. `VECTIS_ALLOW_FONT_FALLBACK=1` builds without them.
 - The Swift helpers live in `native/apple`: `swift build --package-path native/apple`, then ad-hoc sign `vectis-vm` with `native/apple/entitlements.plist`. QEMU build notes are in `native/qemu/README.md`.
-- Source checkouts are development builds. They read `CONVEX_URL`, `VECTIS_WEB_URL` and `CLERK_PUBLISHABLE_KEY` from the repository `.env.local` (see `.env.example`); `pnpm exec convex dev` fills in the Convex values. Production packages (`pnpm package:cli --flavor production`) and `pnpm site:deploy` read `.env.production.local` and bake the values in.
-- Never deploy (Convex, Cloudflare, `site:deploy`, `site:deploy:dev`), publish packages, push tags or create releases unless asked. [RELEASING.md](RELEASING.md) describes how CI and releases run.
+- Source checkouts are development builds. They read `VECTIS_CLOUD_URL`, `VECTIS_WEB_URL` and `CLERK_PUBLISHABLE_KEY` from the repository `.env.local` (see `.env.example`). `pnpm --filter @vectis/cloud dev` runs the cloud Worker locally with a local D1 database. Production packages (`pnpm package:cli --flavor production`) and `pnpm site:deploy` read `.env.production.local` and bake the values in.
+- Never deploy (the cloud Worker, D1 migrations with `--remote`, `site:deploy`, `site:deploy:dev`), publish packages, push tags or create releases unless asked. [RELEASING.md](RELEASING.md) describes how CI and releases run.
 
 ## Verifying
 
 - Smallest proof that the change works: `pnpm exec vitest run <files>` for the tests you touched, plus `pnpm typecheck` or `pnpm lint` when types or lint rules are affected. `pnpm check` runs format, lint, typecheck, and tests together.
-- Tests are colocated `*.test.ts` files; Convex tests live in `tests/convex` and use `convex-test`.
+- Tests are colocated `*.test.ts` files. Cloud Worker tests live in `apps/cloud/test` and run inside workerd through `@cloudflare/vitest-plugin` (vitest project `cloud`).
 - Every test uses its own temporary home (`mkdtemp`) and synthetic data. Stub launchd, the Keychain, and cloud deployments the way existing tests do.
 - Test authentication, ownership, failure recovery, migration preservation, and real protocol boundaries. Do not add tests that only mirror the implementation or assert static UI markup.
 - Native VM runs and real GitHub job evidence are reported separately from synthetic tests. Never claim a VM boot, a GitHub job, signing, or a deployment without evidence.
@@ -90,23 +90,23 @@ Before calling a change done, walk this list and say which entries applied:
 
 ## How it works
 
-Clients reach the service over an authenticated loopback HTTP API: `127.0.0.1`, a random port, and a bearer token in the home's `connection.json`. Cross-origin browser requests are rejected. Commands become durable operations in SQLite, keyed for idempotency, and the runner package supervises VMs, disks, and guest processes. When a host is paired with the cloud, the service keeps an outgoing authenticated relay to Convex: remote commands arrive through it and replay locally under the same idempotency rules, and GitHub webhooks, runner leases, and job state flow through Convex. The host never exposes an inbound port.
+Clients reach the service over an authenticated loopback HTTP API: `127.0.0.1`, a random port, and a bearer token in the home's `connection.json`. Cross-origin browser requests are rejected. Commands become durable operations in SQLite, keyed for idempotency, and the runner package supervises VMs, disks, and guest processes. When a host is paired with the cloud, the service keeps an outgoing authenticated WebSocket to its machine hub in the cloud Worker plus HTTPS calls: the cloud signals changes over the socket, the service syncs, remote commands replay locally under the same idempotency rules, and GitHub webhooks, runner leases, and job state flow through the Worker. The cloud is event-driven; nothing polls it on a timer except a 15-minute safety sync. The host never exposes an inbound port.
 
 ## Where code lives
 
 - `apps/server` - local service: HTTP API, SQLite store, command dispatch, image preparation, cloud relay startup.
 - `apps/cli`, `apps/mcp` - headless control surfaces.
 - `apps/desktop` - Electron shell and React renderer over the shared local client.
-- `apps/web` - Astro website, the browser `/connect` account page, and a Cloudflare Worker that proxies GitHub callbacks to Convex.
+- `apps/web` - Astro website, the browser `/connect` account page, and a Cloudflare Worker that proxies GitHub callbacks to the cloud Worker.
 - `apps/docs` - public Blume documentation. Public Markdown lives only in `apps/docs/docs`; the CLI reference is generated from the built CLI help.
-- `packages/protocol` - Effect Schema contracts shared by every surface and Convex. No runtime logic.
+- `packages/protocol` - Effect Schema contracts shared by every surface and the cloud Worker. No runtime logic.
 - `packages/client` - local and remote clients, cloud relay, pairing, Keychain and LaunchAgent helpers.
 - `packages/runner` - VM runtime and supervision, QEMU, the Apple helper bridge, guest preparation, storage inspection.
 - `packages/github`, `packages/migration` - GitHub App contracts, job and runner logic, workflow migration previews.
 - `packages/design` - design tokens, fonts, and the shared site header and footer.
-- `convex` - cloud identity, authorization, GitHub integration, and remote operations.
+- `apps/cloud` - cloud Worker: identity, authorization, GitHub integration, and remote operations on D1 and Durable Objects.
 - `native/apple`, `native/qemu` - Apple virtualization and Keychain helpers, QEMU build notes.
-- `scripts` - docs generation, site staging, packaging, and verification. `tests/convex` - Convex tests.
+- `scripts` - docs generation, site staging, packaging, and verification.
 - `skills/vectis` - portable agent guidance for using Vectis.
 
 ## Taste

@@ -31,7 +31,7 @@ export default defineConfig({
   vite: {
     plugins: [tailwind()],
     define: {
-      "import.meta.env.VECTIS_CONVEX_URL": JSON.stringify(variable("CONVEX_URL")),
+      "import.meta.env.VECTIS_CLOUD_URL": JSON.stringify(variable("VECTIS_CLOUD_URL")),
       "import.meta.env.VECTIS_CLERK_PUBLISHABLE_KEY": JSON.stringify(
         variable("CLERK_PUBLISHABLE_KEY"),
       ),

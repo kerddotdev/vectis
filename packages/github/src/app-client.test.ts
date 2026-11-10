@@ -14,7 +14,10 @@ afterEach(() => {
 });
 test("App authentication signs a short JWT and narrows runner access to the verified repository", async () => {
   const fetch = vi.fn(async (url: string, init?: RequestInit) => {
-    const authorization = new Headers(init?.headers).get("Authorization") ?? "";
+    const headers = new Headers(init?.headers);
+    // GitHub answers 403 to requests without a User-Agent, which Workers do not add by default.
+    expect(headers.get("User-Agent")).toBe("Vectis");
+    const authorization = headers.get("Authorization") ?? "";
     if (url.endsWith("/installation")) {
       const [header, payload, signature] = authorization.slice(7).split(".");
       expect(

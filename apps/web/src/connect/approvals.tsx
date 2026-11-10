@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react";
-import { useMutation } from "convex/react";
 import { Schema } from "effect";
-import { api } from "../../../../convex/_generated/api.js";
+import { errorCode, useCloud } from "./cloud.js";
+import type { HumanRequest } from "../../../../packages/protocol/src/cloud.js";
 import { ControllerApproval as ControllerRequest } from "../../../../packages/protocol/src/controller.js";
 import { PairingDescriptor } from "../../../../packages/protocol/src/pairing.js";
-import { Approved, errorCode } from "./Connect.js";
+import { Approved } from "./Connect.js";
 import { Button, Notice, VerificationCode } from "./ui.js";
 
 const pairingKey = "vectis-pairing";
@@ -114,7 +114,8 @@ export function PairingApproval({
   request: PairingDescriptor;
   onDone: () => void;
 }) {
-  const approve = useMutation(api.pairings.approve);
+  const { call } = useCloud();
+  const approve = (input: HumanRequest<"/pairings/approve">) => call("/pairings/approve", input);
   const [state, setState] = useState<"idle" | "working" | "approved">("idle");
   const [error, setError] = useState("");
   function decline() {
@@ -176,7 +177,9 @@ export function ControllerApproval({
   request: ControllerRequest;
   onDone: () => void;
 }) {
-  const approve = useMutation(api.controllers.approve);
+  const { call } = useCloud();
+  const approve = (input: HumanRequest<"/controllers/approve">) =>
+    call("/controllers/approve", input);
   const [state, setState] = useState<"idle" | "working" | "approved">("idle");
   const [error, setError] = useState("");
   function decline() {

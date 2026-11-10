@@ -31,7 +31,7 @@ vectis repository enable-auto <binding-id>
 vectis repository disable-auto <binding-id>
 ```
 
-In the default `demand` capacity mode, with automatic runners on, the Mac looks for queued jobs that match the connection's label every heartbeat, about every 30 seconds, and scans GitHub for missed jobs at most every five minutes. It starts runners when it is connected and not paused, one per queued job, and a new job also starts one right away instead of waiting for the next heartbeat.
+In the default `demand` capacity mode, with automatic runners on, the cloud looks for queued jobs that match the connection's label whenever something changes: a job is queued, the Mac connects or reports free capacity, or a runner finishes. Retries are checked every 2 minutes. The Mac also scans GitHub for missed jobs when it connects and then hourly. It starts runners when it is connected and not paused, one per queued job.
 
 A Mac runs up to five runners at once by default; change it in **Settings** or with `vectis machine configure --max-runners <N>` (1 to 16). CPU and memory settings on an environment are per-VM ceilings. CPU ceilings may add up to more than the host's cores; each VM must still fit the host's core count. Memory admission uses a shared budget, defaulting to 75 percent of host RAM, rather than adding up the ceilings. Set it with `vectis machine configure --memory-budget-mib <N>` (2048 MiB to total host RAM).
 
@@ -85,7 +85,7 @@ vectis runner run <binding-id> --job-id <github-job-id> --json   # only if that 
 
 A manual runner without a job ID waits for work and drains after 5 idle minutes. The listener has a six-hour maximum lifetime, including job execution.
 
-An automatic runner request that the Mac does not pick up expires so another Mac connected to the same repository can take the job: after 2 minutes with result code `machine_offline` if the Mac went offline, or after 10 minutes with `claim_timeout` if it stayed online. The job is requested again on the next heartbeat.
+An automatic runner request that the Mac does not pick up expires so another Mac connected to the same repository can take the job: after 2 minutes with result code `machine_offline` if the Mac went offline, or after 10 minutes with `claim_timeout` if it stayed online. The job is requested again on the next demand check.
 
 Every runner is drained after 5 minutes of inactivity if its requested job no longer needs queued capacity. Manual runners without a requested job drain after the same idle window. Vectis confirms the runner is not busy, stops the VM and releases the lease, reporting `cancelled` with result code `runner_idle`. Busy runners and runners whose jobs still need queued capacity keep listening.
 

@@ -1,0 +1,75 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "vectis-cloud-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  // The top level is the local and test configuration. Deployments use an env below, which must
+  // repeat every binding because Wrangler does not inherit them. Secrets (CLERK_WEBHOOK_SECRET)
+  // are set with `wrangler secret put`, or in .dev.vars locally.
+  "vars": {
+    "VECTIS_WEB_URL": "http://localhost:4321",
+    "VECTIS_CLOUD_URL": "http://127.0.0.1:8787",
+    "CLERK_ISSUER": "https://clerk.invalid",
+    "VECTIS_GITHUB_APP_NAME": "Vectis [LOCAL]",
+    "VECTIS_GITHUB_APP_PUBLIC": "false",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vectis-local",
+      "database_id": "local",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "MachineHub" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MachineHub"] }],
+  "triggers": { "crons": ["*/2 * * * *", "0 3 * * *"] },
+  "env": {
+    "development": {
+      "name": "vectis-cloud-dev",
+      "workers_dev": false,
+      "routes": [{ "pattern": "cloud-dev.vectis.kerd.dev", "custom_domain": true }],
+      "vars": {
+        "VECTIS_WEB_URL": "https://dev.vectis.kerd.dev",
+        "VECTIS_CLOUD_URL": "https://cloud-dev.vectis.kerd.dev",
+        "CLERK_ISSUER": "https://advanced-bullfrog-9529.clerk.accounts.dev",
+        "VECTIS_GITHUB_APP_NAME": "Vectis [DEV]",
+        "VECTIS_GITHUB_APP_PUBLIC": "false",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "vectis-dev",
+          "database_id": "3e93bf20-18c9-49c2-a708-bb6b3c7d4855",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "MachineHub" }] },
+      "triggers": { "crons": ["*/2 * * * *", "0 3 * * *"] },
+    },
+    "production": {
+      "name": "vectis-cloud",
+      "routes": [{ "pattern": "cloud.vectis.kerd.dev", "custom_domain": true }],
+      "vars": {
+        "VECTIS_WEB_URL": "https://vectis.kerd.dev",
+        "VECTIS_CLOUD_URL": "https://cloud.vectis.kerd.dev",
+        "CLERK_ISSUER": "https://clerk.vectis.kerd.dev",
+        "VECTIS_GITHUB_APP_NAME": "Vectis",
+        "VECTIS_GITHUB_APP_PUBLIC": "true",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "vectis",
+          "database_id": "482cd503-b9d0-41d6-a76f-0fa4ba999cfc",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "MachineHub" }] },
+      "triggers": { "crons": ["*/2 * * * *", "0 3 * * *"] },
+    },
+  },
+}
