@@ -59,3 +59,25 @@ it("reports job markers for exactly the repositories the relay tracks", async ()
   expect(tracked).toEqual(ids.slice(2));
   expect(Object.keys(snapshot.jobMarkers).sort()).toEqual([...tracked].sort());
 });
+
+it("returns every active operation when a machine is at the submission limit", async () => {
+  const machine = await seedMachine();
+  const now = Date.now();
+  await env.DB.batch(
+    Array.from({ length: 100 }, (_, index) =>
+      env.DB.prepare(
+        "INSERT INTO operations (id, owner, machineId, key, commandJson, phase, createdAt, updatedAt) VALUES (?, ?, ?, ?, '{}', 'claimed', ?, ?)",
+      ).bind(`op${index}`, machine.owner, machine.id, `key-${index}`, now + index, now),
+    ),
+  );
+  await expect(
+    submitOperation(env, machine.owner, {
+      machineId: machine.id,
+      key: "one-more",
+      commandJson: JSON.stringify({ type: "machine.pause", paused: true }),
+    }),
+  ).rejects.toMatchObject({ code: "queue_full" });
+  const response = await machineRequest("/machine/sync", machine.bearer, { leaseIds: [] });
+  const snapshot = (await response.json()) as { operations: { id: string }[] };
+  expect(snapshot.operations).toHaveLength(100);
+});
