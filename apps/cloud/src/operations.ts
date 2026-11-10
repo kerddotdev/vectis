@@ -69,7 +69,7 @@ export async function submitOperation(
   const id = newId(),
     now = Date.now();
   await env.DB.prepare(`INSERT INTO operations (id, owner, machineId, key, commandJson, phase, createdAt, updatedAt)
-    SELECT ?, ?, ?, ?, ?, 'accepted', ?, ? WHERE (SELECT COUNT(*) FROM operations WHERE machineId = ? AND phase = 'accepted') < 100
+    SELECT ?, ?, ?, ?, ?, 'accepted', ?, ? WHERE (SELECT COUNT(*) FROM operations WHERE machineId = ? AND phase IN ('accepted', 'claimed', 'running')) < 100
     ON CONFLICT(owner, key) DO NOTHING`)
     .bind(id, owner, input.machineId, input.key, commandJson, now, now, input.machineId)
     .run();

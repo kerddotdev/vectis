@@ -82,3 +82,31 @@ it("expires unclaimed offline runner operations after two minutes", async () => 
   expect(expired.phase).toBe("cancelled");
   expect(JSON.parse(expired.resultJson!)).toMatchObject({ code: "machine_offline" });
 });
+
+// Sync returns at most 100 operations per phase, so a machine never holds more active ones than that.
+it("refuses new operations while a machine has 100 active ones", async () => {
+  const machine = await seedMachine();
+  const now = Date.now();
+  await env.DB.batch(
+    Array.from({ length: 100 }, (_, index) =>
+      env.DB.prepare(
+        "INSERT INTO operations (id, owner, machineId, key, commandJson, phase, createdAt, updatedAt) VALUES (?, ?, ?, ?, '{}', ?, ?, ?)",
+      ).bind(
+        `op${index}`,
+        machine.owner,
+        machine.id,
+        `key-${index}`,
+        index % 2 ? "claimed" : "running",
+        now,
+        now,
+      ),
+    ),
+  );
+  await expect(
+    submitOperation(env, machine.owner, {
+      machineId: machine.id,
+      key: "one-more",
+      commandJson: JSON.stringify({ type: "machine.pause", paused: true }),
+    }),
+  ).rejects.toMatchObject({ code: "queue_full" });
+});
