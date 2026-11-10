@@ -7,7 +7,8 @@
   "env": {
     "development": {
       "name": "vectis-dev",
-      "workers_dev": true,
+      "workers_dev": false,
+      "routes": [{ "pattern": "dev.vectis.kerd.dev", "custom_domain": true }],
       "services": [{ "binding": "CLOUD", "service": "vectis-cloud-dev" }],
       "preview_urls": false,
       "assets": {

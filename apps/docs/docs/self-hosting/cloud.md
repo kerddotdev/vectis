@@ -56,7 +56,7 @@ For production, also turn on bot sign-up protection. Anyone can create an accoun
 The Worker in `apps/web` serves the static site and forwards `/api/github/*` browser callbacks to the cloud Worker through a service binding (`CLOUD` in `apps/web/wrangler.jsonc`), so deploy the cloud Worker first. Then:
 
 ```sh
-pnpm site:deploy:dev   # the "development" environment on workers.dev
+pnpm site:deploy:dev   # the "development" environment on its development hostname
 pnpm site:deploy       # the "production" environment on its custom domain
 ```
 
