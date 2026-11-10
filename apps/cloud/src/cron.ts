@@ -7,7 +7,7 @@ import { sweepScaleSets } from "./runners/scale-sets.js";
 import { sweepRedelivery } from "./github/redelivery.js";
 import { sweepRetention } from "./retention.js";
 
-// Two triggers replace Convex's scheduler: due rows are found by indexed timestamps, so a sweep
+// Two triggers are the only scheduler: due rows are found by indexed timestamps, so a sweep
 // with nothing due reads almost nothing. Sweeps run one after another so the invocation stays
 // within its subrequest budget, and one failing sweep never blocks the others.
 const schedules: Record<string, readonly Sweep[]> = {

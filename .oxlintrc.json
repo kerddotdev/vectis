@@ -1,6 +1,3 @@
 {
-  "ignorePatterns": [
-    "convex/_generated/**",
-    "apps/cloud/worker-configuration.d.ts"
-  ]
+  "ignorePatterns": ["apps/cloud/worker-configuration.d.ts"]
 }

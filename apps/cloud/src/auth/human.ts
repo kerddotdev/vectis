@@ -4,7 +4,7 @@ import { unauthorizedHuman } from "../errors.js";
 
 const keySets = new Map<string, JWTVerifyGetKey>();
 
-// Verifies a Clerk session token. The owner string keeps Convex's tokenIdentifier shape,
+// Verifies a Clerk session token. The owner string is
 // `${issuer}|${subject}`, which is what the Clerk webhook purges.
 export async function authenticateHuman(env: Env, request: Request) {
   const header = request.headers.get("Authorization");
