@@ -87,7 +87,7 @@ test("machine configure settles without --wait and status prints runner capacity
       "--max-runners",
       "3",
       "--memory-budget-mib",
-      "8192",
+      "2048",
       "--key",
       "cli-configure",
       "--json",
@@ -99,7 +99,7 @@ test("machine configure settles without --wait and status prints runner capacity
     );
     expect(server.service.snapshot().machine).toMatchObject({
       maxRunners: 3,
-      memoryBudgetMiB: 8192,
+      memoryBudgetMiB: 2048,
     });
     output.mockClear();
     vi.resetModules();
