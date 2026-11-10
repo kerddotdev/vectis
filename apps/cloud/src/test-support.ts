@@ -60,7 +60,7 @@ export async function seedMachine(
 }
 
 export async function seedApp(webhookSecret = "webhook-secret") {
-  const { privateKey } = await crypto.subtle.generateKey(
+  const pair = (await crypto.subtle.generateKey(
     {
       name: "RSASSA-PKCS1-v1_5",
       modulusLength: 2048,
@@ -69,7 +69,8 @@ export async function seedApp(webhookSecret = "webhook-secret") {
     },
     true,
     ["sign", "verify"],
-  );
+  )) as CryptoKeyPair;
+  const privateKey = pair.privateKey;
   const pkcs8 = new Uint8Array((await crypto.subtle.exportKey("pkcs8", privateKey)) as ArrayBuffer);
   const pem = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...pkcs8))
     .match(/.{1,64}/g)
