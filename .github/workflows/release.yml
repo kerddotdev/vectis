@@ -25,6 +25,14 @@ jobs:
             echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${version}." >&2
             exit 1
           }
+      - name: Release notes exist
+        run: |
+          version=$(jq -r .version package.json)
+          notes=".github/release-notes/v${version}.md"
+          test "$(head -n 1 "$notes" 2>/dev/null)" = "# Vectis ${version}" || {
+            echo "Add ${notes} starting with '# Vectis ${version}' (see RELEASING.md)." >&2
+            exit 1
+          }
 
   check:
     needs: preflight
@@ -121,12 +129,21 @@ jobs:
     permissions:
       contents: write
     steps:
+      # Check out before downloading: checkout cleans the workspace.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: .github/release-notes
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release
           path: release
+      - id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      # The written notes come first; GitHub appends the generated pull request list.
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
+          name: Vectis ${{ steps.version.outputs.version }}
+          body_path: .github/release-notes/${{ github.ref_name }}.md
           files: release/*
           generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
