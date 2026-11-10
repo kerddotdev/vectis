@@ -231,3 +231,35 @@ it("sweeps an empty queued-job index without creating work", async () => {
   await sweepDemand(env, Date.now());
   expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operations").first("n")).toBe(0);
 });
+
+it("leaves a queued job claimable while the machine holds 100 active operations", async () => {
+  const { machine } = await fixture();
+  const capacity = { runnerSlots: 1, statusAt: Date.now() };
+  const now = Date.now();
+  await env.DB.batch(
+    Array.from({ length: 100 }, (_, index) =>
+      env.DB.prepare(
+        "INSERT INTO operations (id, owner, machineId, key, commandJson, phase, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?)",
+      ).bind(
+        `busy${index}`,
+        machine.owner,
+        machine.id,
+        `busy-${index}`,
+        JSON.stringify({ type: "machine.pause", paused: true }),
+        now,
+        now,
+      ),
+    ),
+  );
+  await evaluateDemand(env, machine.id, capacity);
+  expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM runnerDemands").first("n")).toBe(0);
+  expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM operations").first("n")).toBe(100);
+  await env.DB.prepare("DELETE FROM operations WHERE id = 'busy0'").run();
+  await evaluateDemand(env, machine.id, capacity);
+  expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM runnerDemands").first("n")).toBe(1);
+  expect(
+    await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM operations WHERE commandJson LIKE '%runner.run%'",
+    ).first("n"),
+  ).toBe(1);
+});

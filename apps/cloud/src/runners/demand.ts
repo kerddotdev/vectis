@@ -144,8 +144,11 @@ export async function evaluateDemand(
     const { binding, job, previous, attempt, failures } = claim;
     const operationId = newId();
     const result = await env.DB.batch([
+      // A machine holds at most 100 active operations (see submitOperation); when it is full,
+      // neither the reservation nor the operation is written, so the job stays claimable.
       env.DB.prepare(`INSERT INTO runnerDemands (installationId, repositoryId, jobId, owner, bindingId, operationId, attempt, failures, updatedAt)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(installationId, repositoryId, jobId) DO UPDATE SET
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ? WHERE (SELECT COUNT(*) FROM operations WHERE machineId = ? AND phase IN ('accepted', 'claimed', 'running')) < 100
+        ON CONFLICT(installationId, repositoryId, jobId) DO UPDATE SET
         owner = excluded.owner, bindingId = excluded.bindingId, operationId = excluded.operationId, attempt = excluded.attempt,
         failures = excluded.failures, updatedAt = excluded.updatedAt WHERE runnerDemands.attempt = ? AND runnerDemands.operationId = ?`).bind(
         job.installationId,
@@ -157,6 +160,7 @@ export async function evaluateDemand(
         attempt,
         failures,
         now,
+        machineId,
         previous?.attempt ?? 0,
         previous?.operationId ?? "",
       ),
