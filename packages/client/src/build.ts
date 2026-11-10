@@ -7,7 +7,7 @@ export const Flavor = Schema.Literals(["development", "production"]);
 export type Flavor = typeof Flavor.Type;
 export const PackagedBuild = Schema.Struct({
   flavor: Flavor,
-  convexUrl: Schema.String,
+  cloudUrl: Schema.String,
   webUrl: Schema.String,
 });
 export type PackagedBuild = typeof PackagedBuild.Type;

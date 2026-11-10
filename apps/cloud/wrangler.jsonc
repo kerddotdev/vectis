@@ -1,0 +1,70 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "vectis-cloud-local",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  // The top level is the local and test configuration. Deployments use an env below, which must
+  // repeat every binding because Wrangler does not inherit them. Secrets (CLERK_WEBHOOK_SECRET)
+  // are set with `wrangler secret put`, or in .dev.vars locally.
+  "vars": {
+    "VECTIS_WEB_URL": "http://localhost:4321",
+    "VECTIS_CLOUD_URL": "http://127.0.0.1:8787",
+    "CLERK_ISSUER": "https://clerk.invalid",
+    "VECTIS_GITHUB_APP_NAME": "Vectis [LOCAL]",
+    "VECTIS_GITHUB_APP_PUBLIC": "false",
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vectis-local",
+      "database_id": "local",
+      "migrations_dir": "migrations",
+    },
+  ],
+  "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "MachineHub" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MachineHub"] }],
+  "triggers": { "crons": ["*/2 * * * *", "0 3 * * *"] },
+  "env": {
+    "development": {
+      "name": "vectis-cloud-dev",
+      "workers_dev": true,
+      "vars": {
+        "VECTIS_GITHUB_APP_NAME": "Vectis [DEV]",
+        "VECTIS_GITHUB_APP_PUBLIC": "false",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "vectis-dev",
+          "database_id": "REPLACE_WITH_DEV_DATABASE_ID",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "MachineHub" }] },
+      "triggers": { "crons": ["*/2 * * * *", "0 3 * * *"] },
+    },
+    "production": {
+      "name": "vectis-cloud",
+      "routes": [{ "pattern": "cloud.vectis.kerd.dev", "custom_domain": true }],
+      "vars": {
+        "VECTIS_WEB_URL": "https://vectis.kerd.dev",
+        "VECTIS_CLOUD_URL": "https://cloud.vectis.kerd.dev",
+        "VECTIS_GITHUB_APP_NAME": "Vectis",
+        "VECTIS_GITHUB_APP_PUBLIC": "true",
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "vectis",
+          "database_id": "REPLACE_WITH_PRODUCTION_DATABASE_ID",
+          "migrations_dir": "migrations",
+        },
+      ],
+      "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "MachineHub" }] },
+      "triggers": { "crons": ["*/2 * * * *", "0 3 * * *"] },
+    },
+  },
+}

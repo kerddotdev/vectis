@@ -1,8 +1,9 @@
 import { Schema } from "effect";
+import { CloudUrl } from "./cloud-url.js";
 import { Identifier } from "./index.js";
 const Digest = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/));
 export const PairingDescriptor = Schema.Struct({
-  deploymentUrl: Schema.String.check(Schema.isPattern(/^https:\/\/[a-z0-9-]+\.convex\.cloud$/)),
+  deploymentUrl: CloudUrl,
   requestDigest: Digest,
   credentialDigest: Digest,
   localId: Identifier,

@@ -6,7 +6,7 @@ import { VectisError } from "../../protocol/src/index.js";
 import { buildInfo, type Flavor, type PackagedBuild } from "./build.js";
 
 export interface CloudDeployment {
-  readonly convexUrl: string;
+  readonly cloudUrl: string;
   readonly webUrl: string;
 }
 
@@ -35,7 +35,7 @@ export function readLocalEnvironment(
   }
 }
 
-// Packaged builds only use the deployment baked in at package time, so a CONVEX_URL left in a
+// Packaged builds only use the deployment baked in at package time, so a VECTIS_CLOUD_URL left in a
 // user's shell can never redirect a released app. Source checkouts read the environment first,
 // then the repository's .env.local.
 export function resolveCloudDeployment(input: {
@@ -43,27 +43,36 @@ export function resolveCloudDeployment(input: {
   environment: Record<string, string | undefined>;
   local: Record<string, string | undefined>;
 }): CloudDeployment {
-  const convexUrl =
-    input.packaged?.convexUrl ?? input.environment.CONVEX_URL ?? input.local.CONVEX_URL;
+  const cloudUrl =
+    input.packaged?.cloudUrl ?? input.environment.VECTIS_CLOUD_URL ?? input.local.VECTIS_CLOUD_URL;
   const webUrl =
     input.packaged?.webUrl ?? input.environment.VECTIS_WEB_URL ?? input.local.VECTIS_WEB_URL;
-  if (!convexUrl || !webUrl)
+  if (!cloudUrl || !webUrl)
     throw new VectisError(
       "cloud_unconfigured",
       "This build has no cloud deployment configured.",
-      "Set CONVEX_URL and VECTIS_WEB_URL in the environment or the repository .env.local, as described in .env.example.",
+      "Set VECTIS_CLOUD_URL and VECTIS_WEB_URL in the environment or the repository .env.local, as described in .env.example.",
     );
-  if (!/^https:\/\/[a-z0-9-]+\.convex\.cloud$/.test(convexUrl))
-    throw new VectisError(
-      "invalid_cloud_url",
-      "CONVEX_URL must be an HTTPS Convex deployment URL such as https://name-123.convex.cloud.",
-    );
+  validateCloudUrl(cloudUrl, input.packaged?.flavor ?? "development");
   if (!/^https:\/\/[A-Za-z0-9.-]+(:[0-9]+)?$/.test(webUrl))
     throw new VectisError(
       "invalid_web_url",
       "VECTIS_WEB_URL must be an HTTPS origin without a path, such as https://vectis.kerd.dev.",
     );
-  return { convexUrl, webUrl };
+  return { cloudUrl, webUrl };
+}
+
+// Production builds only talk to an HTTPS origin. Development builds may also use a loopback HTTP
+// origin served by `wrangler dev`.
+export function validateCloudUrl(cloudUrl: string, flavor: Flavor) {
+  const https = /^https:\/\/[a-z0-9.-]+(:[0-9]+)?$/.test(cloudUrl);
+  const loopback = /^http:\/\/(127\.0\.0\.1|localhost)(:[0-9]+)?$/.test(cloudUrl);
+  if (!https && !(loopback && flavor === "development"))
+    throw new VectisError(
+      "invalid_cloud_url",
+      "VECTIS_CLOUD_URL must be an HTTPS origin without a path, such as https://cloud.vectis.kerd.dev.",
+    );
+  return cloudUrl;
 }
 
 export function cloudDeployment() {

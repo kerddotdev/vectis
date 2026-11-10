@@ -32,7 +32,7 @@ test("packaged manifests carry the production flavor and deployment", async () =
   directory = await mkdtemp(join(tmpdir(), "vectis-build-"));
   const vectis = {
     flavor: "production",
-    convexUrl: "https://prod-1.convex.cloud",
+    cloudUrl: "https://cloud.vectis.test",
     webUrl: "https://vectis.test",
   };
   await writeFile(

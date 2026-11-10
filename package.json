@@ -25,7 +25,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit && pnpm --filter @vectis/web exec tsc --noEmit && pnpm --filter @vectis/web exec tsc -p tsconfig.worker.json --noEmit && pnpm --filter @vectis/desktop exec tsc --noEmit",
+    "typecheck": "tsc --noEmit && pnpm --filter @vectis/web exec tsc --noEmit && pnpm --filter @vectis/web exec tsc -p tsconfig.worker.json --noEmit && pnpm --filter @vectis/desktop exec tsc --noEmit && pnpm --filter @vectis/cloud exec tsc --noEmit",
     "test": "vitest run",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",
     "format": "oxfmt .",
