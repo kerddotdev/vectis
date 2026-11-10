@@ -75,7 +75,7 @@ export function Header({
 
 export function Dashboard() {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const { overview } = useCloud();
+  const { overview, error, refresh } = useCloud();
   const identity = overview?.github;
   const machines = overview?.machines;
   const bindings = overview?.bindings;
@@ -112,6 +112,18 @@ export function Dashboard() {
         ))}
       </nav>
       <div key={tab} className="enter flex min-w-0 flex-col gap-8">
+        {!overview && error && (
+          <Notice tone="danger" role="alert">
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+              {error === "unauthorized"
+                ? "Your session has ended. Sign in again to load your account."
+                : "Vectis could not load your account right now."}
+              <Button small variant="secondary" onClick={refresh}>
+                Try again
+              </Button>
+            </span>
+          </Notice>
+        )}
         {tab === "overview" && (
           <Overview machines={machines} identity={identity} bindings={bindings} onOpen={setTab} />
         )}

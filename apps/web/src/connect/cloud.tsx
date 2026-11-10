@@ -35,6 +35,8 @@ type Call = <P extends HumanPath>(path: P, input: HumanRequest<P>) => Promise<Hu
 interface Cloud {
   call: Call;
   overview: AccountOverview | undefined;
+  // The code of the latest failed overview request; cleared by the next success.
+  error: string | undefined;
   refresh: () => void;
 }
 const CloudContext = createContext<Cloud | null>(null);
@@ -46,6 +48,7 @@ const refreshInterval = 15000;
 export function CloudProvider({ url, children }: { url: string; children: ReactNode }) {
   const { getToken } = useAuth();
   const [overview, setOverview] = useState<AccountOverview>();
+  const [error, setError] = useState<string>();
   const generation = useRef(0);
   const request = useCallback(
     async (path: string, init: RequestInit = {}) => {
@@ -76,9 +79,13 @@ export function CloudProvider({ url, children }: { url: string; children: ReactN
     const current = ++generation.current;
     request("/account/overview")
       .then((value) => {
-        if (current === generation.current) setOverview(value as AccountOverview);
+        if (current !== generation.current) return;
+        setOverview(value as AccountOverview);
+        setError(undefined);
       })
-      .catch(() => {});
+      .catch((issue: unknown) => {
+        if (current === generation.current) setError(errorCode(issue) || "cloud_unavailable");
+      });
   }, [request]);
   useEffect(() => {
     refresh();
@@ -107,7 +114,10 @@ export function CloudProvider({ url, children }: { url: string; children: ReactN
     },
     [request, refresh],
   );
-  const value = useMemo(() => ({ call, overview, refresh }), [call, overview, refresh]);
+  const value = useMemo(
+    () => ({ call, overview, error, refresh }),
+    [call, overview, error, refresh],
+  );
   return <CloudContext.Provider value={value}>{children}</CloudContext.Provider>;
 }
 
