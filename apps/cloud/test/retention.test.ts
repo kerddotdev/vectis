@@ -17,3 +17,17 @@ it("expires transient rows and retains active operations past the history window
     { id: "active" },
   ]);
 });
+
+it("keeps sweeping full batches until the backlog is cleared", async () => {
+  const now = Date.now(),
+    old = now - 40 * 86400000;
+  await env.DB.batch(
+    Array.from({ length: 1201 }, (_, index) =>
+      env.DB.prepare(
+        "INSERT INTO githubDeliveries (deliveryId, event, receivedAt) VALUES (?, 'workflow_job', ?)",
+      ).bind(`old-${index}`, old),
+    ),
+  );
+  await sweepRetention(env, now);
+  expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM githubDeliveries").first("n")).toBe(0);
+});
