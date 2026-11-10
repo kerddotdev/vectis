@@ -10,7 +10,7 @@ Use Node.js 24.22.1 or newer within the Node 24 release line, and pnpm 10.24.0. 
 Everything run from a checkout is a **development build**: it is named Vectis Dev, keeps its state in `~/.vectis-dev` instead of `~/.vectis`, and connects to the cloud deployment configured in the repository's `.env.local`:
 
 ```sh
-cp .env.example .env.local   # then fill in CONVEX_URL and VECTIS_WEB_URL
+cp .env.example .env.local   # then fill in VECTIS_CLOUD_URL and VECTIS_WEB_URL
 ```
 
 Without those values everything local works, and cloud commands report `cloud_unconfigured`. To connect to your own backend, see [Run your own cloud](/docs/self-hosting/cloud) and [Private development environment](/docs/self-hosting/development-environment).
@@ -90,7 +90,7 @@ Pairing requires the native Keychain helper. Set `VECTIS_KEYCHAIN_HELPER` to its
 pnpm vectis cloud pair --home /absolute/path/to/vectis-state --json
 ```
 
-Open the returned `/connect` link yourself. Compare the verification code with the CLI output, sign in, and approve the machine. Treat the pairing link as private and never approve a link supplied by someone else. The request expires after ten minutes. A source checkout uses the deployment configured by `CONVEX_URL` and `VECTIS_WEB_URL` in `.env.local` (see `.env.example`); packaged apps use the deployment they were built for.
+Open the returned `/connect` link yourself. Compare the verification code with the CLI output, sign in, and approve the machine. Treat the pairing link as private and never approve a link supplied by someone else. The request expires after ten minutes. A source checkout uses the deployment configured by `VECTIS_CLOUD_URL` and `VECTIS_WEB_URL` in `.env.local` (see `.env.example`); packaged apps use the deployment they were built for.
 
 Then finish the connection:
 

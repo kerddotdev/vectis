@@ -10,18 +10,18 @@ A development environment lets you test pairing, GitHub linking, and remote cont
 | Part                   | Development                                                            |
 | ---------------------- | ---------------------------------------------------------------------- |
 | Website and `/connect` | The `development` Worker on `vectis-dev.<account>.workers.dev`         |
-| Backend                | Your Convex development deployment                                     |
+| Backend                | The `development` cloud Worker and its D1 database                     |
 | Sign-in                | Your Clerk development instance                                        |
 | GitHub App             | A private App named like `Vectis [DEV]`                                |
 | Local builds           | Every source checkout: `pnpm vectis`, `pnpm mcp`, `pnpm desktop:start` |
 
-Source checkouts read `CONVEX_URL` and `VECTIS_WEB_URL` from `.env.local`, so once the file is filled in, pairing and login links point at the development environment automatically.
+Source checkouts read `VECTIS_CLOUD_URL` and `VECTIS_WEB_URL` from `.env.local`, so once the file is filled in, pairing and login links point at the development environment automatically.
 
 ## Set it up
 
 1. Follow [Run your own cloud](/docs/self-hosting/cloud) with development values. Set `VECTIS_WEB_URL` to `https://vectis-dev.<account>.workers.dev`.
-2. Deploy the website with `pnpm site:deploy:dev`.
-3. **Lock the website.** In the Cloudflare dashboard, open **Workers & Pages**, select `vectis-dev`, go to **Settings > Domains & Routes**, and choose **Enable Cloudflare Access** for `workers.dev`. Edit the `vectis-dev - Production` policy in Zero Trust so it allows only your email address. GitHub webhooks go straight to Convex, so nothing needs a bypass.
+2. Deploy the cloud Worker, then the website with `pnpm site:deploy:dev`.
+3. **Lock the website.** In the Cloudflare dashboard, open **Workers & Pages**, select `vectis-dev`, go to **Settings > Domains & Routes**, and choose **Enable Cloudflare Access** for `workers.dev`. Edit the `vectis-dev - Production` policy in Zero Trust so it allows only your email address. GitHub webhooks go straight to the cloud Worker, so nothing needs a bypass.
 4. **Lock sign-in.** In the Clerk development instance, open **Configure > Restrictions**, turn on the allowlist with your email addresses, and enforce it on sign-in as well as sign-up. Nobody else can create an account or sign in, so nobody else can approve a pairing or control a machine.
 5. **Lock the GitHub App.** Create it with `VECTIS_GITHUB_APP_PUBLIC=false`, so it can only be installed on the account that owns it.
 

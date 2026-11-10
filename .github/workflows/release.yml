@@ -45,9 +45,15 @@ jobs:
           node-version: 24.22.2
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec convex deploy -y
+      # Migrations are additive, so the running Worker keeps working until the new one deploys.
+      - run: pnpm --filter @vectis/cloud exec wrangler d1 migrations apply DB --env production --remote
         env:
-          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      - run: pnpm --filter @vectis/cloud exec wrangler deploy --env production
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   desktop:
     name: desktop
@@ -57,7 +63,7 @@ jobs:
     timeout-minutes: 120
     environment: release
     env:
-      CONVEX_URL: ${{ vars.CONVEX_URL }}
+      VECTIS_CLOUD_URL: ${{ vars.VECTIS_CLOUD_URL }}
       VECTIS_WEB_URL: ${{ vars.VECTIS_WEB_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

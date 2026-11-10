@@ -49,7 +49,7 @@ Override them with `--cpu`, `--memory-mib` and `--disk-gib`. Minimum disk sizes 
 | Wait after a failed attempt                        | 60 seconds                                        |
 | Unclaimed automatic runner request, Mac offline    | Expires after 2 minutes                           |
 | Unclaimed automatic runner request, Mac online     | Expires after 10 minutes                          |
-| Scan for jobs Vectis missed                        | At most every 5 minutes per repository connection |
+| Scan for jobs Vectis missed                        | On connect, then hourly per repository connection |
 | Jobs listed per repository connection              | The latest 100                                    |
 | Lines returned by one service log read             | At most 1000                                      |
 | Runner diagnostics                                 | At most 16 KiB                                    |

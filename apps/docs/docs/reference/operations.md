@@ -64,4 +64,4 @@ Every runner carries `self-hosted`, its OS label (`Linux`, `macOS` or `Windows`)
 | `VECTIS_APPLE_HELPER`, `VECTIS_KEYCHAIN_HELPER`  | Native helpers; set automatically by the app and its command line tools |
 | `VECTIS_QEMU`, `VECTIS_QEMU_IMG`, `VECTIS_SWTPM` | Windows runtime executables                                             |
 
-Source checkouts also read `CONVEX_URL` and `VECTIS_WEB_URL`; see [Build from source](/docs/self-hosting/build-from-source).
+Source checkouts also read `VECTIS_CLOUD_URL` and `VECTIS_WEB_URL`; see [Build from source](/docs/self-hosting/build-from-source).
