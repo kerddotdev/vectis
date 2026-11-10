@@ -1,5 +1,5 @@
 import type { MachineHandler } from "./context.js";
-import { bindingRecord, type BindingRow, type InspectionRow, type OperationRow } from "./db.js";
+import type { InspectionRow, OperationRow } from "./db.js";
 import { machineRepositories } from "./github/repositories.js";
 import { jobMarkers, leaseObservations } from "./github/jobs.js";
 
@@ -15,9 +15,6 @@ export const sync: MachineHandler<"/machine/sync"> = async ({ env, machine }, in
       env.DB.prepare(
         "SELECT id, queryJson FROM inspections WHERE machineId = ? AND pending = 1 AND expiresAt > ? LIMIT 20",
       ).bind(machine.id, now),
-      env.DB.prepare(
-        "SELECT * FROM repositoryBindings WHERE machineId = ? AND enabled = 1 ORDER BY verifiedAt DESC LIMIT 20",
-      ).bind(machine.id),
     ]),
     machineRepositories(env, machine),
     leaseObservations(env, machine, input.leaseIds),
@@ -36,12 +33,19 @@ export const sync: MachineHandler<"/machine/sync"> = async ({ env, machine }, in
   const inspections = (reads[3]!.results as unknown as InspectionRow[]).map(
     ({ id, queryJson }) => ({ id, queryJson }),
   );
-  const bindings = (reads[4]!.results as unknown as BindingRow[]).map(bindingRecord);
   return {
     operations,
     inspections,
     repositories,
     observations,
-    jobMarkers: await jobMarkers(env, bindings),
+    // The relay tracks job lists for the last 20 repositories in this order.
+    jobMarkers: await jobMarkers(
+      env,
+      repositories
+        .slice(-20)
+        .flatMap(({ id, installationId, repositoryId }) =>
+          installationId === undefined ? [] : [{ id, installationId, repositoryId }],
+        ),
+    ),
   };
 };

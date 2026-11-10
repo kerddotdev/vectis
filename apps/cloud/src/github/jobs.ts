@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import type { Env } from "../env.js";
-import type { Binding, Machine, JobRow } from "../db.js";
+import type { Machine, JobRow } from "../db.js";
 import { CloudError } from "../errors.js";
 import type { JobObservations, JobLogs } from "../../../../packages/protocol/src/jobs.js";
 import { JobLogRequest } from "../../../../packages/protocol/src/jobs.js";
@@ -171,7 +171,7 @@ export const jobLogs: MachineHandler<"/machine/jobs/logs"> = async (c, input) =>
 
 export async function jobMarkers(
   env: Env,
-  bindings: readonly Binding[],
+  bindings: readonly { id: string; installationId: number; repositoryId: number }[],
 ): Promise<Record<string, number | null>> {
   if (!bindings.length) return {};
   const results = await env.DB.batch<{ updatedAt: number }>(

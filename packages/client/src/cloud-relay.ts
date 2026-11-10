@@ -221,7 +221,10 @@ export function startCloudRelay(
       }
     for (const id of ids) {
       const value = snapshot.jobMarkers[id];
-      if (value !== undefined && (!jobMarkers.has(id) || jobMarkers.get(id)?.value !== value)) {
+      if (value === undefined) {
+        jobMarkers.delete(id);
+        jobLists.delete(id);
+      } else if (!jobMarkers.has(id) || jobMarkers.get(id)?.value !== value) {
         jobMarkers.set(id, { value });
         onChange();
       }
