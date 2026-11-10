@@ -389,10 +389,20 @@ export function startCloudRelay(
     async connectRepository(input: RepositoryConnection, signal: AbortSignal) {
       signal.throwIfAborted();
       requireConnection();
-      await socket.waitForEnvironment(
-        input.environmentId,
-        AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
-      );
+      await socket
+        .waitForEnvironment(
+          input.environmentId,
+          AbortSignal.any([signal, abort.signal, AbortSignal.timeout(10000)]),
+        )
+        .catch((error: unknown) => {
+          signal.throwIfAborted();
+          if (error instanceof VectisError) throw error;
+          throw new VectisError(
+            "environment_unavailable",
+            "The cloud has not confirmed this environment for the machine.",
+            "Check that the environment is ready and the machine is connected, then retry.",
+          );
+        });
       return call(
         "/machine/repositories/connect",
         {
