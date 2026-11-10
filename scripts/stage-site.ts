@@ -45,11 +45,11 @@ async function scriptHashes(file: string) {
   return inlineScriptHashes(html);
 }
 
-const convexUrl = setting("CONVEX_URL");
+const cloudUrl = setting("VECTIS_CLOUD_URL");
 const clerk = clerkOrigin(setting("CLERK_PUBLISHABLE_KEY"));
 const connectSources = [
   "'self'",
-  ...(convexUrl ? [convexUrl, convexUrl.replace(/^https:/, "wss:")] : []),
+  ...(cloudUrl.startsWith("https://") ? [cloudUrl] : []),
   ...(clerk ? [clerk, "https://*.protect.clerk.com:*"] : []),
 ];
 const common = [

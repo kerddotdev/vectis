@@ -11,7 +11,7 @@ import {
 import { controllerClient } from "./controller.js";
 
 const deployment = {
-  convexUrl: "https://isolated-test.convex.cloud",
+  cloudUrl: "https://isolated-test.example.com",
   webUrl: "https://vectis.test",
 };
 function credentials() {

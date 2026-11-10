@@ -1,3 +1,4 @@
+import { ControllerResponses } from "../../protocol/src/cloud.js";
 import { RepositoryReadiness, RepositoryReadinessInput } from "../../protocol/src/readiness.js";
 import { randomUUID } from "node:crypto";
 import { ServiceLog } from "../../protocol/src/logs.js";
@@ -23,24 +24,6 @@ import {
 } from "../../protocol/src/index.js";
 import { ControllerClient } from "./controller.js";
 
-const Record = Schema.Struct({
-  _id: Identifier,
-  machineId: Identifier,
-  key: Schema.String,
-  commandJson: Schema.String,
-  phase: Schema.Literals([
-    "accepted",
-    "claimed",
-    "running",
-    "succeeded",
-    "failed",
-    "action_required",
-    "cancelled",
-  ]),
-  createdAt: Schema.Number,
-  updatedAt: Schema.Number,
-  resultJson: Schema.optional(Schema.String),
-});
 const Summary = Schema.Struct({
   code: Schema.optional(Schema.String),
   message: Schema.String,
@@ -57,7 +40,7 @@ export class RemoteClient {
   }
   async operation(id: string, signal?: AbortSignal): Promise<Operation> {
     if (/^[a-f0-9]{8}-[a-f0-9-]{27}$/.test(id)) return this.localOperation(id, signal);
-    const remote = Schema.decodeUnknownSync(Record)(
+    const remote = Schema.decodeUnknownSync(ControllerResponses["operation.get"])(
       await this.controller.request({ type: "operation.get", id }, signal),
     );
     if (remote.machineId !== this.machineId)
@@ -89,7 +72,7 @@ export class RemoteClient {
       }
     }
     return {
-      id: remote._id,
+      id: remote.id,
       key: remote.key,
       command: decodeCommand(JSON.parse(remote.commandJson)).type,
       status: remote.phase === "claimed" ? "accepted" : remote.phase,
@@ -128,10 +111,16 @@ export class RemoteClient {
   }
   async wait(id: string, signal: AbortSignal = AbortSignal.timeout(120000)) {
     try {
+      let interval = 1000;
+      let progress = "";
       while (!signal.aborted) {
         const operation = await this.operation(id, signal);
         if (operation.status !== "accepted" && operation.status !== "running") return operation;
-        await delay(500, undefined, { signal });
+        const current = `${operation.status}:${operation.updatedAt}`;
+        if (progress && current !== progress) interval = 1000;
+        progress = current;
+        await delay(interval, undefined, { signal });
+        interval = Math.min(interval * 2, 5000);
       }
     } catch (error) {
       if (!signal.aborted) throw error;
@@ -150,6 +139,7 @@ export class RemoteClient {
           signal,
         ),
       );
+      let interval = 250;
       while (!signal.aborted) {
         const response = Schema.decodeUnknownSync(
           Schema.Struct({ pending: Schema.Boolean, responseJson: Schema.NullOr(Schema.String) }),
@@ -169,7 +159,8 @@ export class RemoteClient {
           if (!result.ok) throw new VectisError(result.code, result.message, result.nextStep);
           return result.result;
         }
-        await delay(500, undefined, { signal });
+        await delay(interval, undefined, { signal });
+        interval = Math.min(interval * 2, 2000);
       }
     } catch (error) {
       if (!signal.aborted) throw error;

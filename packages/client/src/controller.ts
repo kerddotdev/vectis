@@ -4,7 +4,9 @@ import { join } from "node:path";
 import { Schema } from "effect";
 import { ControllerRequest } from "../../protocol/src/controller.js";
 import { VectisError } from "../../protocol/src/index.js";
-import { machineEndpoint } from "./machine-auth.js";
+import { CloudErrorBody, ControllerResponses } from "../../protocol/src/cloud.js";
+import { validateCloudUrl } from "./deployment.js";
+import { buildInfo } from "./build.js";
 import type { KeychainCredentials } from "./keychain.js";
 
 export const ControllerConnection = Schema.Struct({
@@ -18,7 +20,7 @@ export const controllerAccount = (connection: ControllerConnection) =>
     .update(JSON.stringify([connection.deploymentUrl, connection.controllerId]))
     .digest("hex")}`;
 export const controllerEndpoint = (deploymentUrl: string) =>
-  machineEndpoint(deploymentUrl).replace("/machine/token", "/controller/request");
+  `${validateCloudUrl(deploymentUrl, buildInfo().flavor)}/controller/request`;
 
 export class ControllerClient {
   constructor(
@@ -58,16 +60,14 @@ export class ControllerClient {
         "Run vectis logout, then vectis login.",
       );
     if (!response.ok) {
-      const issue = Schema.decodeUnknownSync(Schema.Struct({ code: Schema.String }))(
-        await response.json(),
-      );
+      const issue = Schema.decodeUnknownSync(CloudErrorBody)(await response.json());
       throw new VectisError(
         issue.code,
         "The remote request could not be completed.",
         "Check the target machine, access and request key before retrying.",
       );
     }
-    return response.json();
+    return Schema.decodeUnknownSync(ControllerResponses[request.type])(await response.json());
   }
 }
 export async function controllerClient(

@@ -1,3 +1,4 @@
+import { MachinePairingResult } from "../../protocol/src/cloud.js";
 import { createHash, randomBytes } from "node:crypto";
 import { readFile, writeFile, rm, link } from "node:fs/promises";
 import { join } from "node:path";
@@ -5,21 +6,16 @@ import { Schema } from "effect";
 import { PairingDescriptor } from "../../protocol/src/pairing.js";
 import { VectisError } from "../../protocol/src/index.js";
 import { localClient } from "./local.js";
-import {
-  CloudConnection,
-  credentialAccount,
-  machineEndpoint,
-  machineTokenFetcher,
-} from "./machine-auth.js";
+import { CloudConnection, credentialAccount } from "./machine-auth.js";
+import { createCloudApi } from "./cloud-api.js";
+import { validateCloudUrl } from "./deployment.js";
+import { buildInfo } from "./build.js";
 import type { KeychainCredentials } from "./keychain.js";
 import type { CloudDeployment } from "./deployment.js";
 
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const Secrets = Schema.Struct({ request: Schema.String, credential: Schema.String });
-const Approved = Schema.Struct({
-  machineId: Schema.NonEmptyString,
-  localId: Schema.NonEmptyString,
-});
+
 type Credentials = Pick<KeychainCredentials, "get" | "set" | "remove">;
 const temporaryAccount = (descriptor: PairingDescriptor) => `pairing:${descriptor.requestDigest}`;
 async function descriptorAt(home: string) {
@@ -32,8 +28,8 @@ export async function beginPairing(
   deployment: CloudDeployment,
   credentials: Credentials,
 ) {
-  const deploymentUrl = deployment.convexUrl;
-  machineEndpoint(deploymentUrl);
+  const deploymentUrl = validateCloudUrl(deployment.cloudUrl, buildInfo().flavor);
+
   const { machine } = await (await localClient(home)).status();
   try {
     await readFile(join(home, "cloud.json"), "utf8");
@@ -111,11 +107,10 @@ export async function finishPairing(
       JSON.parse(await readFile(join(home, "cloud.json"), "utf8")),
     );
     const api = await localClient(home);
-    if (
-      (await api.status(signal)).machine.id !== connection.localId ||
-      !(await machineTokenFetcher(connection, credentials, signal)({ forceRefreshToken: true }))
-    )
+    if ((await api.status(signal)).machine.id !== connection.localId)
       throw new VectisError("pairing_revoked", "The saved cloud connection could not be verified.");
+    validateCloudUrl(connection.deploymentUrl, buildInfo().flavor);
+    await createCloudApi(connection, credentials).call("/machine/sync", { leaseIds: [] }, signal);
     await api.reloadCloud();
     return {
       state: "linked",
@@ -148,25 +143,22 @@ export async function finishPairing(
   const api = await localClient(home);
   if ((await api.status(signal)).machine.id !== descriptor.localId)
     throw new VectisError("pairing_conflict", "The local machine identity changed.");
-  const response = await fetch(
-    machineEndpoint(descriptor.deploymentUrl).replace(/\/token$/, "/pairing"),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ secret: secrets.request }),
-      redirect: "error",
-      signal,
-    },
-  );
+  validateCloudUrl(descriptor.deploymentUrl, buildInfo().flavor);
+  const response = await fetch(`${descriptor.deploymentUrl}/machine/pairing`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ secret: secrets.request }),
+    redirect: "error",
+    signal,
+  });
   if (!response.ok)
     throw new VectisError(
       "cloud_unavailable",
       "Pairing status is unavailable. Retry without creating a new request.",
     );
-  const result: unknown = await response.json();
-  if (result && typeof result === "object" && "state" in result && result.state === "pending")
-    return { state: "pending" };
-  const approved = Schema.decodeUnknownSync(Approved)(result);
+  const result = Schema.decodeUnknownSync(MachinePairingResult)(await response.json());
+  if ("state" in result) return { state: "pending" };
+  const approved = result;
   if (approved.localId !== descriptor.localId)
     throw new VectisError("pairing_conflict", "The approved machine identity does not match.");
   const connection: CloudConnection = {
@@ -192,8 +184,7 @@ export async function finishPairing(
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
   }
   await credentials.set(credentialAccount(connection), secrets.credential);
-  if (!(await machineTokenFetcher(connection, credentials, signal)({ forceRefreshToken: true })))
-    throw new VectisError("pairing_revoked", "The approved credential is no longer valid.");
+  await createCloudApi(connection, credentials).call("/machine/sync", { leaseIds: [] }, signal);
   const temporary = join(home, `cloud-${randomBytes(8).toString("hex")}.json`);
   await writeFile(temporary, JSON.stringify(connection), { mode: 0o600, flag: "wx" });
   try {

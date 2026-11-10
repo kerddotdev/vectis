@@ -16,7 +16,11 @@ import { parseArgs } from "node:util";
 import { Schema } from "effect";
 import { downloadArtifact } from "../packages/runner/src/artifact.js";
 import { Flavor } from "../packages/client/src/build.js";
-import { readLocalEnvironment, resolveCloudDeployment } from "../packages/client/src/deployment.js";
+import {
+  readLocalEnvironment,
+  resolveCloudDeployment,
+  validateCloudUrl,
+} from "../packages/client/src/deployment.js";
 
 const { values } = parseArgs({
   options: {
@@ -41,6 +45,7 @@ const cloud = resolveCloudDeployment({
   environment: process.env,
   local: readLocalEnvironment(root, flavor),
 });
+validateCloudUrl(cloud.cloudUrl, flavor);
 const nodeVersion = "24.22.2";
 const nodeDirectory = `node-v${nodeVersion}-darwin-arm64`;
 const nodeSource = {
