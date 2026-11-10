@@ -3,11 +3,12 @@
   "name": "vectis-web",
   "main": "worker.ts",
   "compatibility_date": "2026-09-15",
-  // VECTIS_CONVEX_SITE is passed by scripts/deploy-site.ts from CONVEX_SITE_URL.
+  // CLOUD reaches the cloud Worker (apps/cloud) of the same flavor for the proxied /api routes.
   "env": {
     "development": {
       "name": "vectis-dev",
       "workers_dev": true,
+      "services": [{ "binding": "CLOUD", "service": "vectis-cloud-dev" }],
       "preview_urls": false,
       "assets": {
         "directory": "./site",
@@ -20,6 +21,7 @@
     "production": {
       "name": "vectis-web",
       "workers_dev": false,
+      "services": [{ "binding": "CLOUD", "service": "vectis-cloud" }],
       "preview_urls": false,
       "routes": [{ "pattern": "vectis.kerd.dev", "custom_domain": true }],
       "assets": {

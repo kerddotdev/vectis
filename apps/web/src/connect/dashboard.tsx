@@ -1,6 +1,4 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useMutation, useQuery } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
 import {
   CircleCheckIcon,
   EllipsisIcon,
@@ -12,7 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { site } from "@vectis/design/site";
-import { api } from "../../../../convex/_generated/api.js";
+import { useCloud, type Bindings, type Identity, type Machines } from "./cloud.js";
 import { AccessTab } from "./access.js";
 import { AccountTab } from "./account.js";
 import { GitHubMark, GitHubTab, useLinkGitHub } from "./github.js";
@@ -33,9 +31,7 @@ import {
   Status,
 } from "./ui.js";
 
-export type Machines = FunctionReturnType<typeof api.machines.list>;
-export type Identity = FunctionReturnType<typeof api.githubIdentity.list>;
-export type Bindings = FunctionReturnType<typeof api.repositoryBindings.list>;
+export type { Bindings, Identity, Machines } from "./cloud.js";
 
 const tabs = [
   { id: "overview", label: "Overview", icon: LayoutGridIcon },
@@ -55,8 +51,7 @@ function initialTab(): Tab {
   return tabs.find((tab) => tab.id === requested)?.id ?? "overview";
 }
 
-export const online = (machine: Machines[number]) =>
-  machine.lastSeenAt !== undefined && Date.now() - machine.lastSeenAt < 90000;
+export const online = (machine: Machines[number]) => machine.online;
 
 export function Header({
   title,
@@ -80,10 +75,11 @@ export function Header({
 
 export function Dashboard() {
   const [tab, setTab] = useState<Tab>(initialTab);
-  const identity = useQuery(api.githubIdentity.list, {});
-  const machines = useQuery(api.machines.list, {});
-  const bindings = useQuery(api.repositoryBindings.list, {});
-  const controllers = useQuery(api.controllers.list, {});
+  const { overview } = useCloud();
+  const identity = overview?.github;
+  const machines = overview?.machines;
+  const bindings = overview?.bindings;
+  const controllers = overview?.controllers;
   useEffect(() => {
     history.replaceState(null, "", tab === "overview" ? "/connect" : `/connect?tab=${tab}`);
   }, [tab]);
@@ -177,7 +173,7 @@ function Overview({
   onOpen: (tab: Tab) => void;
 }) {
   const link = useLinkGitHub();
-  const installation = useQuery(api.githubAppSetup.installation, {});
+  const installation = useCloud().overview?.installation;
   if (!machines || !identity || !bindings) return <Pending>Loading your account</Pending>;
   const steps = {
     mac: machines.length > 0,
@@ -308,7 +304,8 @@ function Overview({
 }
 
 function MachinesTab({ machines }: { machines: Machines | undefined }) {
-  const remove = useMutation(api.machines.remove);
+  const { call } = useCloud();
+  const remove = (input: { id: string }) => call("/machines/remove", input);
   const [removing, setRemoving] = useState<Machines[number] | null>(null);
   return (
     <>
@@ -333,7 +330,7 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {machines.map((machine) => (
-            <Panel key={machine._id} className="flex flex-col gap-5 p-5">
+            <Panel key={machine.id} className="flex flex-col gap-5 p-5">
               <div className="flex items-start gap-4">
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[17px] font-medium">{machine.name}</p>
@@ -400,7 +397,7 @@ function MachinesTab({ machines }: { machines: Machines | undefined }) {
         phrase="remove"
         label="Remove Mac"
         onConfirm={async () => {
-          if (removing) await remove({ id: removing._id });
+          if (removing) await remove({ id: removing.id });
         }}
       />
     </>

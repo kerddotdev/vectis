@@ -1,16 +1,11 @@
 import { useState } from "react";
-import { useMutation } from "convex/react";
-import type { FunctionReturnType } from "convex/server";
-import { api } from "../../../../convex/_generated/api.js";
+import { useCloud, type Controllers } from "./cloud.js";
 import { Header } from "./dashboard.js";
 import { Button, Code, Empty, Notice, Panel, Pending, relative } from "./ui.js";
 
-export function AccessTab({
-  controllers,
-}: {
-  controllers: FunctionReturnType<typeof api.controllers.list> | undefined;
-}) {
-  const revoke = useMutation(api.controllers.revoke);
+export function AccessTab({ controllers }: { controllers: Controllers | undefined }) {
+  const { call } = useCloud();
+  const revoke = (input: { id: string }) => call("/controllers/revoke", input);
   const [revoking, setRevoking] = useState("");
   const [error, setError] = useState("");
   return (

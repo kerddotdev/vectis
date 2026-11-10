@@ -2,7 +2,7 @@
 title: Terms of Service
 description: The terms for using the hosted Vectis account service, the website, and the official Vectis downloads.
 summary: These terms apply to the hosted Vectis account service and the website. The Vectis software itself is open source under the MIT License, which these terms do not change.
-effective: September 19, 2026
+effective: November 10, 2026
 ---
 
 ## 1. About these terms
@@ -113,7 +113,7 @@ The official desktop app checks GitHub Releases for new versions and downloads t
 
 ## 15. Third-party services
 
-The Service relies on GitHub, Clerk, Convex, Cloudflare and other providers, and the Software downloads files from GitHub, Canonical and Apple. We are not responsible for services we do not control, and their own terms apply to your use of them.
+The Service relies on GitHub, Clerk, Cloudflare and other providers, and the Software downloads files from GitHub, Canonical and Apple. We are not responsible for services we do not control, and their own terms apply to your use of them.
 
 ## 16. Availability and changes
 

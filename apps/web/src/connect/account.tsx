@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { useClerk, useUser } from "@clerk/react";
-import { useMutation } from "convex/react";
-import { api } from "../../../../convex/_generated/api.js";
+import { useCloud } from "./cloud.js";
 import { Header } from "./dashboard.js";
 import { Button, Confirm, Notice, Panel } from "./ui.js";
 
 export function AccountTab() {
   const { user } = useUser();
   const clerk = useClerk();
-  const remove = useMutation(api.account.remove);
+  const { call } = useCloud();
+  const remove = () => call("/account/remove", {});
   const [deleting, setDeleting] = useState(false);
   return (
     <>
@@ -46,7 +46,7 @@ export function AccountTab() {
         phrase="delete"
         label="Delete account"
         onConfirm={async () => {
-          await remove({});
+          await remove();
           await user?.delete();
           await clerk.signOut({ redirectUrl: "/" });
         }}

@@ -1,10 +1,8 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
 import { useAuth } from "@clerk/react";
 import { Schema } from "effect";
 import { EllipsisIcon } from "lucide-react";
-import { api } from "../../../../convex/_generated/api.js";
-import { errorCode } from "./Connect.js";
+import { errorCode, useCloud } from "./cloud.js";
 import { Header, type Bindings, type Identity } from "./dashboard.js";
 import {
   ActionMenu,
@@ -59,7 +57,7 @@ async function githubRequest(
   getToken: ReturnType<typeof useAuth>["getToken"],
   body?: { id: string },
 ): Promise<unknown> {
-  const token = await getToken({ template: "convex" });
+  const token = await getToken();
   if (!token) throw new Error("Sign in to Vectis.");
   const response = await fetch(`/api/github/oauth/${action}`, {
     method: "POST",
@@ -80,10 +78,11 @@ export function GitHubTab({
   bindings: Bindings | undefined;
 }) {
   const link = useLinkGitHub();
-  const installation = useQuery(api.githubAppSetup.installation, {});
+  const { call, overview } = useCloud();
+  const installation = overview?.installation;
   const { getToken } = useAuth();
-  const discard = useMutation(api.githubIdentity.discard);
-  const unlink = useMutation(api.githubIdentity.unlink);
+  const discard = (input: { id: string }) => call("/github/links/discard", input);
+  const unlink = (input: { id: string }) => call("/github/accounts/unlink", input);
   const [unlinking, setUnlinking] = useState<Identity["accounts"][number] | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");

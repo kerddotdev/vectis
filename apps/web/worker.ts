@@ -1,9 +1,9 @@
 import type { ExportedHandler } from "@cloudflare/workers-types";
 
-// Deploy scripts pass VECTIS_CONVEX_SITE with --var, so each deployment keeps its own backend.
+// CLOUD is a service binding to the cloud Worker of the same deployment (wrangler.jsonc).
 interface Env {
   ASSETS: { fetch(request: Request): Promise<Response> };
-  VECTIS_CONVEX_SITE: string;
+  CLOUD: { fetch(request: Request): Promise<Response> };
 }
 
 const routes = new Map([
@@ -76,7 +76,7 @@ export default {
     if (!method) return new Response("Not found", { status: 404 });
     if (request.method !== method)
       return new Response("Method not allowed", { status: 405, headers: { Allow: method } });
-    const target = new URL(url.pathname.slice(4) + url.search, env.VECTIS_CONVEX_SITE);
+    const target = new URL(url.pathname.slice(4) + url.search, "https://cloud.internal");
     const headers = new Headers();
     for (const name of [
       "content-type",
@@ -88,12 +88,14 @@ export default {
       "cookie",
     ])
       if (request.headers.has(name)) headers.set(name, request.headers.get(name) ?? "");
-    const upstream = await fetch(target, {
-      method: request.method,
-      headers,
-      body: request.body,
-      redirect: "manual",
-    });
+    const upstream = await env.CLOUD.fetch(
+      new Request(target, {
+        method: request.method,
+        headers,
+        body: request.method === "GET" ? null : await request.arrayBuffer(),
+        redirect: "manual",
+      }),
+    );
     return new Response(upstream.body, { status: upstream.status, headers: upstream.headers });
   },
 } satisfies ExportedHandler<Env>;
