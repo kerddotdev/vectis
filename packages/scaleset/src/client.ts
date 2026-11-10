@@ -128,7 +128,7 @@ async function request(
   try {
     const response = await fetch(url, {
       method,
-      redirect: "error",
+      redirect: "manual",
       signal: boundedSignal,
       headers: {
         Authorization: `Bearer ${token}`,

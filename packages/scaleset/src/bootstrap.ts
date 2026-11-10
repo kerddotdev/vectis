@@ -51,7 +51,7 @@ export async function bootstrapAdmin(
     boundedSignal.throwIfAborted();
     const response = await fetch(new URL(`https://api.github.com${path}`), {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       signal: boundedSignal,
       headers: {
         Authorization: authorization,

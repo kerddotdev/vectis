@@ -70,7 +70,7 @@ export async function publishMigration(
   async function request(path: string, body?: unknown): Promise<unknown> {
     const response = await transport(`https://api.github.com${root}${path}`, {
       method: body === undefined ? "GET" : "POST",
-      redirect: "error",
+      redirect: "manual",
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${installationToken}`,

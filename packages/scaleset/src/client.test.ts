@@ -54,7 +54,7 @@ test("admin session lifecycle preserves the tenant path and never uses the queue
   expect(fetch.mock.calls[1]?.[1].body).toBeUndefined();
   for (const [, init] of fetch.mock.calls) {
     expect(new Headers(init.headers).get("Authorization")).toBe("Bearer admin-secret");
-    expect(init.redirect).toBe("error");
+    expect(init.redirect).toBe("manual");
   }
 });
 

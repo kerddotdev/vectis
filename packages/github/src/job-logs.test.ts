@@ -18,7 +18,7 @@ function logsFetch(bytes: Uint8Array, ranges = true) {
     }
     expect(headers.has("Authorization")).toBe(false);
     expect(headers.get("Accept-Encoding")).toBe("identity");
-    expect(init?.redirect).toBe("error");
+    expect(init?.redirect).toBe("manual");
     const range = headers.get("Range") ?? "";
     if (!ranges) {
       transferred += bytes.length;

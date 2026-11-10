@@ -38,7 +38,7 @@ function fixture(
     const method = init?.method ?? "GET";
     requests.push({ method, path, body: typeof init?.body === "string" ? init.body : undefined });
     expect(url.origin).toBe("https://api.github.com");
-    expect(init?.redirect).toBe("error");
+    expect(init?.redirect).toBe("manual");
     if (method === "GET" && path === "")
       return Response.json({ id: options.wrongRepository ? 7 : 42, default_branch: "main" });
     if (method === "GET" && path === "/pulls") return Response.json(pullExists ? [pr] : []);

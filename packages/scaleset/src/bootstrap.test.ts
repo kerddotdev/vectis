@@ -53,7 +53,7 @@ test("exchanges a repository registration token with RemoteAuth and retains only
     runner_event: "register",
   });
   for (const [, init] of fetch.mock.calls) {
-    expect(init.redirect).toBe("error");
+    expect(init.redirect).toBe("manual");
     expect(init.signal).toBeInstanceOf(AbortSignal);
   }
 });

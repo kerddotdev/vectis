@@ -122,7 +122,7 @@ export async function githubRequest(input: {
           "Content-Type": "application/json",
         },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-        redirect: "error",
+        redirect: "manual",
         signal: signal ? AbortSignal.any([signal, abort.signal]) : abort.signal,
       });
       if (response.status === 401) input.invalidate();

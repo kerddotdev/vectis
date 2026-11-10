@@ -51,7 +51,7 @@ export async function downloadJobLog(token: string, path: string, after?: number
   const fetchBlob = (range: string) =>
     fetch(url, {
       headers: { Range: range, "Accept-Encoding": "identity" },
-      redirect: "error",
+      redirect: "manual",
       signal,
     });
   const fetchPage = async (from: number) => {
