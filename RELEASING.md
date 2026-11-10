@@ -55,9 +55,38 @@ Rulesets need a public repository on the free plan. After the repository is publ
 
 ## Cut a release
 
-1. Open a pull request titled `chore(release): vX.Y.Z` that only changes `version` in the root `package.json`. Merge it.
+1. Open a pull request titled `chore(release): vX.Y.Z` that changes `version` in the root `package.json` and adds `.github/release-notes/vX.Y.Z.md` (see [Release notes](#release-notes)). Merge it.
 2. Tag the merge commit and push the tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. A tag with a hyphen, such as `v0.2.0-rc.1`, becomes a prerelease.
-3. Approve the `release` deployment. The workflow checks the tag against the version, runs `check`, applies D1 migrations and deploys the cloud Worker, builds, signs and notarizes the app in the macOS VM, publishes the GitHub release with generated notes, and redeploys the website so the changelog and download pick up the release.
+3. Approve the `release` deployment. The workflow checks the tag against the version, runs `check`, applies D1 migrations and deploys the cloud Worker, builds, signs and notarizes the app in the macOS VM, publishes the GitHub release as `Vectis X.Y.Z` with the written notes followed by the generated pull request list, and redeploys the website so the changelog and download pick up the release.
 4. Installed apps find the update within four hours.
 
 Backend changes must keep working with the previous release, because installed apps update at their own pace.
+
+## Release notes
+
+Every release uses the same notes. The written part lives in `.github/release-notes/vX.Y.Z.md`; `preflight` refuses a tag without it, and `publish` appends GitHub's generated `## What's Changed` list (merged pull requests and the full changelog link). The website changelog shows the published notes, so fix a release afterwards by editing that file and the GitHub release together, then redeploying the site.
+
+The file has exactly these parts, in this order:
+
+```md
+# Vectis X.Y.Z
+
+**Two or three sentences in bold: what changed for the user.**
+
+## Highlights
+
+### A short topic phrased as an outcome
+
+## Updating
+
+## Compatibility
+
+## Platform requirements and limitations
+```
+
+- **Highlights**: one `###` topic per change a user notices, as a short paragraph or bullets. Security fixes, other fixes and measurements are topics here too (`### Security`, `### Fixes`, `### Measured on a real Mac`), never separate sections. A patch release still has at least one topic.
+- **Updating**: start with "Installed apps find this release within four hours, and the update waits for active work to finish." Then say what the user has to do after updating, such as preparing an environment again or pairing again, or "Nothing needs to be prepared again."
+- **Compatibility**: which app versions the cloud still serves, what needs the new app, and what existing images miss. When nothing applies: "The app, CLI and service ship together."
+- **Platform requirements and limitations**: one paragraph describing the platform as of this release.
+
+State only verified behavior, in plain English with ASCII hyphens and no emojis. Use no other headings, and do not write the pull request list by hand. `.github/release-notes/v0.5.0.md` is a complete example.
