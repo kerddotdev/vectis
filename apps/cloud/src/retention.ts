@@ -6,6 +6,13 @@ export const sweepRetention: Sweep = async (env, now) => {
     ["githubRedeliveryRequests", "requestedAt", 3 * day, ""],
     ["githubDeliveries", "receivedAt", 30 * day, ""],
     ["githubJobs", "updatedAt", 90 * day, ""],
+    // A demand holds a job's retry budget, so it goes only after its job is gone.
+    [
+      "runnerDemands",
+      "updatedAt",
+      90 * day,
+      " AND NOT EXISTS (SELECT 1 FROM githubJobs j WHERE j.installationId = runnerDemands.installationId AND j.repositoryId = runnerDemands.repositoryId AND j.jobId = runnerDemands.jobId)",
+    ],
     ["operations", "updatedAt", 90 * day, " AND phase IN ('succeeded','failed','cancelled')"],
     ["runnerLeases", "updatedAt", 30 * day, " AND phase = 'released'"],
     ["runCommandReceipts", "updatedAt", 30 * day, ""],
