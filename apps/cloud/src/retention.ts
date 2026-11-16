@@ -6,6 +6,8 @@ export const sweepRetention: Sweep = async (env, now) => {
     ["githubRedeliveryRequests", "requestedAt", 3 * day, ""],
     ["githubDeliveries", "receivedAt", 30 * day, ""],
     ["githubJobs", "updatedAt", 90 * day, ""],
+    // Same window as githubJobs, so a demand never outlives its job and resets its attempts.
+    ["runnerDemands", "updatedAt", 90 * day, ""],
     ["operations", "updatedAt", 90 * day, " AND phase IN ('succeeded','failed','cancelled')"],
     ["runnerLeases", "updatedAt", 30 * day, " AND phase = 'released'"],
     ["runCommandReceipts", "updatedAt", 30 * day, ""],

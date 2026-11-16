@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { env, seedMachine } from "../src/test-support.js";
+import { env, seedAccount, seedBinding, seedMachine } from "../src/test-support.js";
 import { sweepRetention } from "../src/retention.js";
 it("expires transient rows and retains active operations past the history window", async () => {
   const m = await seedMachine();
@@ -30,4 +30,22 @@ it("keeps sweeping full batches until the backlog is cleared", async () => {
   );
   await sweepRetention(env, now);
   expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM githubDeliveries").first("n")).toBe(0);
+});
+
+it("expires runner demands with the same window as their jobs", async () => {
+  const m = await seedMachine();
+  const account = await seedAccount(m.owner);
+  const binding = await seedBinding({ owner: m.owner, accountId: account.id, machineId: m.id });
+  const now = Date.now();
+  const demand = env.DB.prepare(
+    "INSERT INTO runnerDemands (installationId, repositoryId, jobId, owner, bindingId, operationId, attempt, updatedAt) VALUES (10, 1000, ?, ?, ?, ?, 1, ?)",
+  );
+  await env.DB.batch([
+    demand.bind(1, m.owner, binding.id, "old", now - 91 * 86400000),
+    demand.bind(2, m.owner, binding.id, "recent", now - 89 * 86400000),
+  ]);
+  await sweepRetention(env, now);
+  expect((await env.DB.prepare("SELECT jobId FROM runnerDemands").all()).results).toEqual([
+    { jobId: 2 },
+  ]);
 });
