@@ -32,7 +32,7 @@ it("keeps sweeping full batches until the backlog is cleared", async () => {
   expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM githubDeliveries").first("n")).toBe(0);
 });
 
-it("expires runner demands with the same window as their jobs", async () => {
+it("expires runner demands only after their jobs are gone", async () => {
   const m = await seedMachine();
   const account = await seedAccount(m.owner);
   const binding = await seedBinding({ owner: m.owner, accountId: account.id, machineId: m.id });
@@ -43,9 +43,13 @@ it("expires runner demands with the same window as their jobs", async () => {
   await env.DB.batch([
     demand.bind(1, m.owner, binding.id, "old", now - 91 * 86400000),
     demand.bind(2, m.owner, binding.id, "recent", now - 89 * 86400000),
+    demand.bind(3, m.owner, binding.id, "queued", now - 91 * 86400000),
+    env.DB.prepare(
+      "INSERT INTO githubJobs (installationId, repositoryId, jobId, runId, name, status, labelsJson, updatedAt) VALUES (10, 1000, 3, 1, 'build', 'queued', '[]', ?)",
+    ).bind(now - 10 * 86400000),
   ]);
   await sweepRetention(env, now);
-  expect((await env.DB.prepare("SELECT jobId FROM runnerDemands").all()).results).toEqual([
-    { jobId: 2 },
-  ]);
+  expect(
+    (await env.DB.prepare("SELECT jobId FROM runnerDemands ORDER BY jobId").all()).results,
+  ).toEqual([{ jobId: 2 }, { jobId: 3 }]);
 });
