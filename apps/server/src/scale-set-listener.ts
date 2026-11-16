@@ -149,6 +149,18 @@ function actionCode(error: unknown) {
     return error.code;
 }
 
+const refreshAttempts = 3;
+// Session-level failures: the grant is unusable, so a fresh session is opened. Every other code is
+// a configuration or authorization problem that needs a person, not a retry.
+const reopenCodes = new Set([
+  "scale_set_request_refused",
+  "scale_set_auth_failed",
+  "scale_set_session_conflict",
+  "scale_set_superseded",
+  "scale_set_session_missing",
+  "scale_set_refresh_failed",
+]);
+
 type ListenerTask = {
   finished: boolean;
   bindingRevision: string;
@@ -174,6 +186,7 @@ export class ScaleSetListener {
       submit(key: string, command: Command): Operation;
       sessionClient?: (grant: ScaleSetGrant) => SessionClient;
       random?: () => number;
+      log?: (event: Record<string, unknown>) => void;
     },
   ) {}
 
@@ -286,9 +299,7 @@ export class ScaleSetListener {
   }
   private async listen(bindingId: string, task: ListenerTask) {
     const signal = task.abort.signal;
-    let grant: ScaleSetGrant | undefined;
-    let failures = 0;
-    let broker: ScaleSetBroker | undefined;
+    let reopens = 0;
     try {
       const binding = this.options.repositories()?.find((binding) => binding.id === bindingId);
       if (restrictiveAccess(binding?.access))
@@ -296,8 +307,47 @@ export class ScaleSetListener {
           "scale_set_policy_unsupported",
           "Scale set preview requires any actor and automatic approval. Use demand mode for restrictive policies.",
         );
-      const sessionBroker = this.options.broker();
-      broker = sessionBroker;
+      const broker = this.options.broker();
+      for (;;) {
+        signal.throwIfAborted();
+        try {
+          await this.session(bindingId, task, broker, () => (reopens = 0));
+        } catch (error) {
+          const code = actionCode(error);
+          if (signal.aborted || !code || !reopenCodes.has(code)) throw error;
+          this.state(task, {
+            state: "connecting",
+            code,
+            message: `Reopening the scale set session after ${code}.`,
+          });
+          this.log("scale_set.reopening", bindingId, { code, attempt: reopens + 1 });
+          await this.reopenDelay(reopens++, signal);
+        }
+      }
+    } catch (error) {
+      if (!signal.aborted) {
+        const code = actionCode(error) ?? "scale_set_listener_failed";
+        this.log("scale_set.action_required", bindingId, { code });
+        this.state(task, {
+          state: "action_required",
+          code,
+          message:
+            "Scale set listening stopped. Check the binding, policy and cloud authorization before retrying.",
+        });
+      }
+    }
+  }
+  private async session(
+    bindingId: string,
+    task: ListenerTask,
+    sessionBroker: ScaleSetBroker,
+    healthy: () => void,
+  ) {
+    const signal = task.abort.signal;
+    let grant: ScaleSetGrant | undefined;
+    let failures = 0;
+    try {
+      this.state(task, { state: "connecting" });
       for (;;) {
         signal.throwIfAborted();
         try {
@@ -341,12 +391,13 @@ export class ScaleSetListener {
           try {
             const value = await work(client);
             failures = 0;
+            healthy();
             return value;
           } catch (error) {
             if (signal.aborted) throw error;
             if (error instanceof ScaleSetHttpError && error.queueTokenExpired && !refreshed) {
               refreshed = true;
-              for (;;) {
+              for (let attempt = 1; ; attempt++) {
                 try {
                   current = await sessionBroker.refreshScaleSet(
                     bindingId,
@@ -356,6 +407,11 @@ export class ScaleSetListener {
                   break;
                 } catch (refreshError) {
                   if (signal.aborted || actionCode(refreshError)) throw refreshError;
+                  if (attempt >= refreshAttempts)
+                    throw new VectisError(
+                      "scale_set_refresh_failed",
+                      "The scale set session could not be refreshed.",
+                    );
                   await this.backoff(refreshError, failures++, signal);
                 }
               }
@@ -414,8 +470,11 @@ export class ScaleSetListener {
       // A persisted plan is replayed with exactly the same request keys after a crash.
       accept();
       reserve(cursor.lastMessageId, cursor.assignedJobs);
+      this.log("scale_set.listening", bindingId, { generation: current.generation });
       this.state(task, {
         state: "listening",
+        code: undefined,
+        message: undefined,
         scaleSetName: current.scaleSetName,
         assignedJobs: cursor.assignedJobs,
         reservedRunners: this.reservations(bindingId),
@@ -451,21 +510,15 @@ export class ScaleSetListener {
           lastMessageAt: new Date().toISOString(),
         });
       }
-    } catch (error) {
-      if (!signal.aborted)
-        this.state(task, {
-          state: "action_required",
-          code: actionCode(error) ?? "scale_set_listener_failed",
-          message:
-            "Scale set listening stopped. Check the binding, policy and cloud authorization before retrying.",
-        });
     } finally {
-      if (grant && broker) {
+      if (grant) {
         const closing = new AbortController();
         const timer = setTimeout(() => closing.abort(), 10000);
         try {
           await Promise.race([
-            broker.closeScaleSet(bindingId, grant.generation, closing.signal).catch(() => {}),
+            sessionBroker
+              .closeScaleSet(bindingId, grant.generation, closing.signal)
+              .catch(() => {}),
             wait(10000, closing.signal).catch(() => {}),
           ]);
         } finally {
@@ -474,6 +527,13 @@ export class ScaleSetListener {
         }
       }
     }
+  }
+  private log(event: string, bindingId: string, fields: Record<string, unknown>) {
+    this.options.log?.({ event, at: new Date().toISOString(), bindingId, ...fields });
+  }
+  private async reopenDelay(attempt: number, signal: AbortSignal) {
+    const exponential = Math.min(300000, 5000 * 2 ** Math.min(attempt, 6));
+    await wait(exponential * (0.5 + (this.options.random ?? Math.random)()), signal);
   }
   private async backoff(error: unknown, failures: number, signal: AbortSignal) {
     const exponential = Math.min(30000, 500 * 2 ** Math.min(failures, 6));

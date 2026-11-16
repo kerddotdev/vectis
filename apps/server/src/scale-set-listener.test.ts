@@ -230,18 +230,79 @@ test("401 refreshes the queue grant once and replays the poll with the same curs
   expect(f.client.getMessage.mock.calls.slice(0, 2).map((call) => call[0])).toEqual([0, 0]);
 });
 
-test("a second 401 on the same request stops with an honest auth error", async () => {
+test("a second 401 on the same request closes the session and opens a new one", async () => {
+  vi.useFakeTimers();
   const f = await fixture();
-  f.client.getMessage.mockRejectedValue(new ScaleSetHttpError(401, null, true));
+  f.client.getMessage.mockRejectedValueOnce(new ScaleSetHttpError(401, null, true));
+  f.client.getMessage.mockRejectedValueOnce(new ScaleSetHttpError(401, null, true));
+  f.broker.openScaleSet
+    .mockResolvedValueOnce(grant)
+    .mockResolvedValueOnce({ ...grant, generation: 2 });
   f.listener.start();
-  await vi.waitFor(() =>
-    expect(f.listener.states()).toMatchObject([
-      { state: "action_required", code: "scale_set_auth_failed" },
-    ]),
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.listener.states()).toMatchObject([
+    { state: "connecting", code: "scale_set_auth_failed" },
+  ]);
+  expect(f.broker.closeScaleSet).toHaveBeenCalledExactlyOnceWith(
+    "binding",
+    1,
+    expect.any(AbortSignal),
   );
-  expect(f.broker.refreshScaleSet).toHaveBeenCalledOnce();
-  expect(f.broker.closeScaleSet).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(f.broker.openScaleSet).toHaveBeenCalledTimes(2);
+  expect(f.listener.states()).toMatchObject([{ state: "listening", code: undefined }]);
 });
+
+test("a 404 on the poll closes the old generation and listens on a new one", async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  f.client.getMessage.mockRejectedValueOnce(new ScaleSetHttpError(404, null, false));
+  f.broker.openScaleSet
+    .mockResolvedValueOnce(grant)
+    .mockResolvedValueOnce({ ...grant, generation: 2 });
+  f.listener.start();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.broker.closeScaleSet).toHaveBeenCalledExactlyOnceWith(
+    "binding",
+    1,
+    expect.any(AbortSignal),
+  );
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(f.broker.openScaleSet).toHaveBeenCalledTimes(2);
+  expect(f.grants.map((value) => value.generation)).toEqual([1, 2]);
+  expect(f.listener.states()).toMatchObject([{ state: "listening" }]);
+  await f.listener.close();
+  expect(f.broker.closeScaleSet).toHaveBeenLastCalledWith("binding", 2, expect.any(AbortSignal));
+});
+
+test("repeated refresh failures reopen the session instead of retrying forever", async () => {
+  vi.useFakeTimers();
+  const f = await fixture();
+  f.client.getMessage.mockRejectedValueOnce(new ScaleSetHttpError(401, null, true));
+  f.broker.refreshScaleSet.mockRejectedValue(new VectisError("scale_set_unavailable", "down"));
+  f.broker.openScaleSet
+    .mockResolvedValueOnce(grant)
+    .mockResolvedValueOnce({ ...grant, generation: 2 });
+  f.listener.start();
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(f.broker.refreshScaleSet).toHaveBeenCalledTimes(3);
+  expect(f.broker.closeScaleSet).toHaveBeenCalledWith("binding", 1, expect.any(AbortSignal));
+  expect(f.broker.openScaleSet).toHaveBeenCalledTimes(2);
+  expect(f.listener.states()).toMatchObject([{ state: "listening" }]);
+});
+
+test.each(["scale_set_policy_unsupported", "scale_set_labels_unsupported"])(
+  "%s from the cloud stops the listener without reopening",
+  async (code) => {
+    vi.useFakeTimers();
+    const f = await fixture();
+    f.broker.openScaleSet.mockRejectedValue(new VectisError(code, "unsupported"));
+    f.listener.start();
+    await vi.advanceTimersByTimeAsync(600000);
+    expect(f.listener.states()).toMatchObject([{ state: "action_required", code }]);
+    expect(f.broker.openScaleSet).toHaveBeenCalledOnce();
+  },
+);
 
 test("JobAvailable retries acquisition with the same positive IDs, while JobAssigned needs none", async () => {
   const f = await fixture();
@@ -264,18 +325,19 @@ test("JobAvailable retries acquisition with the same positive IDs, while JobAssi
   expect(f.submit).toHaveBeenCalledOnce();
 });
 
-test("409 exposes session conflict without opening another session or accepting work", async () => {
+test("409 on open reopens with growing backoff and reports the code meanwhile", async () => {
+  vi.useFakeTimers();
   const f = await fixture();
   f.broker.openScaleSet.mockRejectedValue(new ScaleSetHttpError(409, null, false));
   f.listener.start();
-  await vi.waitFor(() =>
-    expect(f.listener.states()).toMatchObject([
-      { state: "action_required", code: "scale_set_session_conflict" },
-    ]),
-  );
-  f.store.touch();
-  await Promise.resolve();
-  expect(f.broker.openScaleSet).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.listener.states()).toMatchObject([
+    { state: "connecting", code: "scale_set_session_conflict" },
+  ]);
+  await vi.advanceTimersByTimeAsync(2500);
+  expect(f.broker.openScaleSet).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(f.broker.openScaleSet).toHaveBeenCalledTimes(3);
   expect(f.submit).not.toHaveBeenCalled();
 });
 
