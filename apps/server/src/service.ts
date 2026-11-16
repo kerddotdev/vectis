@@ -194,6 +194,7 @@ export class Service {
         };
       },
       submit: (key, command) => this.submit(key, command),
+      log: (event) => process.stdout.write(`${JSON.stringify(event)}\n`),
     });
   }
   private async startWarm(
