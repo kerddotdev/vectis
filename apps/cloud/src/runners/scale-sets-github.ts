@@ -77,13 +77,20 @@ function grant(row: ScaleSetRow, scaleSetId: number, session: Session): ScaleSet
   };
 }
 
-function scaleSetError(error: unknown): never {
+function scaleSetError(operation: string, error: unknown): never {
   if (error instanceof CloudError) throw error;
+  const status =
+    error instanceof ScaleSetHttpError || error instanceof ScaleSetBootstrapHttpError
+      ? error.status
+      : undefined;
+  console.warn("scale set request failed", {
+    operation,
+    error: error instanceof Error ? error.name : typeof error,
+    status,
+  });
   throw new CloudError("scale_set_unavailable", 502, {
     message: "The GitHub scale set service could not complete the request.",
-    ...(error instanceof ScaleSetHttpError || error instanceof ScaleSetBootstrapHttpError
-      ? { status: error.status }
-      : {}),
+    ...(status === undefined ? {} : { status }),
   });
 }
 
@@ -154,7 +161,7 @@ export const openScaleSet: MachineHandler<"/machine/scale-sets/open"> = async (c
       ).catch(() => undefined);
     }
     await failed(c, row);
-    return scaleSetError(error);
+    return scaleSetError("open", error);
   }
 };
 
@@ -181,7 +188,7 @@ export const refreshScaleSet: MachineHandler<"/machine/scale-sets/refresh"> = as
     return grant(row, row.scaleSetId, session);
   } catch (error) {
     await failed(c, row);
-    return scaleSetError(error);
+    return scaleSetError("refresh", error);
   }
 };
 
@@ -203,7 +210,7 @@ export const closeScaleSet: MachineHandler<"/machine/scale-sets/close"> = async 
     return null;
   } catch (error) {
     await failed(c, row);
-    return scaleSetError(error);
+    return scaleSetError("close", error);
   }
 };
 

@@ -27,6 +27,13 @@
   "durable_objects": { "bindings": [{ "name": "HUB", "class_name": "MachineHub" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MachineHub"] }],
   "triggers": { "crons": ["*/2 * * * *", "0 3 * * *"] },
+  // Only console output and exceptions are kept: invocation logs would record request headers,
+  // and the machine socket carries its credential in Sec-WebSocket-Protocol.
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    "logs": { "invocation_logs": false },
+  },
   "env": {
     "development": {
       "name": "vectis-cloud-dev",
