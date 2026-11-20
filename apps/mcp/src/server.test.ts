@@ -8,8 +8,74 @@ import { createMcpServer } from "./server.js";
 import { startService } from "../../server/src/http.js";
 import { VectisClient } from "../../../packages/client/src/index.js";
 import { VectisError } from "../../../packages/protocol/src/index.js";
+import { controllerClient } from "../../../packages/client/src/controller.js";
 import { activityFor } from "../../server/src/activities.js";
 import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
+
+test("MCP machine discovery reports login and response errors in text and structured content", async () => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-mcp-machine-list-"));
+  const get = vi.fn().mockRejectedValue(new Error("Unexpected credential lookup"));
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockRejectedValue(new Error("Unexpected controller request"));
+  vi.stubGlobal("fetch", fetcher);
+  const connect = vi.fn().mockRejectedValue(new Error("Unexpected local service connection"));
+  const server = createMcpServer(connect, undefined, undefined, undefined, async () =>
+    (await controllerClient(home, { get })).request({ type: "machines.list" }),
+  );
+  const client = new Client({ name: "machine-list-test", version: "1" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  try {
+    await writeFile(
+      join(home, "cloud.json"),
+      JSON.stringify({
+        deploymentUrl: "https://isolated-test.example.com",
+        machineId: "machine-1",
+        localId: "local-1",
+      }),
+    );
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const listed = (await client.listTools()).tools.find(({ name }) => name === "vectis_machines");
+    expect(await client.callTool({ name: "vectis_machines", arguments: {} })).toMatchObject({
+      isError: true,
+      content: [
+        { type: "text", text: expect.stringMatching(/not_signed_in.*vectis login.*vectis_status/) },
+      ],
+      structuredContent: {
+        error: {
+          code: "not_signed_in",
+          nextStep: expect.stringMatching(/vectis login.*vectis_status/),
+        },
+      },
+    });
+    expect(listed?.description).toMatch(/vectis login.*vectis_status/);
+    expect(connect).not.toHaveBeenCalled();
+    expect(get).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+
+    await writeFile(
+      join(home, "controller.json"),
+      JSON.stringify({
+        deploymentUrl: "https://isolated-test.example.com",
+        controllerId: "controller-1",
+        expiresAt: Date.now() + 60000,
+      }),
+    );
+    get.mockResolvedValueOnce("fixture-secret");
+    fetcher.mockResolvedValueOnce(new Response(null, { status: 502 }));
+    expect(await client.callTool({ name: "vectis_machines", arguments: {} })).toMatchObject({
+      isError: true,
+      content: [{ type: "text", text: expect.stringContaining("HTTP 502") }],
+      structuredContent: { error: { code: "controller_invalid_response" } },
+    });
+  } finally {
+    await client.close();
+    await server.close();
+    vi.unstubAllGlobals();
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 test("MCP detail reads preserve runner phases while status stays compact", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-mcp-phases-"));

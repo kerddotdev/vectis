@@ -43,6 +43,7 @@ export class ControllerClient {
         "The remote-control credential is unavailable.",
         "Unlock Keychain or run vectis login.",
       );
+    const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(15000)]);
     const response = await fetch(controllerEndpoint(this.connection.deploymentUrl), {
       method: "POST",
       headers: {
@@ -51,7 +52,7 @@ export class ControllerClient {
       },
       body: JSON.stringify(request),
       redirect: "error",
-      signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
+      signal: requestSignal,
     });
     if (response.status === 401)
       throw new VectisError(
@@ -59,20 +60,30 @@ export class ControllerClient {
         "Remote access was revoked or expired.",
         "Run vectis logout, then vectis login.",
       );
-    if (!response.ok) {
-      const issue = Schema.decodeUnknownSync(CloudErrorBody)(await response.json());
-      throw new VectisError(
-        issue.code,
-        "The remote request could not be completed.",
-        "Check the target machine, access and request key before retrying.",
-      );
+    const payload: unknown = await response.json().catch(() => undefined);
+    requestSignal.throwIfAborted();
+    if (response.ok) {
+      const result = Schema.decodeUnknownOption(ControllerResponses[request.type])(payload);
+      if (result._tag === "Some") return result.value;
+    } else {
+      const issue = Schema.decodeUnknownOption(CloudErrorBody)(payload);
+      if (issue._tag === "Some")
+        throw new VectisError(
+          issue.value.code,
+          "The remote request could not be completed.",
+          "Check the target machine, access and request key before retrying.",
+        );
     }
-    return Schema.decodeUnknownSync(ControllerResponses[request.type])(await response.json());
+    throw new VectisError(
+      "controller_invalid_response",
+      `The remote-control endpoint returned an invalid or empty response (HTTP ${response.status}).`,
+      "Verify the Vectis cloud URL and retry.",
+    );
   }
 }
 export async function controllerClient(
   home: string,
-  credentials: Pick<KeychainCredentials, "get">,
+  credentials?: Pick<KeychainCredentials, "get">,
 ) {
   let content: string;
   try {
@@ -80,14 +91,26 @@ export async function controllerClient(
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT")
       throw new VectisError(
-        "login_required",
-        "This CLI has no remote-control connection.",
-        "Run vectis login and approve the request in your browser.",
+        "not_signed_in",
+        "This Vectis home has no remote-control login.",
+        "Run vectis login, approve the request in your browser, then run vectis login finish. For the local machine, use vectis status in the CLI or vectis_status in a local MCP session.",
       );
     throw error;
   }
-  return new ControllerClient(
-    Schema.decodeUnknownSync(ControllerConnection)(JSON.parse(content)),
-    credentials,
+  const connection = Schema.decodeUnknownOption(Schema.fromJsonString(ControllerConnection))(
+    content,
   );
+  if (connection._tag === "None")
+    throw new VectisError(
+      "controller_config_invalid",
+      "The saved remote-control login metadata is invalid or empty.",
+      "Move controller.json out of this Vectis home, then run vectis login again.",
+    );
+  if (!credentials)
+    throw new VectisError(
+      "setup_required",
+      "Remote access requires VECTIS_KEYCHAIN_HELPER.",
+      "Configure the native Vectis Keychain helper.",
+    );
+  return new ControllerClient(connection.value, credentials);
 }

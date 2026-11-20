@@ -24,6 +24,8 @@ vectis doctor --machine <machine-id> --json
 
 Use the cloud machine `id` from `machine list`, not its `localId`. Add the same `--home` to every command when using a separate controller directory. This directory does not require a running local service. Controller credentials stay in Keychain, expire after 90 days, and can be revoked from the browser connection page or with `vectis logout`.
 
+Listing account machines requires a completed controller login, even if this Mac is already paired. To inspect this Mac directly, run `vectis status` without `--machine`.
+
 ## Submit and observe commands
 
 Use `--machine` for each remote command. Omitting it selects the local service. An unavailable remote machine never causes a fallback to local execution.
@@ -57,4 +59,4 @@ After `vectis login`, start the MCP server for a specific Mac:
 vectis-mcp --machine <machine-id>
 ```
 
-`vectis_machines` lists your Macs from a local session. Start with `vectis_capabilities` to inspect the selected target and available commands. Remote sessions omit local service and machine-pairing tools. `vectis_command`, reads, and `vectis_wait` use the same remote client as the CLI and desktop. Cancelling a wait does not cancel its operation.
+`vectis_machines` lists your account's Macs after you complete `vectis login` and `vectis login finish` for the same home. Use `vectis_status` in a local session to inspect this Mac without signing in. Start with `vectis_capabilities` to inspect the selected target and available commands. Remote sessions omit local service and machine-pairing tools. `vectis_command`, reads, and `vectis_wait` use the same remote client as the CLI and desktop. Cancelling a wait does not cancel its operation.

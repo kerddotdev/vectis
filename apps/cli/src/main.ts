@@ -98,15 +98,16 @@ async function main() {
   const home = resolveHome(values.home);
   const output = (value: unknown) =>
     process.stdout.write(JSON.stringify(value, null, values.json ? undefined : 2) + "\n");
+  const helper = process.env.VECTIS_KEYCHAIN_HELPER;
+  const controllerCredentials = helper ? new KeychainCredentials(helper) : undefined;
   const credentials = () => {
-    const helper = process.env.VECTIS_KEYCHAIN_HELPER;
-    if (!helper)
+    if (!controllerCredentials)
       throw new VectisError(
         "setup_required",
         "Remote access requires VECTIS_KEYCHAIN_HELPER.",
         "Configure the native Keychain helper for this CLI.",
       );
-    return new KeychainCredentials(helper);
+    return controllerCredentials;
   };
   const client = async () =>
     values.machine
@@ -150,7 +151,7 @@ Cloud and GitHub
   login [--name <text>]         Begin browser-approved remote control of your machines
   login finish                  Complete an approved remote control login
   logout                        Revoke this CLI's remote access and remove its credentials
-  machine list                  List your machines and when they were last seen
+  machine list                  List your remote machines after vectis login
   machine configure [--max-runners <N>] [--memory-budget-mib <N>]
                                 Set runner limit (1-16, default 5) and shared VM memory budget
                                 Memory budget: 2048 MiB to host RAM, default 75% of host RAM
@@ -290,29 +291,21 @@ Documentation: https://vectis.kerd.dev/docs
     );
   if (values.machine && ["service", "cloud", "login", "logout", "machine"].includes(command))
     throw new VectisError("invalid_target", "This command does not accept --machine.");
-  if (
-    command === "login" ||
-    command === "logout" ||
-    (command === "machine" && subcommand === "list")
-  ) {
+  if (command === "machine" && subcommand === "list") {
+    const controller = await controllerClient(home, controllerCredentials);
+    output(await controller.request({ type: "machines.list" }));
+    return;
+  }
+  if (command === "login" || command === "logout") {
     const store = credentials();
+    if (command === "login" && subcommand !== undefined && subcommand !== "finish")
+      throw new VectisError("unknown_command", "Use login or login finish.");
     const result =
       command === "logout"
         ? await logoutController(home, store)
-        : command === "machine"
-          ? await (await controllerClient(home, store)).request({ type: "machines.list" })
-          : subcommand === "finish"
-            ? await finishControllerLogin(home, store)
-            : subcommand === undefined
-              ? await beginControllerLogin(
-                  home,
-                  cloudDeployment(),
-                  values.name ?? "Vectis CLI",
-                  store,
-                )
-              : (() => {
-                  throw new VectisError("unknown_command", "Use login or login finish.");
-                })();
+        : subcommand === "finish"
+          ? await finishControllerLogin(home, store)
+          : await beginControllerLogin(home, cloudDeployment(), values.name ?? "Vectis CLI", store);
     output(result);
     if (
       result &&
@@ -332,7 +325,6 @@ Documentation: https://vectis.kerd.dev/docs
     command === "cloud" &&
     (subcommand === "pair" || subcommand === "finish" || subcommand === "disconnect")
   ) {
-    const helper = process.env.VECTIS_KEYCHAIN_HELPER;
     if (!helper)
       throw new VectisError(
         "setup_required",
