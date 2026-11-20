@@ -35,9 +35,7 @@ async function main() {
     machine ? undefined : () => LaunchAgent.forHome(home),
     !machine && credentials ? { home, credentials } : undefined,
     machine,
-    credentials
-      ? async () => (await controllerClient(home, credentials)).request({ type: "machines.list" })
-      : undefined,
+    async () => (await controllerClient(home, credentials)).request({ type: "machines.list" }),
   );
   await server.connect(new StdioServerTransport());
 }

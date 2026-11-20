@@ -300,7 +300,7 @@ export function createMcpServer(
       ToolSchema.parse({
         name: "vectis_machines",
         description:
-          "List the machines owned by the signed-in account, with last-seen presence. Start vectis-mcp with --machine <id> to control one remotely.",
+          "List the machines owned by your account, with last-seen presence. Requires a completed vectis login. Use vectis_status in a local MCP session to inspect this machine. Start vectis-mcp with --machine <id> to control one remotely.",
         inputSchema: emptyInput,
         annotations: { readOnlyHint: true },
       }),
@@ -499,7 +499,10 @@ export function createMcpServer(
       const result = { code: issue.code, message: issue.message, nextStep: issue.nextStep };
       return {
         isError: true,
-        content: [],
+        content:
+          request.params.name === "vectis_machines"
+            ? [{ type: "text", text: `${issue.code}: ${issue.message} ${issue.nextStep}` }]
+            : [],
         structuredContent: { error: result },
       };
     }

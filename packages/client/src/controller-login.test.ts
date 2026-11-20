@@ -66,7 +66,7 @@ test("login resumes without a running service and persists secrets only in the c
     fetcher.mockResolvedValueOnce(Response.json({ revoked: true }));
     expect(await logoutController(home, secrets)).toEqual({ state: "signed_out" });
     expect(secrets.entries.size).toBe(0);
-    await expect(controllerClient(home, secrets)).rejects.toMatchObject({ code: "login_required" });
+    await expect(controllerClient(home, secrets)).rejects.toMatchObject({ code: "not_signed_in" });
   } finally {
     await rm(home, { recursive: true, force: true });
   }

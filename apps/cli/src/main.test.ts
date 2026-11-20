@@ -13,6 +13,104 @@ import type { RunnerProgress } from "../../../packages/protocol/src/runners.js";
 
 const roundTrip = { timeout: 10000 };
 
+const remoteMachine = {
+  id: "machine-1",
+  localId: "local-1",
+  name: "Test Mac",
+  lastSeenAt: null,
+  online: false,
+  environments: [],
+  paused: false,
+};
+
+test.each([
+  { name: "paired without login", code: "not_signed_in" },
+  { name: "paired without login or helper", code: "not_signed_in", noHelper: true },
+  { name: "empty controller metadata", code: "controller_config_invalid", config: "" },
+  { name: "empty HTTP success", code: "controller_invalid_response", body: "" },
+  { name: "non-JSON HTTP error", code: "controller_invalid_response", body: "<html>", status: 502 },
+  { name: "wrong response shape", code: "controller_invalid_response", body: "{}" },
+  { name: "empty machine list", machines: [] },
+  { name: "populated machine list", machines: [remoteMachine] },
+])("machine list handles $name", async ({ code, noHelper, config, body, status, machines }) => {
+  const home = await mkdtemp(join(tmpdir(), "vectis-cli-machine-list-"));
+  const argv = process.argv;
+  const exitCode = process.exitCode;
+  const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+  try {
+    vi.resetModules();
+    vi.stubEnv("VECTIS_KEYCHAIN_HELPER", noHelper ? undefined : "/unused-fixture-helper");
+    const { KeychainCredentials } = await import("../../../packages/client/src/keychain.js");
+    const get = vi.spyOn(KeychainCredentials.prototype, "get").mockResolvedValue("fixture-secret");
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockRejectedValue(new Error("Unexpected controller request"));
+    vi.stubGlobal("fetch", fetcher);
+    await writeFile(
+      join(home, "cloud.json"),
+      JSON.stringify({
+        deploymentUrl: "https://isolated-test.example.com",
+        machineId: remoteMachine.id,
+        localId: remoteMachine.localId,
+      }),
+    );
+    if (config !== undefined || body !== undefined || machines !== undefined) {
+      await writeFile(
+        join(home, "controller.json"),
+        config ??
+          JSON.stringify({
+            deploymentUrl: "https://isolated-test.example.com",
+            controllerId: "controller-1",
+            expiresAt: Date.now() + 60000,
+          }),
+      );
+    }
+    if (body !== undefined || machines !== undefined)
+      fetcher.mockResolvedValueOnce(
+        machines ? Response.json(machines) : new Response(body, { status: status ?? 200 }),
+      );
+    process.argv = [process.execPath, "vectis", "--home", home, "machine", "list", "--json"];
+    process.exitCode = undefined;
+    await import("./main.js");
+    await vi.waitFor(() => expect(output).toHaveBeenCalledOnce(), roundTrip);
+    const printed: unknown = JSON.parse(String(output.mock.calls[0]?.[0]));
+    if (code) {
+      expect(printed).toMatchObject({
+        error: {
+          code,
+          ...(code === "not_signed_in"
+            ? { nextStep: expect.stringMatching(/vectis login.*vectis_status/) }
+            : {}),
+        },
+      });
+      expect(process.exitCode).toBe(1);
+    } else {
+      expect(printed).toEqual(machines);
+      expect(process.exitCode).toBeUndefined();
+    }
+    if (body === undefined && machines === undefined) {
+      expect(get).not.toHaveBeenCalled();
+      expect(fetcher).not.toHaveBeenCalled();
+    } else {
+      expect(fetcher).toHaveBeenCalledWith(
+        "https://isolated-test.example.com/controller/request",
+        expect.objectContaining({
+          body: JSON.stringify({ type: "machines.list" }),
+          headers: expect.objectContaining({ Authorization: "Bearer controller-1.fixture-secret" }),
+        }),
+      );
+    }
+  } finally {
+    process.argv = argv;
+    process.exitCode = exitCode;
+    output.mockRestore();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.resetModules();
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
 test("operation and activity inspection retain phases in pretty and compact JSON", async () => {
   const home = await mkdtemp(join(tmpdir(), "vectis-cli-phases-"));
   const server = await startService({ home });

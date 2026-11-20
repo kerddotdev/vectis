@@ -58,7 +58,7 @@ Every change is an operation: `accepted`, `running`, `action_required`, `succeed
 2. Link GitHub and install the App: `vectis github connect --json` returns the page. The user links their GitHub account there and installs the Vectis GitHub App on the account or organization that owns the repositories.
 3. `vectis github accounts --json` lists verified accounts for `repository connect`.
 
-Remote control of another Mac: `vectis login`, user approval, `vectis login finish`, then `vectis machine list --json`. Add `--machine <id>` to commands, or start `vectis-mcp --machine <id>`; MCP `vectis_machines` lists machines when logged in. A remote session never falls back to the local machine. Service lifecycle and cloud pairing only work on the host itself.
+Remote control of another Mac: `vectis login`, user approval, `vectis login finish`, then `vectis machine list --json` or the MCP tool `vectis_machines`. Listing account machines requires that login even when the local Mac is paired. Use `vectis status` or `vectis_status` in a local session to inspect the local machine without signing in. To target a remote Mac, add `--machine <id>` to commands or start `vectis-mcp --machine <id>`. A remote session never falls back to the local machine. Service lifecycle and cloud pairing only work on the host itself.
 
 ## Environments
 
