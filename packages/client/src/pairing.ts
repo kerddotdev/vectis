@@ -23,6 +23,20 @@ async function descriptorAt(home: string) {
     JSON.parse(await readFile(join(home, "pairing.json"), "utf8")),
   );
 }
+async function savedConnection(home: string) {
+  try {
+    return Schema.decodeUnknownSync(CloudConnection)(
+      JSON.parse(await readFile(join(home, "cloud.json"), "utf8")),
+    );
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    throw new VectisError(
+      "cloud_unconfigured",
+      "This machine has no saved cloud connection.",
+      "Run vectis cloud pair and approve the request before running vectis cloud finish.",
+    );
+  }
+}
 export async function beginPairing(
   home: string,
   deployment: CloudDeployment,
@@ -103,9 +117,7 @@ export async function finishPairing(
     descriptor = await descriptorAt(home);
   } catch (error) {
     if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    const connection = Schema.decodeUnknownSync(CloudConnection)(
-      JSON.parse(await readFile(join(home, "cloud.json"), "utf8")),
-    );
+    const connection = await savedConnection(home);
     const api = await localClient(home);
     if ((await api.status(signal)).machine.id !== connection.localId)
       throw new VectisError("pairing_revoked", "The saved cloud connection could not be verified.");
@@ -213,16 +225,7 @@ export async function finishPairing(
 // Clearing the local side of a pairing. The cloud record is removed by its owner on the account
 // page; this frees the Mac to pair again, and is also the way out when the record is already gone.
 export async function disconnectPairing(home: string, credentials: Credentials) {
-  const contents = await readFile(join(home, "cloud.json"), "utf8").catch((error: unknown) => {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
-    throw error;
-  });
-  if (contents === null)
-    throw new VectisError(
-      "cloud_unconfigured",
-      "This machine has no cloud connection to disconnect.",
-    );
-  const connection = Schema.decodeUnknownSync(CloudConnection)(JSON.parse(contents));
+  const connection = await savedConnection(home);
   await credentials.remove(credentialAccount(connection));
   await rm(join(home, "cloud.json"), { force: true });
   await rm(join(home, "pairing.json"), { force: true });
