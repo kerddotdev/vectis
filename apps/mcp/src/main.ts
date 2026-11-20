@@ -24,18 +24,16 @@ async function main() {
   const helper = process.env.VECTIS_KEYCHAIN_HELPER;
   const credentials = helper ? new KeychainCredentials(helper) : undefined;
   const machine = values.machine;
-  if (machine && !credentials)
-    throw new VectisError("runtime_missing", "Remote control requires VECTIS_KEYCHAIN_HELPER.");
+  const connectController = () => controllerClient(home, credentials);
   const server = createMcpServer(
     async () => {
       if (!machine) return localClient(home);
-      if (!credentials) throw new VectisError("runtime_missing", "Keychain is unavailable.");
-      return new RemoteClient(await controllerClient(home, credentials), machine);
+      return new RemoteClient(await connectController(), machine);
     },
     machine ? undefined : () => LaunchAgent.forHome(home),
     !machine && credentials ? { home, credentials } : undefined,
     machine,
-    async () => (await controllerClient(home, credentials)).request({ type: "machines.list" }),
+    async () => (await connectController()).request({ type: "machines.list" }),
   );
   await server.connect(new StdioServerTransport());
 }

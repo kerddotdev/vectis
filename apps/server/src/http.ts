@@ -97,25 +97,28 @@ export async function startService(
     await rm(lockPath, { force: true });
     throw error;
   }
+  let cloud: CloudStatus = { state: "unconfigured" };
+  let relay: Awaited<ReturnType<typeof configuredRelay>>;
+  const requireRelay = (message: string, nextStep?: string) => {
+    if (relay) return relay;
+    if (cloud.state === "unconfigured")
+      throw new VectisError("cloud_unconfigured", message, nextStep);
+    throw new VectisError(
+      "cloud_unavailable",
+      "The machine cloud connection is unavailable.",
+      "Check the target machine's cloud status and configuration, then retry.",
+    );
+  };
   const service = new Service(
     store,
     new VmRuntime(options),
-    () => {
-      if (!relay)
-        throw new VectisError(
-          "cloud_unconfigured",
-          "Connect this machine before starting runners.",
-        );
-      return relay;
-    },
+    () => requireRelay("Connect this machine before starting runners."),
     options.keychainHelper ? new KeychainCredentials(options.keychainHelper) : undefined,
     () => relay?.repositorySnapshot,
     (ids) => relay?.watchLeases(ids),
     { connected: () => cloud.state === "connected" },
     options.idleSleepAssertion,
   );
-  let cloud: CloudStatus = { state: "unconfigured" };
-  let relay: Awaited<ReturnType<typeof configuredRelay>>;
   let connection: Connection | undefined;
   let closing = false;
   const storageAbort = new AbortController();
@@ -225,9 +228,8 @@ export async function startService(
         const bindingId = new URL(request.url, "http://127.0.0.1").searchParams.get("bindingId");
         if (!bindingId)
           throw new VectisError("invalid_request", "Provide a repository binding ID.");
-        if (!relay)
-          throw new VectisError("cloud_unconfigured", "Connect this machine before reading jobs.");
-        return reply(response, 200, await relay.jobs(bindingId));
+        const cloudRelay = requireRelay("Connect this machine before reading jobs.");
+        return reply(response, 200, await cloudRelay.jobs(bindingId));
       }
       if (request.method === "GET" && request.url?.startsWith("/v1/repositories/readiness?")) {
         const params = new URL(request.url, "http://127.0.0.1").searchParams;
@@ -238,32 +240,25 @@ export async function startService(
           response,
           200,
           await service.repositoryReadiness(input, async (input) => {
-            if (!relay)
-              throw new VectisError(
-                "cloud_unconfigured",
-                "This machine is not paired with Vectis.",
-                "Pair this machine before checking GitHub repository readiness.",
-              );
-            return relay.repositoryReadiness(input);
+            return requireRelay(
+              "This machine is not paired with Vectis.",
+              "Pair this machine before checking GitHub repository readiness.",
+            ).repositoryReadiness(input);
           }),
         );
       }
       if (request.method === "GET" && request.url === "/v1/github/accounts") {
-        if (!relay)
-          throw new VectisError(
-            "cloud_unconfigured",
-            "Connect this machine before reading linked GitHub accounts.",
-          );
-        return reply(response, 200, await relay.githubAccounts());
+        const cloudRelay = requireRelay(
+          "Connect this machine before reading linked GitHub accounts.",
+        );
+        return reply(response, 200, await cloudRelay.githubAccounts());
       }
       if (request.method === "GET" && request.url === "/v1/repositories") {
-        if (!relay)
-          throw new VectisError(
-            "cloud_unconfigured",
-            "This machine is not connected to Vectis.",
-            "Run vectis cloud pair and complete browser approval.",
-          );
-        return reply(response, 200, await relay.repositories());
+        const cloudRelay = requireRelay(
+          "This machine is not connected to Vectis.",
+          "Run vectis cloud pair and complete browser approval.",
+        );
+        return reply(response, 200, await cloudRelay.repositories());
       }
       if (request.method === "GET" && request.url?.startsWith("/v1/logs")) {
         const lines = new URL(request.url, "http://127.0.0.1").searchParams.get("lines");
